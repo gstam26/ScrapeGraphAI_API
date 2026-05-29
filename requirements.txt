@@ -1,2 +1,4 @@
-python-dotenv
 scrapegraph-py
+python-dotenv
+pandas
+openpyxl

@@ -1,4 +1,8 @@
-scrapegraph-py
-python-dotenv
 pandas
 openpyxl
+python-dotenv
+pydantic
+rapidfuzz
+requests
+beautifulsoup4
+scrapegraph-py

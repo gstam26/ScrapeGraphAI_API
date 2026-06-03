@@ -12,6 +12,7 @@ dist/
 build/
 
 # Data files
+cache/
 outputs/
 *.xlsx
 *.csv

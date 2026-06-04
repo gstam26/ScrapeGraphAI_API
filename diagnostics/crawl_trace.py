@@ -1,61 +1,77 @@
 """
 Crawl trace diagnostic.
 
-Simulates a full guided crawl from a single seed URL and prints a
-complete human-readable trace of every decision made:
+Guided crawler diagnostic using BM25 lexical relevance scoring.
 
-  1. Fetch the seed page via Firecrawl (cache-first) and print word count
-  2. Extract all same-domain links with anchor text + surrounding context
-  3. Score every link against a hardcoded topic list using
-     sentence-transformers cosine similarity
-  4. Print a scored link table showing FOLLOW / SKIP decisions
-  5. Fetch the FOLLOW links (score >= threshold), indent one level, repeat
-  6. Recurse up to MAX_DEPTH; never fetch the same URL twice (visited set)
-  7. Print a crawl summary by depth
+Features:
+  - Firecrawl cache-first fetching
+  - Same-domain link extraction
+  - BM25 scoring over anchor + context + URL
+  - URL/anchor boosts for high-value crawl paths
+  - Per-page score normalisation to 0-1
+  - Threshold + top-k fallback
+  - Human-readable FOLLOW / SKIP trace
 
-No pipeline imports.  Reads/writes only cache/.
-
-Usage (from project root):
-    python diagnostics/crawl_trace.py             # full crawl
-    python diagnostics/crawl_trace.py --dry-run   # fetch + score seed only
+Usage:
+    python diagnostics/crawl_trace.py
+    python diagnostics/crawl_trace.py --dry-run
 
 Requires:
     FIRECRAWL_API_KEY in .env
-    pip install firecrawl-py
+    pip install firecrawl-py python-dotenv
 """
 
 import argparse
+import hashlib
+import math
 import os
 import re
-import hashlib
-from dotenv import load_dotenv
 from urllib.parse import urljoin, urlparse
+
+from dotenv import load_dotenv
 
 load_dotenv()
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CACHE_DIR  = os.path.join(_REPO_ROOT, "cache")
+CACHE_DIR = os.path.join(_REPO_ROOT, "cache")
 
 # ── Crawl config ──────────────────────────────────────────────────────────────
-URL              = "https://www.ripplefoods.com"
-MAX_DEPTH        = 2
-THRESHOLD        = 0.30
+
+URL = "https://www.oatly.com/en-us"
+
+MAX_DEPTH = 3
+THRESHOLD = 0.30
+TOP_K_PER_PAGE = 3
 FETCH_TIMEOUT_MS = 60_000
+
+BM25_K1 = 1.5
+BM25_B = 0.75
 
 _STOP = frozenset({
     "and", "the", "or", "of", "in", "to", "for", "with",
     "on", "at", "by", "an", "as", "is", "are", "be", "not",
+    "from", "that", "this", "it", "its", "your", "our", "their",
+    "you", "we", "they", "was", "were", "has", "have", "had",
+    "more", "read", "view", "all", "shop", "buy", "learn",
 })
 
+# Use crawl-guidance topics here, not final extraction questions.
 TOPICS = [
-    "sustainability environmental impact carbon footprint emissions",
-    "climate change net zero targets science based",
-    "annual report ESG disclosure climate data",
-    "supply chain sourcing farming raw materials",
-    "certifications organic B-corp standards labels",
-    "about the company mission values story history",
-    "products plant-based milk ingredients nutrition",
-    "press news media announcements",
+    "sustainability",
+    "sustainability report",
+    "climate",
+    "environment",
+    "impact",
+    "responsibility",
+    "emissions",
+    "carbon",
+    "net zero",
+    "ESG",
+    "planet",
+    "annual report",
+    "social responsibility",
+    "sustainable packaging",
+    "renewable energy",
 ]
 
 
@@ -67,24 +83,24 @@ def _cache_path(url: str) -> str:
     return os.path.join(CACHE_DIR, f"{key}.md")
 
 
-def _cached(url: str) -> bool:
-    return os.path.exists(_cache_path(url))
-
-
-# ── Fetch ─────────────────────────────────────────────────────────────────────
-
 def _fetch(url: str, app) -> tuple[str, bool]:
-    """Return (markdown, from_cache).  Writes to cache/ on a live fetch."""
+    """Return (markdown, from_cache). Writes to cache/ on live fetch."""
     path = _cache_path(url)
+
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as fh:
             return fh.read(), True
+
     result = app.scrape_url(url, formats=["markdown"], timeout=FETCH_TIMEOUT_MS)
+
     if not result.success or not result.markdown:
         raise RuntimeError(result.error or "empty response from Firecrawl")
+
     md = result.markdown.strip()
+
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(md)
+
     return md, False
 
 
@@ -99,89 +115,209 @@ def _same_domain(base_url: str, candidate_url: str) -> bool:
 def _extract_links(markdown: str, page_url: str) -> list[dict]:
     """Return unique same-domain links with anchor text and context snippet."""
     pattern = re.compile(r'\[([^\]]+)\]\(([^)\s"]+)(?:\s+"[^"]*")?\)')
+
     seen: set[str] = set()
-    out  = []
+    out: list[dict] = []
 
     for m in pattern.finditer(markdown):
-        anchor  = m.group(1).strip()
+        anchor = m.group(1).strip()
         raw_url = m.group(2).strip()
 
         if raw_url.startswith(("mailto:", "javascript:", "#", "tel:", "data:")):
             continue
 
         resolved = urljoin(page_url, raw_url).split("#")[0].rstrip("/")
-        if not resolved.startswith("http") or not _same_domain(page_url, resolved):
+
+        if not resolved.startswith("http"):
             continue
+
+        if not _same_domain(page_url, resolved):
+            continue
+
         if resolved in seen:
             continue
+
         seen.add(resolved)
 
-        # Context: 100 chars either side; replace the [anchor](url) with <<anchor>>
-        cs  = max(0, m.start() - 100)
-        ce  = min(len(markdown), m.end() + 100)
-        raw = markdown[cs:ce].replace("\n", " ")
-        rs  = m.start() - cs
-        re_ = m.end()   - cs
-        ctx = (raw[:rs].rstrip() + f" <<{anchor}>> " + raw[re_:].lstrip()).strip()
+        cs = max(0, m.start() - 120)
+        ce = min(len(markdown), m.end() + 120)
 
-        out.append({"anchor": anchor, "url": resolved, "context": ctx})
+        raw = markdown[cs:ce].replace("\n", " ")
+        rs = m.start() - cs
+        re_ = m.end() - cs
+
+        ctx = (
+            raw[:rs].rstrip()
+            + f" <<{anchor}>> "
+            + raw[re_:].lstrip()
+        ).strip()
+
+        out.append({
+            "anchor": anchor,
+            "url": resolved,
+            "context": ctx,
+        })
 
     return out
 
 
-# ── Scoring  (keyword overlap — no external models) ──────────────────────────
+# ── BM25 scoring ──────────────────────────────────────────────────────────────
 
-def _build_topic_vocab(topics: list[str]) -> frozenset[str]:
-    """Unique meaningful words (>= 3 chars, not stop-words) across all topics."""
-    vocab: set[str] = set()
-    for topic in topics:
-        for word in re.findall(r"[a-z]+", topic.lower()):
-            if len(word) >= 3 and word not in _STOP:
-                vocab.add(word)
-    return frozenset(vocab)
+def _tokenize(text: str) -> list[str]:
+    return [
+        w for w in re.findall(r"[a-z0-9]+", text.lower())
+        if len(w) >= 3 and w not in _STOP
+    ]
 
 
-def _overlap_score(text: str, topic_vocab: frozenset[str]) -> float:
-    """
-    Score = |unique_words(text) ∩ topic_vocab| / |unique_words(text)|
-    Words shorter than 3 chars are ignored on both sides.
-    """
-    words = {w for w in re.findall(r"[a-z]+", text.lower()) if len(w) >= 3}
-    if not words:
+def _build_query_tokens(topics: list[str]) -> list[str]:
+    return _tokenize(" ".join(topics))
+
+
+def _bm25_prepare(tokenized_docs: list[list[str]]) -> tuple[list[dict[str, int]], dict[str, float], float]:
+    if not tokenized_docs:
+        return [], {}, 0.0
+
+    tf_docs: list[dict[str, int]] = []
+    doc_freq: dict[str, int] = {}
+
+    for doc in tokenized_docs:
+        tf: dict[str, int] = {}
+
+        for term in doc:
+            tf[term] = tf.get(term, 0) + 1
+
+        for term in set(doc):
+            doc_freq[term] = doc_freq.get(term, 0) + 1
+
+        tf_docs.append(tf)
+
+    n_docs = len(tokenized_docs)
+    avg_doc_len = sum(len(doc) for doc in tokenized_docs) / max(n_docs, 1)
+
+    idf = {
+        term: max(0.0, math.log(1 + ((n_docs - df + 0.5) / (df + 0.5))))
+        for term, df in doc_freq.items()
+    }
+
+    return tf_docs, idf, avg_doc_len
+
+
+def _bm25_score_doc(
+    query_tokens: list[str],
+    doc_tokens: list[str],
+    tf: dict[str, int],
+    idf: dict[str, float],
+    avg_doc_len: float,
+) -> float:
+    if not query_tokens or not doc_tokens or avg_doc_len <= 0:
         return 0.0
-    return len(words & topic_vocab) / len(words)
+
+    doc_len = len(doc_tokens)
+    score = 0.0
+
+    # Use unique query terms so repeated topic words do not dominate.
+    for term in set(query_tokens):
+        freq = tf.get(term, 0)
+
+        if freq == 0:
+            continue
+
+        denom = freq + BM25_K1 * (1 - BM25_B + BM25_B * (doc_len / avg_doc_len))
+        score += idf.get(term, 0.0) * ((freq * (BM25_K1 + 1)) / denom)
+
+    return score
 
 
-def _score_links(links: list[dict], topic_vocab: frozenset[str]) -> list[dict]:
-    """Score each link by keyword overlap; sort descending."""
+def _url_anchor_boost(url: str, anchor: str) -> float:
+    text = f"{url} {anchor}".lower()
+
+    boosts = {
+        "sustainability": 0.35,
+        "sustainable": 0.25,
+        "sustainability-report": 0.35,
+        "report": 0.25,
+        "annual-report": 0.25,
+        "esg": 0.25,
+        "impact": 0.20,
+        "responsibility": 0.20,
+        "climate": 0.20,
+        "environment": 0.20,
+        "emissions": 0.20,
+        "carbon": 0.18,
+        "net-zero": 0.18,
+        "netzero": 0.18,
+        "planet": 0.12,
+    }
+
+    return sum(weight for term, weight in boosts.items() if term in text)
+
+
+def _score_links(links: list[dict], query_tokens: list[str]) -> list[dict]:
+    """Score each link using BM25 over anchor + context + URL, then normalise 0-1."""
+    if not links:
+        return []
+
+    doc_texts = []
+
     for lk in links:
-        clean = lk["context"].replace(f"<<{lk['anchor']}>>", "").strip()
-        lk["score"] = _overlap_score(f"{lk['anchor']} {clean}", topic_vocab)
-    return sorted(links, key=lambda x: x["score"], reverse=True)
+        clean_ctx = lk["context"].replace(f"<<{lk['anchor']}>>", "").strip()
+
+        # URL is included because paths often reveal intent:
+        # /sustainability, /esg, /impact, /report, etc.
+        doc_texts.append(f"{lk['anchor']} {clean_ctx} {lk['url']}")
+
+    tokenized_docs = [_tokenize(text) for text in doc_texts]
+    tf_docs, idf, avg_doc_len = _bm25_prepare(tokenized_docs)
+
+    raw_scores = []
+
+    for lk, doc_tokens, tf in zip(links, tokenized_docs, tf_docs):
+        raw = _bm25_score_doc(query_tokens, doc_tokens, tf, idf, avg_doc_len)
+        raw += _url_anchor_boost(lk["url"], lk["anchor"])
+        raw_scores.append(raw)
+
+    max_score = max(raw_scores) if raw_scores else 0.0
+
+    for lk, raw in zip(links, raw_scores):
+        lk["raw_score"] = raw
+        lk["score"] = raw / max_score if max_score > 0 else 0.0
+
+    scored = sorted(links, key=lambda x: x["score"], reverse=True)
+
+    for i, lk in enumerate(scored):
+        lk["rank"] = i + 1
+        lk["follow"] = lk["score"] >= THRESHOLD or i < TOP_K_PER_PAGE
+
+    return scored
 
 
 # ── Display ───────────────────────────────────────────────────────────────────
 
 def _display_path(url: str, seed: str) -> str:
-    """Return just the URL path when same host as seed, else full URL."""
     seed_host = urlparse(seed).netloc.replace("www.", "")
-    parsed    = urlparse(url)
+    parsed = urlparse(url)
     link_host = parsed.netloc.replace("www.", "")
+
     if link_host == seed_host:
         return parsed.path.rstrip("/") or "/"
+
     return url
 
 
 def _print_link_row(lk: dict, seed: str, indent: str, visited: set) -> None:
-    decision = "FOLLOW" if lk["score"] >= THRESHOLD else "SKIP  "
-    path     = _display_path(lk["url"], seed)
-    anchor   = lk["anchor"]
-    # Make deduplication visible: a FOLLOW that won't be fetched because the
-    # URL was already fetched in an earlier branch of the crawl.
-    note     = "  (already visited)" if decision.strip() == "FOLLOW" and lk["url"] in visited else ""
+    decision = "FOLLOW" if lk.get("follow") else "SKIP  "
+    path = _display_path(lk["url"], seed)
+    anchor = lk["anchor"]
 
-    score_col  = f"[{lk['score']:.2f}]"
-    path_col   = path[:52] if len(path) <= 52 else path[:51] + "~"
+    note = ""
+    if decision.strip() == "FOLLOW" and lk["url"] in visited:
+        note = "  (already visited)"
+    elif decision.strip() == "FOLLOW" and lk["rank"] <= TOP_K_PER_PAGE and lk["score"] < THRESHOLD:
+        note = "  (top-k fallback)"
+
+    score_col = f"[{lk['score']:.2f}]"
+    path_col = path[:52] if len(path) <= 52 else path[:51] + "~"
     anchor_col = anchor[:48] if len(anchor) <= 48 else anchor[:47] + "~"
 
     print(f"{indent}  {score_col} {decision} -> {path_col:<52}  '{anchor_col}'{note}")
@@ -190,21 +326,21 @@ def _print_link_row(lk: dict, seed: str, indent: str, visited: set) -> None:
 # ── Core crawl ────────────────────────────────────────────────────────────────
 
 def _crawl(
-    url:         str,
-    seed:        str,
-    depth:       int,
-    visited:     set,
-    stats:       dict,
+    url: str,
+    seed: str,
+    depth: int,
+    visited: set[str],
+    stats: dict,
     app,
-    topic_vocab: frozenset,
-    indent:      str,
-    dry_run:     bool = False,
+    query_tokens: list[str],
+    indent: str,
+    dry_run: bool = False,
 ) -> None:
     if url in visited:
         return
+
     visited.add(url)
 
-    # 1. Fetch
     try:
         markdown, from_cache = _fetch(url, app)
     except Exception as exc:
@@ -212,11 +348,18 @@ def _crawl(
         print(f"{indent}  error: {exc}")
         return
 
-    words  = len(markdown.split())
+    words = len(markdown.split())
     origin = "cached" if from_cache else "live"
+
     print(f"{indent}FETCHED [{origin}]: {url} -- {words:,} words")
 
-    d = stats.setdefault(depth, {"pages": 0, "words": 0, "followed": 0, "skipped": 0})
+    d = stats.setdefault(depth, {
+        "pages": 0,
+        "words": 0,
+        "followed": 0,
+        "skipped": 0,
+    })
+
     d["pages"] += 1
     d["words"] += words
 
@@ -225,8 +368,8 @@ def _crawl(
         print()
         return
 
-    # 2. Extract links
     links = _extract_links(markdown, url)
+
     if not links:
         print(f"{indent}  (no same-domain links found)")
         print()
@@ -234,38 +377,34 @@ def _crawl(
 
     print(f"{indent}  {len(links)} same-domain link(s) -- depth {depth}")
 
-    # 3. Score
-    scored = _score_links(links, topic_vocab)
+    scored = _score_links(links, query_tokens)
 
-    # 4. Print scored table
     for lk in scored:
         _print_link_row(lk, seed, indent, visited)
 
-    n_above = sum(1 for lk in scored if lk["score"] >= THRESHOLD)
-    n_below = len(scored) - n_above
+    n_follow = sum(1 for lk in scored if lk.get("follow"))
+    n_skip = len(scored) - n_follow
 
-    # At max depth: FOLLOW links are noted but not fetched
     if depth >= MAX_DEPTH:
-        if n_above:
-            print(f"{indent}  (max depth {MAX_DEPTH} -- {n_above} FOLLOW link(s) not fetched)")
-        d["skipped"] += n_above + n_below
+        if n_follow:
+            print(f"{indent}  (max depth {MAX_DEPTH} -- {n_follow} FOLLOW link(s) not fetched)")
+        d["skipped"] += n_follow + n_skip
         print()
         return
 
-    d["skipped"] += n_below
+    d["skipped"] += n_skip
 
-    # 5. Recurse into FOLLOW links (skipped entirely in dry-run mode)
     if dry_run:
-        if n_above:
-            print(f"{indent}  (dry-run -- {n_above} FOLLOW link(s) not fetched)")
+        if n_follow:
+            print(f"{indent}  (dry-run -- {n_follow} FOLLOW link(s) not fetched)")
         print()
         return
 
-    d["followed"] += n_above
+    d["followed"] += n_follow
     print()
 
     for lk in scored:
-        if lk["score"] >= THRESHOLD and lk["url"] not in visited:
+        if lk.get("follow") and lk["url"] not in visited:
             _crawl(
                 url=lk["url"],
                 seed=seed,
@@ -273,7 +412,7 @@ def _crawl(
                 visited=visited,
                 stats=stats,
                 app=app,
-                topic_vocab=topic_vocab,
+                query_tokens=query_tokens,
                 indent=indent + "  ",
                 dry_run=False,
             )
@@ -286,52 +425,58 @@ def main() -> None:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Fetch and score the seed page only; do not fetch any subpages.",
+        help="Fetch and score the seed page only; do not fetch subpages.",
     )
+
     args = parser.parse_args()
     dry_run = args.dry_run
 
-    # Dependency checks
     try:
         from firecrawl import V1FirecrawlApp  # type: ignore[import]
     except ImportError:
-        print("ERROR: pip install firecrawl-py")
+        print("ERROR: pip install firecrawl-py python-dotenv")
         return
 
     api_key = os.getenv("FIRECRAWL_API_KEY")
+
     if not api_key:
         print("ERROR: FIRECRAWL_API_KEY not set in .env or environment")
         return
 
-    # Header
+    query_tokens = _build_query_tokens(TOPICS)
+
     print()
     print("CRAWL TRACE" + ("  [dry-run]" if dry_run else ""))
     print(f"  seed      : {URL}")
     print(f"  max depth : {'--' if dry_run else MAX_DEPTH}")
     print(f"  threshold : {THRESHOLD}")
+    print(f"  top-k     : {TOP_K_PER_PAGE}")
+    print(f"  scorer    : BM25 + URL/anchor boosts + per-page normalisation")
     print(f"  topics    : {len(TOPICS)}")
     print()
-
-    topic_vocab = _build_topic_vocab(TOPICS)
-    print(f"  Topic vocabulary: {len(topic_vocab)} words")
+    print(f"  Query terms: {len(set(query_tokens))} unique")
+    print(f"  Query      : {' | '.join(TOPICS)}")
     print()
 
-    app     = V1FirecrawlApp(api_key=api_key)
-    visited: set  = set()
-    stats:   dict = {}
+    app = V1FirecrawlApp(api_key=api_key)
+    visited: set[str] = set()
+    stats: dict = {}
 
     print("=" * 72)
     print()
 
     _crawl(
-        url=URL, seed=URL, depth=0,
-        visited=visited, stats=stats,
-        app=app, topic_vocab=topic_vocab,
+        url=URL,
+        seed=URL,
+        depth=0,
+        visited=visited,
+        stats=stats,
+        app=app,
+        query_tokens=query_tokens,
         indent="",
         dry_run=dry_run,
     )
 
-    # Summary
     print("=" * 72)
     print()
     print("CRAWL SUMMARY")
@@ -341,14 +486,19 @@ def main() -> None:
 
     for depth in sorted(stats):
         s = stats[depth]
+
         total_pages += s["pages"]
         total_words += s["words"]
 
         pages_str = f"{s['pages']} page{'s' if s['pages'] != 1 else ''} fetched"
-        skip_str  = f"{s['skipped']} skipped" if s["skipped"] else ""
+        skip_str = f"{s['skipped']} skipped" if s["skipped"] else ""
+        follow_str = f"{s['followed']} followed" if s["followed"] else ""
         depth_tag = " (max depth)" if depth == MAX_DEPTH else ""
 
         parts = [pages_str]
+
+        if follow_str:
+            parts.append(follow_str)
         if skip_str:
             parts.append(skip_str)
 

@@ -80,6 +80,6 @@ ENABLE_COST_TRACKING = False
 ENABLE_LATENCY_TRACKING = False
 
 # Timeout for extractor SGAI calls (seconds). Lower to fail fast for unreliable endpoints.
-EXTRACT_TIMEOUT = 30
+EXTRACT_TIMEOUT = 120
 
 ENABLE_PROVENANCE = True

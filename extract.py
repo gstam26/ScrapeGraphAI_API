@@ -72,59 +72,63 @@ def _extract_with_sgai(page: PageDoc, columns: list[ColumnSpec]) -> dict[str, An
     print(f"      → SGAI extracting: {page.url}")
     t0 = time.time()
 
+    _MAX_ATTEMPTS = 2
+    _RETRY_WAIT_S = 5
+
+    result = None
     try:
-        sgai = ScrapeGraphAI(api_key=API_KEY)
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            sgai = ScrapeGraphAI(api_key=API_KEY)
 
-        # Define a scraping function that tries content-first signatures
-        def _do_scrape():
-            # Try common content param names the SDK might accept
-            content_candidates = [
-                ("content", page.text),
-                ("html", page.html),
-                ("text", page.text),
-            ]
+            # Define a scraping function that tries content-first signatures
+            def _do_scrape():
+                content_candidates = [
+                    ("content", page.text),
+                    ("html", page.html),
+                    ("text", page.text),
+                ]
+                for name, content in content_candidates:
+                    if not content:
+                        continue
+                    try:
+                        return sgai.scrape(**{name: content}, formats=[JsonFormatConfig(prompt=prompt)])
+                    except TypeError:
+                        continue
+                return sgai.scrape(page.url, formats=[JsonFormatConfig(prompt=prompt)])
 
-            for name, content in content_candidates:
-                if not content:
-                    continue
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(_do_scrape)
                 try:
-                    return sgai.scrape(**{name: content}, formats=[JsonFormatConfig(prompt=prompt)])
-                except TypeError:
-                    # SDK didn't accept this param signature
-                    continue
+                    result = future.result(timeout=EXTRACT_TIMEOUT)
+                except FuturesTimeoutError:
+                    duration = time.time() - t0
+                    try:
+                        sgai.close()
+                    except Exception:
+                        pass
+                    if attempt < _MAX_ATTEMPTS:
+                        print(f"      ⚠ SGAI timed out after {EXTRACT_TIMEOUT}s (attempt {attempt}/{_MAX_ATTEMPTS}) — retrying in {_RETRY_WAIT_S}s...")
+                        time.sleep(_RETRY_WAIT_S)
+                        continue
+                    print(f"      ⚠ SGAI timed out on final attempt after {EXTRACT_TIMEOUT}s (elapsed {duration:.2f}s)")
+                    return {}
+                except Exception as e:
+                    duration = time.time() - t0
+                    print(f"      ✗ Extraction error during call after {duration:.2f}s: {e}")
+                    try:
+                        sgai.close()
+                    except Exception:
+                        pass
+                    return {}
 
-            # Fallback to URL-based scraping
-            return sgai.scrape(page.url, formats=[JsonFormatConfig(prompt=prompt)])
-
-        # Execute with timeout
-        with ThreadPoolExecutor(max_workers=1) as ex:
-            future = ex.submit(_do_scrape)
+            # Successful call — close client and exit retry loop
+            duration = time.time() - t0
+            print(f"      → SGAI call completed in {duration:.2f}s (attempt {attempt}/{_MAX_ATTEMPTS})")
             try:
-                result = future.result(timeout=EXTRACT_TIMEOUT)
-            except FuturesTimeoutError:
-                duration = time.time() - t0
-                print(f"      ⚠ SGAI call timed out after {EXTRACT_TIMEOUT}s (elapsed {duration:.2f}s)")
-                try:
-                    sgai.close()
-                except Exception:
-                    pass
-                return {}
-            except Exception as e:
-                duration = time.time() - t0
-                print(f"      ✗ Extraction error during call after {duration:.2f}s: {e}")
-                try:
-                    sgai.close()
-                except Exception:
-                    pass
-                return {}
-
-        duration = time.time() - t0
-        print(f"      → SGAI call completed in {duration:.2f}s")
-
-        try:
-            sgai.close()
-        except Exception:
-            pass
+                sgai.close()
+            except Exception:
+                pass
+            break
 
         # Diagnostics
         if result is None:

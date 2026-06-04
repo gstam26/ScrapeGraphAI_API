@@ -16,13 +16,15 @@ complete human-readable trace of every decision made:
 No pipeline imports.  Reads/writes only cache/.
 
 Usage (from project root):
-    python diagnostics/crawl_trace.py
+    python diagnostics/crawl_trace.py             # full crawl
+    python diagnostics/crawl_trace.py --dry-run   # fetch + score seed only
 
 Requires:
     FIRECRAWL_API_KEY in .env
     pip install firecrawl-py sentence-transformers
 """
 
+import argparse
 import os
 import re
 import hashlib
@@ -188,6 +190,7 @@ def _crawl(
     model,
     topic_embs,
     indent:     str,
+    dry_run:    bool = False,
 ) -> None:
     if url in visited:
         return
@@ -241,11 +244,18 @@ def _crawl(
         print()
         return
 
+    d["skipped"] += n_below
+
+    # 5. Recurse into FOLLOW links (skipped entirely in dry-run mode)
+    if dry_run:
+        if n_above:
+            print(f"{indent}  (dry-run -- {n_above} FOLLOW link(s) not fetched)")
+        print()
+        return
+
     d["followed"] += n_above
-    d["skipped"]  += n_below
     print()
 
-    # 5. Recurse into FOLLOW links
     for lk in scored:
         if lk["score"] >= THRESHOLD and lk["url"] not in visited:
             _crawl(
@@ -258,12 +268,22 @@ def _crawl(
                 model=model,
                 topic_embs=topic_embs,
                 indent=indent + "  ",
+                dry_run=False,
             )
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Guided-crawl trace diagnostic")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Fetch and score the seed page only; do not fetch any subpages.",
+    )
+    args = parser.parse_args()
+    dry_run = args.dry_run
+
     # Dependency checks
     try:
         from sentence_transformers import SentenceTransformer
@@ -283,9 +303,9 @@ def main() -> None:
 
     # Header
     print()
-    print("CRAWL TRACE")
+    print("CRAWL TRACE" + ("  [dry-run]" if dry_run else ""))
     print(f"  seed      : {URL}")
-    print(f"  max depth : {MAX_DEPTH}")
+    print(f"  max depth : {'--' if dry_run else MAX_DEPTH}")
     print(f"  threshold : {THRESHOLD}")
     print(f"  topics    : {len(TOPICS)}")
     print()
@@ -309,6 +329,7 @@ def main() -> None:
         visited=visited, stats=stats,
         app=app, model=model, topic_embs=topic_embs,
         indent="",
+        dry_run=dry_run,
     )
 
     # Summary

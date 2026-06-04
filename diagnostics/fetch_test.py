@@ -7,7 +7,7 @@ cache/<sha256(url)>.md, and prints status / word count / content quality.
 No extraction, no scoring — just: did we get usable content?
 
 Usage:
-    python fetch_test.py
+    python diagnostics/fetch_test.py
 
 Requires FIRECRAWL_API_KEY in .env or environment.
 """
@@ -26,7 +26,8 @@ URLS = [
     "https://www.elmhurst1925.com",
 ]
 
-CACHE_DIR = "cache"
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CACHE_DIR = os.path.join(_REPO_ROOT, "cache")
 
 # Firecrawl fetch timeout in ms — these pages can be slow to render
 FETCH_TIMEOUT_MS = 60_000

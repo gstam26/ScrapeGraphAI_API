@@ -21,7 +21,7 @@ Usage (from project root):
 
 Requires:
     FIRECRAWL_API_KEY in .env
-    pip install firecrawl-py sentence-transformers
+    pip install firecrawl-py
 """
 
 import argparse
@@ -39,9 +39,13 @@ CACHE_DIR  = os.path.join(_REPO_ROOT, "cache")
 # ── Crawl config ──────────────────────────────────────────────────────────────
 URL              = "https://www.ripplefoods.com"
 MAX_DEPTH        = 2
-THRESHOLD        = 0.50
+THRESHOLD        = 0.30
 FETCH_TIMEOUT_MS = 60_000
-MODEL_NAME       = "all-MiniLM-L6-v2"
+
+_STOP = frozenset({
+    "and", "the", "or", "of", "in", "to", "for", "with",
+    "on", "at", "by", "an", "as", "is", "are", "be", "not",
+})
 
 TOPICS = [
     "sustainability environmental impact carbon footprint emissions",
@@ -125,29 +129,34 @@ def _extract_links(markdown: str, page_url: str) -> list[dict]:
     return out
 
 
-# ── Scoring ───────────────────────────────────────────────────────────────────
+# ── Scoring  (keyword overlap — no external models) ──────────────────────────
 
-def _score_links(links: list[dict], model, topic_embs) -> list[dict]:
+def _build_topic_vocab(topics: list[str]) -> frozenset[str]:
+    """Unique meaningful words (>= 3 chars, not stop-words) across all topics."""
+    vocab: set[str] = set()
+    for topic in topics:
+        for word in re.findall(r"[a-z]+", topic.lower()):
+            if len(word) >= 3 and word not in _STOP:
+                vocab.add(word)
+    return frozenset(vocab)
+
+
+def _overlap_score(text: str, topic_vocab: frozenset[str]) -> float:
     """
-    Embed each link as 'anchor. context' (marker stripped), score against
-    topics with cosine similarity, sort descending.
+    Score = |unique_words(text) ∩ topic_vocab| / |unique_words(text)|
+    Words shorter than 3 chars are ignored on both sides.
     """
-    from sentence_transformers import util
+    words = {w for w in re.findall(r"[a-z]+", text.lower()) if len(w) >= 3}
+    if not words:
+        return 0.0
+    return len(words & topic_vocab) / len(words)
 
-    if not links:
-        return []
 
-    texts = []
+def _score_links(links: list[dict], topic_vocab: frozenset[str]) -> list[dict]:
+    """Score each link by keyword overlap; sort descending."""
     for lk in links:
         clean = lk["context"].replace(f"<<{lk['anchor']}>>", "").strip()
-        texts.append(f"{lk['anchor']}. {clean}")
-
-    lembs = model.encode(texts, convert_to_tensor=True, show_progress_bar=False)
-    sim   = util.cos_sim(lembs, topic_embs)
-
-    for i, lk in enumerate(links):
-        lk["score"] = float(sim[i].max())
-
+        lk["score"] = _overlap_score(f"{lk['anchor']} {clean}", topic_vocab)
     return sorted(links, key=lambda x: x["score"], reverse=True)
 
 
@@ -181,16 +190,15 @@ def _print_link_row(lk: dict, seed: str, indent: str, visited: set) -> None:
 # ── Core crawl ────────────────────────────────────────────────────────────────
 
 def _crawl(
-    url:        str,
-    seed:       str,
-    depth:      int,
-    visited:    set,
-    stats:      dict,
+    url:         str,
+    seed:        str,
+    depth:       int,
+    visited:     set,
+    stats:       dict,
     app,
-    model,
-    topic_embs,
-    indent:     str,
-    dry_run:    bool = False,
+    topic_vocab: frozenset,
+    indent:      str,
+    dry_run:     bool = False,
 ) -> None:
     if url in visited:
         return
@@ -227,7 +235,7 @@ def _crawl(
     print(f"{indent}  {len(links)} same-domain link(s) -- depth {depth}")
 
     # 3. Score
-    scored = _score_links(links, model, topic_embs)
+    scored = _score_links(links, topic_vocab)
 
     # 4. Print scored table
     for lk in scored:
@@ -265,8 +273,7 @@ def _crawl(
                 visited=visited,
                 stats=stats,
                 app=app,
-                model=model,
-                topic_embs=topic_embs,
+                topic_vocab=topic_vocab,
                 indent=indent + "  ",
                 dry_run=False,
             )
@@ -285,11 +292,6 @@ def main() -> None:
     dry_run = args.dry_run
 
     # Dependency checks
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError:
-        print("ERROR: pip install sentence-transformers")
-        return
     try:
         from firecrawl import V1FirecrawlApp  # type: ignore[import]
     except ImportError:
@@ -310,11 +312,8 @@ def main() -> None:
     print(f"  topics    : {len(TOPICS)}")
     print()
 
-    # Load model once before crawl starts
-    print(f"  Loading model {MODEL_NAME!r}...", flush=True)
-    model      = SentenceTransformer(MODEL_NAME)
-    topic_embs = model.encode(TOPICS, convert_to_tensor=True, show_progress_bar=False)
-    print("  Model ready.")
+    topic_vocab = _build_topic_vocab(TOPICS)
+    print(f"  Topic vocabulary: {len(topic_vocab)} words")
     print()
 
     app     = V1FirecrawlApp(api_key=api_key)
@@ -327,7 +326,7 @@ def main() -> None:
     _crawl(
         url=URL, seed=URL, depth=0,
         visited=visited, stats=stats,
-        app=app, model=model, topic_embs=topic_embs,
+        app=app, topic_vocab=topic_vocab,
         indent="",
         dry_run=dry_run,
     )

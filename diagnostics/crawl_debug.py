@@ -11,7 +11,7 @@ No fetching, no pipeline imports — reads only from cache/.
 Usage (from project root):
     python diagnostics/crawl_debug.py
 
-Requires: sentence-transformers  (pip install sentence-transformers)
+No external models or API keys required beyond FIRECRAWL_API_KEY.
 """
 
 import os
@@ -38,10 +38,13 @@ TOPICS = [
 ]
 
 # ── Score threshold separating follow / skip ─────────────────────────────────
-THRESHOLD = 0.50
+THRESHOLD = 0.30
 
-# ── Embedding model (downloaded once, ~90 MB, cached by HuggingFace) ─────────
-MODEL_NAME = "all-MiniLM-L6-v2"
+# ── Stop-words excluded when building the topic vocabulary ────────────────────
+_STOP = frozenset({
+    "and", "the", "or", "of", "in", "to", "for", "with",
+    "on", "at", "by", "an", "as", "is", "are", "be", "not",
+})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -106,40 +109,40 @@ def _extract_links(markdown: str, base_url: str) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Scoring
+# Scoring  (keyword overlap — no external models)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _score_links(links: list[dict], topics: list[str]) -> list[dict]:
-    """
-    Embed each link as  "anchor. context"  and each topic separately.
-    Score = max cosine similarity across all topics.
-    Also records which topic matched best.
-    Sorts result descending by score.
-    """
-    from sentence_transformers import SentenceTransformer, util  # type: ignore[import]
+def _build_topic_vocab(topics: list[str]) -> frozenset[str]:
+    """Unique meaningful words (>= 3 chars, not stop-words) across all topics."""
+    vocab: set[str] = set()
+    for topic in topics:
+        for word in re.findall(r"[a-z]+", topic.lower()):
+            if len(word) >= 3 and word not in _STOP:
+                vocab.add(word)
+    return frozenset(vocab)
 
-    print(f"  Loading model {MODEL_NAME!r}...", flush=True)
-    model = SentenceTransformer(MODEL_NAME)
 
-    # Build link texts: strip <<anchor>> marker from context to avoid double-counting
-    link_texts = []
+def _overlap_score(text: str, topic_vocab: frozenset[str]) -> tuple[float, list[str]]:
+    """
+    Score = |unique_words(text) ∩ topic_vocab| / |unique_words(text)|
+
+    Returns (score, sorted list of matched words).
+    Words shorter than 3 chars are ignored on both sides.
+    """
+    words = {w for w in re.findall(r"[a-z]+", text.lower()) if len(w) >= 3}
+    if not words:
+        return 0.0, []
+    matched = sorted(words & topic_vocab)
+    return len(matched) / len(words), matched
+
+
+def _score_links(links: list[dict], topic_vocab: frozenset[str]) -> list[dict]:
+    """Score each link by keyword overlap; attach matched words; sort descending."""
     for lk in links:
-        ctx_clean = lk["context"].replace(f"<<{lk['anchor']}>>", "").strip(" ·—–-")
-        link_texts.append(f"{lk['anchor']}. {ctx_clean}")
-
-    print(f"  Encoding {len(links)} link(s) + {len(topics)} topic(s)...", flush=True)
-    link_embs  = model.encode(link_texts,  convert_to_tensor=True, show_progress_bar=False)
-    topic_embs = model.encode(topics,      convert_to_tensor=True, show_progress_bar=False)
-
-    # (N_links × N_topics)
-    sim_matrix = util.cos_sim(link_embs, topic_embs)
-
-    for i, lk in enumerate(links):
-        row = sim_matrix[i]
-        best_idx       = int(row.argmax())
-        lk["score"]      = float(row[best_idx])
-        lk["best_topic"] = topics[best_idx]
-
+        clean = lk["context"].replace(f"<<{lk['anchor']}>>", "").strip()
+        lk["score"], lk["matched"] = _overlap_score(
+            f"{lk['anchor']} {clean}", topic_vocab
+        )
     return sorted(links, key=lambda x: x["score"], reverse=True)
 
 
@@ -157,12 +160,13 @@ def _trunc(s: str, width: int) -> str:
 
 
 def _print_row(rank: int, link: dict) -> None:
-    score  = f"{link['score']:.3f}"
-    anchor = _trunc(link["anchor"], W_ANCHOR)
-    url    = _trunc(link["url"],    W_URL)
-    ctx    = _trunc(link["context"], 120)
+    score   = f"{link['score']:.3f}"
+    anchor  = _trunc(link["anchor"], W_ANCHOR)
+    url     = _trunc(link["url"],    W_URL)
+    ctx     = _trunc(link["context"], 120)
+    matched = ", ".join(link.get("matched", [])) or "(none)"
     print(f"  {score:<{W_SCORE}}  {anchor:<{W_ANCHOR}}  {url:<{W_URL}}")
-    print(f"  {'':>{W_SCORE}}  topic: {_trunc(link['best_topic'], 60)}")
+    print(f"  {'':>{W_SCORE}}  matched: {matched}")
     print(f"  {'':>{W_SCORE}}  ctx:   {ctx}")
     print()
 
@@ -178,13 +182,6 @@ def _print_threshold_line() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    try:
-        import sentence_transformers  # noqa: F401  — check before anything else
-    except ImportError:
-        print("ERROR: sentence-transformers not installed.")
-        print("  Run: pip install sentence-transformers")
-        return
-
     cache_file = _cache_path(URL)
     if not cache_file:
         key = hashlib.sha256(URL.encode("utf-8")).hexdigest()
@@ -215,8 +212,8 @@ def main() -> None:
         print(f"    · {t}")
     print()
 
-    scored = _score_links(links, TOPICS)
-    print()
+    topic_vocab = _build_topic_vocab(TOPICS)
+    scored = _score_links(links, topic_vocab)
 
     # ── Ranked table ──────────────────────────────────────────────────────────
     header_anchor = f"{'ANCHOR':<{W_ANCHOR}}"

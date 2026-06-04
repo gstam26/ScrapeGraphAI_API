@@ -3,7 +3,7 @@ import hashlib
 import requests
 from bs4 import BeautifulSoup
 
-from config import CACHE_DIR
+from config import CACHE_DIR, REQUEST_HEADERS
 from models import PageDoc
 
 
@@ -30,9 +30,7 @@ def acquire_page(url: str) -> PageDoc:
     response = requests.get(
         url,
         timeout=30,
-        headers={
-            "User-Agent": "Mozilla/5.0 sustainability-research-prototype"
-        },
+        headers=REQUEST_HEADERS,
     )
     response.raise_for_status()
 

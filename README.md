@@ -1,6 +1,6 @@
-# Sustainability Matrix Extraction Pipeline
+# Web Extraction Pipeline
 
-A modular pipeline for extracting sustainability information from company websites and exporting the results to a structured Excel matrix with provenance and verification metadata.
+A modular pipeline for extracting structured information from websites and exporting the results to a structured Excel matrix with provenance and verification metadata.
 
 The system is designed around a layered architecture:
 
@@ -69,7 +69,7 @@ Example fields:
 Brand name
 Parent company
 Type of milk
-Sustainability claims
+Claims
 ```
 
 Each extraction returns:
@@ -104,7 +104,7 @@ Two worksheets are produced.
 
 Contains the final extracted values.
 
-| URL | Brand Name | Sustainability Claims |
+| URL | Brand Name | Claims |
 |------|------|------|
 | ... | ... | ... |
 
@@ -159,7 +159,7 @@ Example:
 
 ```text
 Column 1: Brand name
-Column 2: Sustainability claims: return only concrete environmental claims
+Column 2: Claims: return only concrete claims
 Column 3: done
 ```
 
@@ -204,7 +204,7 @@ Provenance
 
 ### Matrix Sheet
 
-Contains the final extracted sustainability matrix.
+Contains the final extracted matrix.
 
 ### Provenance Sheet
 

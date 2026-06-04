@@ -9,7 +9,7 @@ from pipeline import run_pipeline
 def get_columns_from_user() -> list[str]:
     print("\nEnter column headers. Add a colon after the name to give extraction instructions.")
     print('  Example: "Type of milk: return only the base word, e.g. pea, oat"')
-    print('  Example: "Sustainability claims: return as a list, one claim per item"')
+    print('  Example: "Claims or features: return as a list, one item per element"')
     print("Type 'done' when finished.\n")
 
     columns = []
@@ -46,7 +46,7 @@ def format_elapsed(seconds: int) -> str:
 
 
 def main():
-    print("=== Sustainability Matrix Pipeline ===\n")
+    print("=== Entity Extraction Pipeline ===\n")
 
     input_path = input("Path to input Excel file: ").strip()
     urls = read_urls_from_excel(input_path)

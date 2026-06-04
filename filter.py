@@ -1,11 +1,20 @@
-from models import PageDoc
+from models import PageDoc, ColumnSpec, RoutedPage
 
 
-def filter_page(page: PageDoc) -> PageDoc:
+def filter_page(page: PageDoc, columns: list[ColumnSpec] | None = None) -> RoutedPage:
     """
-    Week 1 version: passthrough.
-
-    Later this can remove irrelevant content, navigation text,
-    cookies, menus, duplicated footer text, etc.
+    Route a page to extraction with cell relevance markers.
+    
+    MVP: Mark all requested columns as relevant for all pages.
+    
+    Future: Use embedding-based routing to mark only relevant columns,
+    reducing unnecessary extraction calls.
     """
-    return page
+    
+    # For MVP: all columns relevant for all pages
+    relevant_columns = {col.name for col in (columns or [])}
+    
+    return RoutedPage(
+        page=page,
+        relevant_columns=relevant_columns,
+    )

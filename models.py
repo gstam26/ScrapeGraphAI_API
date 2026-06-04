@@ -22,9 +22,25 @@ class PageDoc(BaseModel):
     from_cache: bool = False
 
 
-class FetchedPage(PageDoc):
-    """Alias for PageDoc for clarity."""
-    pass
+class FetchedPage(BaseModel):
+    """Output of the Acquire layer — one fetched (or cached) page."""
+    url: str
+    parent_url: str | None = None
+    markdown: str
+    status: str  # "ok" | "cached" | "error"
+
+
+class Config(BaseModel):
+    """Runtime configuration passed to each pipeline layer."""
+    acquire_tool: str = "requests"   # "requests" | "sgai" | "firecrawl" | "playwright"
+    cache_dir: str = "cache"
+    request_headers: dict = Field(
+        default_factory=lambda: {"User-Agent": "Mozilla/5.0 entity-extraction-pipeline"}
+    )
+    request_timeout: int = 30
+    sgai_api_key: str | None = None
+    firecrawl_api_key: str | None = None
+    fetch_wait_ms: int = 3000
 
 
 class EntityDoc(BaseModel):

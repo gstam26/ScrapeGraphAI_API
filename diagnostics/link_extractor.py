@@ -56,7 +56,7 @@ def _extract_links(markdown: str, base_url: str) -> list[dict]:
     filter to same-domain, deduplicate, return in page order.
 
     Each entry: {position, anchor, url, context}
-    Context replaces the raw link with «anchor» for readability.
+    Context replaces the raw link with <<anchor>> for readability.
     """
     # Matches [anchor text](url) and [anchor text](url "optional title")
     pattern = re.compile(r'\[([^\]]+)\]\(([^)\s"]+)(?:\s+"[^"]*")?\)')
@@ -87,7 +87,7 @@ def _extract_links(markdown: str, base_url: str) -> list[dict]:
         seen_urls.add(resolved)
 
         # Context: up to 100 chars before and after the full [anchor](url) match,
-        # with the link replaced by «anchor» so the URL clutter is removed.
+        # with the link replaced by <<anchor>> so the URL clutter is removed.
         ctx_start = max(0, match.start() - 100)
         ctx_end   = min(len(markdown), match.end() + 100)
         raw_ctx   = markdown[ctx_start:ctx_end].replace("\n", " ")
@@ -96,7 +96,7 @@ def _extract_links(markdown: str, base_url: str) -> list[dict]:
         rel_end   = match.end()   - ctx_start
         context = (
             raw_ctx[:rel_start].rstrip()
-            + f" «{anchor}» "
+            + f" <<{anchor}>> "
             + raw_ctx[rel_end:].lstrip()
         ).strip()
 

@@ -52,6 +52,7 @@ def _bm25_score_doc(
     tf: dict[str, int],
     idf: dict[str, float],
     avg_doc_len: float,
+    term_weights: dict[str, float] | None = None,
 ) -> float:
     if not query_tokens or not doc_tokens or avg_doc_len <= 0:
         return 0.0
@@ -63,20 +64,22 @@ def _bm25_score_doc(
         if freq == 0:
             continue
         denom = freq + BM25_K1 * (1 - BM25_B + BM25_B * (doc_len / avg_doc_len))
-        score += idf.get(term, 0.0) * ((freq * (BM25_K1 + 1)) / denom)
+        bm25 = idf.get(term, 0.0) * ((freq * (BM25_K1 + 1)) / denom)
+        score += (term_weights.get(term, 1.0) if term_weights else 1.0) * bm25
     return score
 
 
-def score_links(candidates: list[LinkCandidate], crawl_terms: list[str]) -> list[LinkCandidate]:
+def score_links(candidates: list[LinkCandidate], crawl_query: dict[str, float]) -> list[LinkCandidate]:
     """
     Score all candidates using BM25 over anchor text + URL path.
 
+    crawl_query maps pre-tokenized terms to their query weights.
     Scores are normalised to 0-1 per call (relative ranking within this batch).
     """
     if not candidates:
         return candidates
 
-    query_tokens = _tokenize(" ".join(crawl_terms))
+    query_tokens = list(crawl_query.keys())
 
     doc_texts = [
         f"{c.anchor_text} {urlparse(c.url).path}"
@@ -86,7 +89,7 @@ def score_links(candidates: list[LinkCandidate], crawl_terms: list[str]) -> list
     tf_docs, idf, avg_doc_len = _bm25_prepare(tokenized_docs)
 
     raw_scores = [
-        _bm25_score_doc(query_tokens, doc_tokens, tf, idf, avg_doc_len)
+        _bm25_score_doc(query_tokens, doc_tokens, tf, idf, avg_doc_len, term_weights=crawl_query)
         for doc_tokens, tf in zip(tokenized_docs, tf_docs)
     ]
 

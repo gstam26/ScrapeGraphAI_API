@@ -10,6 +10,7 @@ from config import (
     CRAWL_MIN_SCORE,
     DEFAULT_DEPTH,
     EXTRACT_TOOL,
+    FETCH_BACKEND,
     REQUEST_HEADERS,
 )
 from aggregate import aggregate_cells
@@ -93,6 +94,10 @@ def _pages_from_fetch_results(fetch_results: list[FetchedPage]) -> list[PageDoc]
             depth=fp.depth,
             crawl_score=fp.crawl_score,
             fetch_time_ms=fp.fetch_time_ms,
+            backend=fp.backend,
+            render_fallback=fp.render_fallback,
+            gate_passed=fp.gate_passed,
+            gate_reason=fp.gate_reason,
         )
         for fp in fetch_results
     ]

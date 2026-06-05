@@ -12,7 +12,7 @@ from config import (
 )
 from models import ColumnSpec, Config, PageDoc
 from src.acquire.cache import read_cache, write_cache
-from src.acquire.fetcher import fetch_page_raw
+from src.acquire.fetcher import fetch_page_with_provenance
 from src.acquire.link_scorer import _tokenize, score_links
 from src.acquire.models import EntityDoc, LinkCandidate
 
@@ -86,11 +86,18 @@ def _same_domain(start_url: str, candidate_url: str) -> bool:
 def _acquire_page_cfg(url: str, cfg: Config) -> PageDoc:
     cached = read_cache(url, cfg.cache_dir)
     if cached is not None:
-        return PageDoc(url=url, text=cached, html=None, from_cache=True)
+        return PageDoc(
+            url=url, text=cached, html=None, from_cache=True,
+            backend="cache", render_fallback=False, gate_passed=None, gate_reason="",
+        )
 
-    text, html = fetch_page_raw(url, cfg)
+    text, html, prov = fetch_page_with_provenance(url, cfg)
     write_cache(url, text, cfg.cache_dir)
-    return PageDoc(url=url, text=text, html=html, from_cache=False)
+    return PageDoc(
+        url=url, text=text, html=html, from_cache=False,
+        backend=prov["backend"], render_fallback=prov["render_fallback"],
+        gate_passed=prov["gate_passed"], gate_reason=prov["gate_reason"],
+    )
 
 
 # ── Link discovery ────────────────────────────────────────────────────────────
@@ -191,6 +198,10 @@ def crawl_entity(
             selected_pages.append(page)
 
             if diag is not None:
+                _page_status = (
+                    "gate_failed" if page.gate_passed is False
+                    else ("ok" if page.text else "empty")
+                )
                 diag.setdefault("acquire_log", []).append({
                     "entity_url": start_url,
                     "page_url": page.url,
@@ -202,8 +213,12 @@ def crawl_entity(
                     "page_length": len(page.text),
                     "fetch_time_ms": fetch_time_ms,
                     "from_cache": page.from_cache,
-                    "status": "ok" if page.text else "empty",
+                    "status": _page_status,
                     "skip_reason": "",
+                    "backend": page.backend,
+                    "render_fallback": page.render_fallback,
+                    "gate_passed": page.gate_passed,
+                    "gate_reason": page.gate_reason,
                 })
 
         except Exception as e:
@@ -222,6 +237,10 @@ def crawl_entity(
                     "from_cache": False,
                     "status": "error",
                     "skip_reason": str(e),
+                    "backend": cfg.acquire_tool,
+                    "render_fallback": False,
+                    "gate_passed": None,
+                    "gate_reason": "",
                 })
             continue
 

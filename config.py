@@ -13,7 +13,11 @@ API_KEY = os.getenv("SGAI_API_KEY")
 # TOOLS
 # ============================================================
 
-ACQUIRE_TOOL = "firecrawl"
+# Dev default.  Change to "firecrawl" (or "sgai"/"playwright"/"requests") for
+# deployment — Firecrawl is the deployment-default candidate.
+FETCH_BACKEND = "local"
+
+ACQUIRE_TOOL = FETCH_BACKEND
 EXTRACT_TOOL = "sgai"
 VERIFY_TOOL = "rapidfuzz"
 
@@ -29,6 +33,27 @@ OUTPUT_DIR = "outputs"
 # ============================================================
 
 FETCH_WAIT_MS = 3000
+
+# ============================================================
+# LOCAL-FETCH QUALITY GATE
+# Explicit pass/fail rule applied after httpx + Trafilatura extraction.
+# A page that fails triggers a Playwright re-render (one attempt).
+# Motivation: silently returning nav/footer junk instead of real content
+# is the exact ScrapeGraphAI failure mode documented in Table 4.1.
+# These constants make every failure visible rather than silent.
+# ============================================================
+
+# Minimum characters that Trafilatura must extract for a page to pass.
+# Nav/footer-only pages rarely produce more than a few sentences once stripped.
+QUALITY_MIN_CHARS = 200
+
+# Maximum fraction of body text that may be anchor-link text.
+# Above this threshold the page is likely a navigation listing or link directory.
+QUALITY_MAX_LINK_DENSITY = 0.60
+
+# Minimum fraction of full-page plain text that must survive Trafilatura filtering.
+# Very low retention means almost all content was classified as boilerplate and stripped.
+QUALITY_MIN_CONTENT_RATIO = 0.10
 
 REQUEST_HEADERS = {
     "User-Agent": "Mozilla/5.0 entity-extraction-pipeline"

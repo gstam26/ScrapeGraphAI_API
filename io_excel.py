@@ -6,16 +6,31 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from models import ColumnSpec, PipelineResult
 
 
-def read_urls_from_excel(filepath: str) -> list[str]:
-    """Read entity URLs from input Excel file."""
+def read_urls_from_excel(filepath: str) -> list[tuple[str, int]]:
+    """Read entity URLs (and optional per-URL depth) from input Excel file.
+
+    Returns list of (url, depth) tuples. depth defaults to 0 when the column
+    is absent. depth > 0 enables guided crawling for that URL.
+    """
     df = pd.read_excel(filepath)
 
     url_col = next(
         (col for col in df.columns if "url" in col.lower() or "link" in col.lower()),
         df.columns[0],
     )
+    depth_col = next(
+        (col for col in df.columns if col.lower() == "depth"),
+        None,
+    )
 
-    return df[url_col].dropna().astype(str).tolist()
+    urls = df[url_col].dropna().astype(str).tolist()
+
+    if depth_col is not None:
+        depths = df.loc[df[url_col].notna(), depth_col].fillna(0).astype(int).tolist()
+    else:
+        depths = [0] * len(urls)
+
+    return list(zip(urls, depths))
 
 
 def parse_columns(raw_columns: list[str]) -> list[ColumnSpec]:

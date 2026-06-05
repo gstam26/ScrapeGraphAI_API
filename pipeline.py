@@ -1,6 +1,6 @@
 import time
 
-from config import ACQUIRE_TOOL, API_KEY, CACHE_DIR, CRAWL_ENABLED, REQUEST_HEADERS
+from config import ACQUIRE_TOOL, API_KEY, CACHE_DIR, REQUEST_HEADERS
 from models import ColumnSpec, Config, ExtractedRow, PageDoc, PipelineResult
 from src.acquire import FetchedPage, acquire
 from filter import filter_page
@@ -29,26 +29,35 @@ def _format_elapsed(seconds: float) -> str:
     return f"{m}m {s}s"
 
 
-def run_pipeline(urls: list[str], columns: list[ColumnSpec]) -> PipelineResult:
+def run_pipeline(urls: list[tuple[str, int] | str], columns: list[ColumnSpec]) -> PipelineResult:
     """
     Run the entity extraction pipeline.
 
     Stages: Acquire → Filter → Extract → Verify → Aggregate
+
+    urls: list of (url, depth) tuples or plain strings (depth defaults to
+          cfg.default_depth). depth=0 = single fetch; depth>0 = guided crawl.
     """
     cfg = _build_config()
     rows = []
 
-    for entity_url in urls:
-        print(f"\n  Processing entity: {entity_url}")
+    for entry in urls:
+        if isinstance(entry, str):
+            entity_url, depth = entry, cfg.default_depth
+        else:
+            entity_url, depth = entry
+
+        print(f"\n  Processing entity: {entity_url}" + (f"  [crawl depth={depth}]" if depth > 0 else ""))
 
         try:
             # ========== ACQUIRE ==========
             t_acquire = time.time()
 
+            # Always pass columns; acquire() gates crawling on depth > 0.
             fetch_results: list[FetchedPage] = acquire(
-                [(entity_url, cfg.default_depth)],
+                [(entity_url, depth)],
                 cfg,
-                columns=columns if CRAWL_ENABLED else None,
+                columns=columns,
             )
 
             # Bridge FetchedPage → PageDoc for the downstream stages (filter /

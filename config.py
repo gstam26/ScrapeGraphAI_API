@@ -55,17 +55,6 @@ CRAWL_MIN_SCORE = 0.12
 # Maximum candidate links extracted from a page
 CRAWL_MAX_LINKS_PER_PAGE = 30
 
-# Generic fallback terms used by the crawl planner
-CRAWL_FALLBACK_TERMS = [
-    "about",
-    "company",
-    "overview",
-    "story",
-    "mission",
-    "products",
-    "services",
-]
-
 # ============================================================
 # VERIFICATION
 # ============================================================

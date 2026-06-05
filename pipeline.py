@@ -163,6 +163,7 @@ def run_pipeline(
                 [(spec.url, depth)],
                 cfg,
                 columns=request.columns,
+                entities=relevant_entities,
                 diag=diag,
             )
             _annotate_acquire_diag(diag, acquire_start, candidate_start, spec, relevant_entities)

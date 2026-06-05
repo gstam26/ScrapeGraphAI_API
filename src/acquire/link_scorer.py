@@ -15,37 +15,11 @@ _STOP = frozenset({
     "more", "read", "view", "all", "shop", "buy", "learn",
 })
 
-# Keyword boosts applied to URL path + anchor text before normalisation.
-_URL_BOOSTS: dict[str, float] = {
-    "sustainability": 0.35,
-    "sustainable": 0.25,
-    "sustainability-report": 0.35,
-    "report": 0.25,
-    "annual-report": 0.25,
-    "esg": 0.25,
-    "impact": 0.20,
-    "responsibility": 0.20,
-    "climate": 0.20,
-    "environment": 0.20,
-    "emissions": 0.20,
-    "carbon": 0.18,
-    "net-zero": 0.18,
-    "planet": 0.12,
-    "about": 0.10,
-    "mission": 0.10,
-}
-
-
 def _tokenize(text: str) -> list[str]:
     return [
         w for w in re.findall(r"[a-z0-9]+", text.lower())
         if len(w) >= 3 and w not in _STOP
     ]
-
-
-def _url_anchor_boost(url: str, anchor: str) -> float:
-    text = f"{url} {anchor}".lower()
-    return sum(weight for term, weight in _URL_BOOSTS.items() if term in text)
 
 
 def _bm25_prepare(
@@ -98,7 +72,6 @@ def score_links(candidates: list[LinkCandidate], crawl_terms: list[str]) -> list
     Score all candidates using BM25 over anchor text + URL path.
 
     Scores are normalised to 0-1 per call (relative ranking within this batch).
-    URL/anchor keyword boosts are added before normalisation.
     """
     if not candidates:
         return candidates
@@ -114,8 +87,7 @@ def score_links(candidates: list[LinkCandidate], crawl_terms: list[str]) -> list
 
     raw_scores = [
         _bm25_score_doc(query_tokens, doc_tokens, tf, idf, avg_doc_len)
-        + _url_anchor_boost(c.url, c.anchor_text)
-        for c, doc_tokens, tf in zip(candidates, tokenized_docs, tf_docs)
+        for doc_tokens, tf in zip(tokenized_docs, tf_docs)
     ]
 
     max_score = max(raw_scores) if raw_scores else 0.0

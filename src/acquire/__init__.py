@@ -12,6 +12,7 @@ def acquire(
     urls: list[tuple[str, int] | str],
     cfg: Config,
     columns: list[ColumnSpec] | None = None,
+    entities: list[str] | None = None,
     diag: dict | None = None,
 ) -> list[FetchedPage]:
     """
@@ -43,7 +44,7 @@ def acquire(
         if depth > 0 and columns is not None:
             # Crawl path: crawl_entity returns PageDoc objects; bridge to FetchedPage.
             from src.acquire.crawler import crawl_entity  # lazy: avoids config.py at import time
-            entity_doc = crawl_entity(url, columns, cfg, max_depth=depth, diag=diag)
+            entity_doc = crawl_entity(url, columns, cfg, max_depth=depth, entities=entities, diag=diag)
             for page_doc in entity_doc.pages:
                 results.append(FetchedPage(
                     url=page_doc.url,

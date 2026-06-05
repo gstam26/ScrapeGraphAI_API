@@ -24,6 +24,9 @@ from aggregate import aggregate_cells
 from extract import _parse_field_value
 from io_excel import read_input, write_output_excel
 from models import ColumnSpec, Config, ExtractedCell, ExtractedRow, PageDoc, PipelineResult, SourceQuote
+from src.acquire.crawler import build_crawl_terms
+from src.acquire.link_scorer import score_links
+from src.acquire.models import LinkCandidate
 
 
 def test_parse_dict_output():
@@ -258,6 +261,49 @@ def test_main_only_two_terminal_prompts():
     print("OK test_main_only_two_terminal_prompts passed")
 
 
+def test_crawl_terms_include_questions_instructions_and_entities_only():
+    columns = [
+        ColumnSpec(
+            name="What is the warranty policy?",
+            instruction="include warranty period and coverage limits",
+        )
+    ]
+
+    terms = build_crawl_terms(columns, entities=["Acme-Tools"])
+
+    assert "warranty" in terms
+    assert "policy" in terms
+    assert "period" in terms
+    assert "acme" in terms
+    assert "tools" in terms
+    assert "company" not in terms
+    assert "overview" not in terms
+    assert "products" not in terms
+    print("OK test_crawl_terms_include_questions_instructions_and_entities_only passed")
+
+
+def test_link_scorer_has_no_domain_specific_keyword_boosts():
+    candidates = [
+        LinkCandidate(
+            url="https://example.com/sustainability",
+            anchor_text="Sustainability",
+            depth=1,
+        ),
+        LinkCandidate(
+            url="https://example.com/warranty",
+            anchor_text="Warranty policy",
+            depth=1,
+        ),
+    ]
+
+    scored = score_links(candidates, ["warranty", "policy", "acme"])
+
+    by_url = {candidate.url: candidate.score for candidate in scored}
+    assert by_url["https://example.com/sustainability"] == 0.0
+    assert by_url["https://example.com/warranty"] == 1.0
+    print("OK test_link_scorer_has_no_domain_specific_keyword_boosts passed")
+
+
 if __name__ == "__main__":
     test_parse_dict_output()
     test_parse_list_of_dicts()
@@ -271,5 +317,7 @@ if __name__ == "__main__":
     test_extract_cells_only_returns_requested_entities()
     test_backward_compatibility_without_entities_sheet()
     test_main_only_two_terminal_prompts()
+    test_crawl_terms_include_questions_instructions_and_entities_only()
+    test_link_scorer_has_no_domain_specific_keyword_boosts()
 
     print("\nAll smoke tests passed!")

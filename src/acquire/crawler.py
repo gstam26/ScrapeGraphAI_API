@@ -7,7 +7,6 @@ import requests
 from bs4 import BeautifulSoup
 
 from config import (
-    CRAWL_FALLBACK_TERMS,
     CRAWL_MAX_DEPTH,
     CRAWL_MAX_LINKS_PER_PAGE,
 )
@@ -28,17 +27,18 @@ _STOPWORDS = {
 }
 
 
-def build_crawl_terms(columns: list[ColumnSpec]) -> list[str]:
-    """Build crawl intent from user-defined extraction columns."""
+def build_crawl_terms(columns: list[ColumnSpec], entities: list[str] | None = None) -> list[str]:
+    """Build crawl intent from user-defined extraction columns and entities."""
     schema_text = " ".join(
         f"{col.name} {col.instruction or ''}"
         for col in columns
-    ).lower()
+    )
+    entity_text = " ".join(entities or [])
+    query_text = f"{schema_text} {entity_text}".lower()
 
-    tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9\-]+", schema_text)
+    tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9\-]+", query_text)
 
-    terms = set(CRAWL_FALLBACK_TERMS)
-
+    terms = set()
     for token in tokens:
         token = token.lower().replace("-", " ")
         for part in token.split():
@@ -119,6 +119,7 @@ def crawl_entity(
     columns: list[ColumnSpec],
     cfg: Config,
     max_depth: int | None = None,
+    entities: list[str] | None = None,
     diag: dict | None = None,
 ) -> EntityDoc:
     """
@@ -130,7 +131,7 @@ def crawl_entity(
     _max_depth = max_depth if max_depth is not None else CRAWL_MAX_DEPTH
     _max_pages = cfg.crawl_max_pages
     _min_score = cfg.crawl_min_score
-    crawl_terms = build_crawl_terms(columns)
+    crawl_terms = build_crawl_terms(columns, entities=entities)
 
     visited: set[str] = set()
     selected_pages = []

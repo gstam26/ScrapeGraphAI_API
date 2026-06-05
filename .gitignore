@@ -14,6 +14,7 @@ build/
 # Data files
 cache/
 outputs/
+diagnostics/fetch_eval/
 *.xlsx
 *.csv
 

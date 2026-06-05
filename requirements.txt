@@ -5,5 +5,8 @@ pydantic
 rapidfuzz
 requests
 beautifulsoup4
+httpx
+trafilatura
+playwright
 scrapegraph-py
 firecrawl-py

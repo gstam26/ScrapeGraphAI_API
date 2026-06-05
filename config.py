@@ -83,3 +83,5 @@ ENABLE_LATENCY_TRACKING = False
 EXTRACT_TIMEOUT = 120
 
 ENABLE_PROVENANCE = True
+
+DIAGNOSTICS = True  # True = all 7 sheets; False = Summary, Matrix, Provenance only

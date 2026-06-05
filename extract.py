@@ -1,4 +1,3 @@
-import json
 from typing import Any
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -10,12 +9,7 @@ from models import PageDoc, ColumnSpec, ExtractedCell, SourceQuote
 
 
 def _build_prompt(columns: list[ColumnSpec], page_text: str | None = None) -> str:
-    """Build extraction prompt from column specs and optional page content.
-
-    The page_text is truncated before insertion to avoid overly large prompts.
-    """
     fields = ""
-
     for col in columns:
         if col.instruction:
             fields += f'- "{col.name}": {col.instruction}\n'
@@ -43,29 +37,19 @@ Rules:
 - Each quote must be copied exactly from the page content where possible.
 - Return only JSON, no other text.
 """
-
     if page_text:
-        # Truncate conservatively to avoid huge prompts; include a clear separator.
-        # Keep the final prompt safely below typical SDK limits (10k chars).
-        # Reserve room for the base prompt by truncating to 7000 chars.
         snippet = page_text[:7000]
         return base + "\nPage content (truncated):\n'''\n" + snippet + "\n'''\n"
-
     return base
 
 
-def _extract_with_sgai(page: PageDoc, columns: list[ColumnSpec]) -> dict[str, Any]:
+def _extract_with_sgai(page: PageDoc, columns: list[ColumnSpec]) -> tuple[dict[str, Any], dict]:
     """
     Extract fields using ScrapeGraphAI.
 
-    Attempts to pass pre-fetched page content to the SDK to avoid re-fetching.
-    Falls back to URL scraping if content-mode isn't supported by the SDK.
-
-    Runs the SDK call inside a thread with a timeout (EXTRACT_TIMEOUT) so slow
-    network/SDK fetches do not block the pipeline for long.
+    Returns (data_dict, timing_info) where timing_info has keys:
+      extraction_time_ms, timed_out, retry_count
     """
-    # Include a truncated slice of the acquired page text in the prompt so the extractor
-    # can use pre-fetched content instead of attempting to re-fetch the URL.
     page_text = page.text if getattr(page, "text", None) else None
     prompt = _build_prompt(columns, page_text[:7000] if page_text else None)
 
@@ -74,13 +58,22 @@ def _extract_with_sgai(page: PageDoc, columns: list[ColumnSpec]) -> dict[str, An
 
     _MAX_ATTEMPTS = 2
     _RETRY_WAIT_S = 5
+    _timed_out = False
+    _attempts_made = 0
+
+    def _make_timing():
+        return {
+            "extraction_time_ms": int((time.time() - t0) * 1000),
+            "timed_out": _timed_out,
+            "retry_count": max(_attempts_made - 1, 0),
+        }
 
     result = None
     try:
         for attempt in range(1, _MAX_ATTEMPTS + 1):
+            _attempts_made = attempt
             sgai = ScrapeGraphAI(api_key=API_KEY)
 
-            # Define a scraping function that tries content-first signatures
             def _do_scrape():
                 content_candidates = [
                     ("content", page.text),
@@ -101,6 +94,7 @@ def _extract_with_sgai(page: PageDoc, columns: list[ColumnSpec]) -> dict[str, An
                 try:
                     result = future.result(timeout=EXTRACT_TIMEOUT)
                 except FuturesTimeoutError:
+                    _timed_out = True
                     duration = time.time() - t0
                     try:
                         sgai.close()
@@ -111,7 +105,7 @@ def _extract_with_sgai(page: PageDoc, columns: list[ColumnSpec]) -> dict[str, An
                         time.sleep(_RETRY_WAIT_S)
                         continue
                     print(f"      ⚠ SGAI timed out on final attempt after {EXTRACT_TIMEOUT}s (elapsed {duration:.2f}s)")
-                    return {}
+                    return {}, _make_timing()
                 except Exception as e:
                     duration = time.time() - t0
                     print(f"      ✗ Extraction error during call after {duration:.2f}s: {e}")
@@ -119,9 +113,8 @@ def _extract_with_sgai(page: PageDoc, columns: list[ColumnSpec]) -> dict[str, An
                         sgai.close()
                     except Exception:
                         pass
-                    return {}
+                    return {}, _make_timing()
 
-            # Successful call — close client and exit retry loop
             duration = time.time() - t0
             print(f"      → SGAI call completed in {duration:.2f}s (attempt {attempt}/{_MAX_ATTEMPTS})")
             try:
@@ -130,126 +123,116 @@ def _extract_with_sgai(page: PageDoc, columns: list[ColumnSpec]) -> dict[str, An
                 pass
             break
 
-        # Diagnostics
         if result is None:
             print("      ⚠ Result is None")
-            return {}
+            return {}, _make_timing()
 
         data_obj = getattr(result, "data", None)
         if data_obj is None:
             print("      ⚠ result.data is None")
-            return {}
+            return {}, _make_timing()
 
         results = getattr(data_obj, "results", None)
         if not results:
             print("      ⚠ result.data.results is empty or falsy")
-            return {}
+            return {}, _make_timing()
 
-        # Prefer structured JSON result under key 'json'
         json_data = {}
         if isinstance(results, dict):
             json_entry = results.get("json") or results.get("json_format") or results.get("json_result")
             if json_entry and isinstance(json_entry, dict):
                 json_data = json_entry.get("data", {})
 
-        # Fallback: if results already looks like a mapping of fields
         if not json_data and isinstance(results, dict):
-            # Attempt to use results directly if it contains field names
             json_data = results
 
         if not json_data:
             print(f"      ⚠ Extraction returned no usable JSON data (keys: {list(results.keys()) if isinstance(results, dict) else type(results)})")
-            return {}
+            return {}, _make_timing()
 
-        # Final sanity check
         if not isinstance(json_data, dict):
             print(f"      ⚠ Parsed json_data is not a dict: {type(json_data)}")
-            return {}
+            return {}, _make_timing()
 
-        return json_data
+        return json_data, _make_timing()
 
     except Exception as e:
         duration = time.time() - t0
         print(f"      ✗ Extraction error after {duration:.2f}s: {e}")
-        return {}
+        return {}, _make_timing()
 
 
 def _parse_field_value(raw: Any) -> tuple[Any, list[SourceQuote]]:
-    """
-    Parse a field value and create evidence items.
-    
-    Returns:
-        (aggregated_value, evidence_items)
-    
-    For scalar: value is the scalar, evidence has one item
-    For list: value is the list, evidence has one item per list element
-    """
     evidence = []
 
     if raw is None:
         return None, evidence
 
-    # Dict response: value + quote format
     if isinstance(raw, dict):
         value = raw.get("value")
         quote = raw.get("quote")
-
         if value not in (None, "", []):
             evidence.append(SourceQuote(value=value, quote=quote))
-
         return value, evidence
 
-    # List of dict responses: one evidence per item
     elif isinstance(raw, list):
         values = []
-        
         for item in raw:
             if isinstance(item, dict):
                 value = item.get("value")
                 quote = item.get("quote")
-
                 if value not in (None, "", []):
                     values.append(value)
                     evidence.append(SourceQuote(value=value, quote=quote))
             else:
-                # Plain scalar in list
                 if item not in (None, "", []):
                     values.append(item)
                     evidence.append(SourceQuote(value=item, quote=None))
-
         return values if values else None, evidence
 
-    # Plain scalar value
     else:
         if raw not in (None, "", []):
             evidence.append(SourceQuote(value=raw, quote=None))
-
         return raw, evidence
 
 
-def extract_cells(page: PageDoc, columns: list[ColumnSpec]) -> list[ExtractedCell]:
+def extract_cells(
+    page: PageDoc,
+    columns: list[ColumnSpec],
+    entity_url: str = "",
+    diag: dict | None = None,
+) -> list[ExtractedCell]:
     """
     Extract cells from a page using configured extractor.
-    
-    Creates evidence items:
-    - For scalar values: one item
-    - For list values: one item per element
-    
-    This uses the pre-fetched page content (from acquire.py) to avoid
-    re-fetching and bypassing the cache.
     """
     cells = []
 
-    # For now, only SGAI is supported. Can add Claude dispatch later.
     if EXTRACT_TOOL != "sgai":
         print(f"      ✗ Unknown EXTRACT_TOOL: {EXTRACT_TOOL}")
         return cells
 
-    data = _extract_with_sgai(page, columns)
+    data, timing = _extract_with_sgai(page, columns)
+
+    if diag is not None:
+        items_extracted = sum(
+            len(v) if isinstance(v, list) else (1 if v is not None else 0)
+            for v in data.values()
+        ) if data else 0
+        diag.setdefault("extract_log", []).append({
+            "entity_url": entity_url,
+            "source_url": page.url,
+            "question": "; ".join(c.name for c in columns),
+            "extract_tool": EXTRACT_TOOL,
+            "items_extracted": items_extracted,
+            "extraction_time_ms": timing["extraction_time_ms"],
+            "timed_out": timing["timed_out"],
+            "retry_count": timing["retry_count"],
+            "page_length_input": len(page.text) if page.text else 0,
+            "raw_answer_preview": str(data)[:300] if data else "",
+        })
 
     for col in columns:
         raw = data.get(col.name)
-        
         value, evidence = _parse_field_value(raw)
 
         cell = ExtractedCell(
@@ -267,10 +250,8 @@ def extract_cells(page: PageDoc, columns: list[ColumnSpec]) -> list[ExtractedCel
             if isinstance(value, list):
                 print(f"      • {col.name}: [{len(value)} items] ({len(evidence)} evidence)")
             else:
-                first_val = str(value)[:40]
-                print(f"      • {col.name}: {first_val} ({len(evidence)} evidence)")
+                print(f"      • {col.name}: {str(value)[:40]} ({len(evidence)} evidence)")
 
         cells.append(cell)
 
     return cells
-

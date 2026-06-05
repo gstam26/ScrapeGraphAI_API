@@ -7,6 +7,9 @@ class FetchedPage(BaseModel):
     parent_url: str | None = None
     markdown: str
     status: str  # "ok" | "cached" | "error"
+    depth: int = 0
+    crawl_score: float = 1.0
+    fetch_time_ms: int = 0
 
 
 class LinkCandidate(BaseModel):
@@ -15,6 +18,7 @@ class LinkCandidate(BaseModel):
     anchor_text: str = ""
     depth: int = 0
     score: float = 0.0
+    parent_url: str | None = None
 
 
 class EntityDoc(BaseModel):

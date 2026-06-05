@@ -1,4 +1,5 @@
 import re
+import time
 from collections import deque
 from urllib.parse import urljoin, urlparse
 
@@ -120,6 +121,7 @@ def crawl_entity(
     columns: list[ColumnSpec],
     cfg: Config,
     max_depth: int | None = None,
+    diag: dict | None = None,
 ) -> EntityDoc:
     """
     Guided crawler.
@@ -139,6 +141,7 @@ def crawl_entity(
             anchor_text="start page",
             depth=0,
             score=1.0,
+            parent_url=None,
         )
     ])
 
@@ -155,10 +158,49 @@ def crawl_entity(
 
         try:
             print(f"    Acquiring page: {current.url} (depth={current.depth}, score={current.score:.2f})")
+            t0 = time.time()
             page = _acquire_page_cfg(current.url, cfg)
+            fetch_time_ms = int((time.time() - t0) * 1000)
+
+            page.depth = current.depth
+            page.crawl_score = current.score
+            page.fetch_time_ms = fetch_time_ms
+
             selected_pages.append(page)
+
+            if diag is not None:
+                diag.setdefault("acquire_log", []).append({
+                    "entity_url": start_url,
+                    "page_url": page.url,
+                    "parent_url": current.parent_url,
+                    "depth": current.depth,
+                    "crawl_score": round(current.score, 3),
+                    "above_threshold": current.depth == 0 or current.score >= CRAWL_MIN_SCORE,
+                    "fetch_tool": cfg.acquire_tool,
+                    "page_length": len(page.text),
+                    "fetch_time_ms": fetch_time_ms,
+                    "from_cache": page.from_cache,
+                    "status": "ok" if page.text else "empty",
+                    "skip_reason": "",
+                })
+
         except Exception as e:
             print(f"    ✗ Failed to acquire {current.url}: {e}")
+            if diag is not None:
+                diag.setdefault("acquire_log", []).append({
+                    "entity_url": start_url,
+                    "page_url": current.url,
+                    "parent_url": current.parent_url,
+                    "depth": current.depth,
+                    "crawl_score": round(current.score, 3),
+                    "above_threshold": True,
+                    "fetch_tool": cfg.acquire_tool,
+                    "page_length": 0,
+                    "fetch_time_ms": 0,
+                    "from_cache": False,
+                    "status": "error",
+                    "skip_reason": str(e),
+                })
             continue
 
         if current.depth >= _max_depth:
@@ -177,7 +219,20 @@ def crawl_entity(
         scored_children.sort(key=lambda c: c.score, reverse=True)
 
         for child in scored_children:
-            if child.score >= CRAWL_MIN_SCORE:
+            followed = child.score >= CRAWL_MIN_SCORE
+            if diag is not None:
+                diag.setdefault("crawl_candidates", []).append({
+                    "parent_url": current.url,
+                    "candidate_url": child.url,
+                    "anchor_text": child.anchor_text,
+                    "url_path": urlparse(child.url).path,
+                    "crawl_score": round(child.score, 3),
+                    "threshold": CRAWL_MIN_SCORE,
+                    "followed": followed,
+                    "skip_reason": "" if followed else "below_threshold",
+                })
+            if followed:
+                child.parent_url = current.url
                 queue.append(child)
 
     return EntityDoc(start_url=start_url, pages=selected_pages)

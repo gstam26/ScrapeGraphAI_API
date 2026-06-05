@@ -72,9 +72,9 @@ def main():
     print(f"\nRunning pipeline on {len(urls)} URL(s)...\n")
     start = time.time()
 
-    result = run_pipeline(urls, columns)
+    result, diag = run_pipeline(urls, columns)
 
-    write_output_excel(result, columns, output_path)
+    write_output_excel(result, columns, output_path, diag=diag)
 
     elapsed = int(time.time() - start)
 

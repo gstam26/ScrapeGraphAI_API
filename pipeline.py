@@ -1,6 +1,6 @@
 import time
 
-from config import ACQUIRE_TOOL, API_KEY, CACHE_DIR, REQUEST_HEADERS
+from config import ACQUIRE_TOOL, API_KEY, CACHE_DIR, EXTRACT_TOOL, REQUEST_HEADERS
 from models import ColumnSpec, Config, ExtractedRow, PageDoc, PipelineResult
 from src.acquire import FetchedPage, acquire
 from filter import filter_page
@@ -21,25 +21,33 @@ def _build_config() -> Config:
 def _format_elapsed(seconds: float) -> str:
     ms = int((seconds % 1) * 1000)
     s = int(seconds)
-
     if s < 60:
         return f"{s}s {ms}ms"
-
     m, s = divmod(s, 60)
     return f"{m}m {s}s"
 
 
-def run_pipeline(urls: list[tuple[str, int] | str], columns: list[ColumnSpec]) -> PipelineResult:
+def run_pipeline(
+    urls: list[tuple[str, int] | str],
+    columns: list[ColumnSpec],
+) -> tuple[PipelineResult, dict]:
     """
     Run the entity extraction pipeline.
 
     Stages: Acquire → Filter → Extract → Verify → Aggregate
 
-    urls: list of (url, depth) tuples or plain strings (depth defaults to
-          cfg.default_depth). depth=0 = single fetch; depth>0 = guided crawl.
+    Returns (PipelineResult, diag) where diag contains per-layer diagnostic rows.
     """
     cfg = _build_config()
     rows = []
+
+    diag: dict = {
+        "summary": [],
+        "acquire_log": [],
+        "crawl_candidates": [],
+        "extract_log": [],
+        "verify_log": [],
+    }
 
     for entry in urls:
         if isinstance(entry, str):
@@ -53,21 +61,22 @@ def run_pipeline(urls: list[tuple[str, int] | str], columns: list[ColumnSpec]) -
             # ========== ACQUIRE ==========
             t_acquire = time.time()
 
-            # Always pass columns; acquire() gates crawling on depth > 0.
             fetch_results: list[FetchedPage] = acquire(
                 [(entity_url, depth)],
                 cfg,
                 columns=columns,
+                diag=diag,
             )
 
-            # Bridge FetchedPage → PageDoc for the downstream stages (filter /
-            # extract / verify still operate on PageDoc; to be unified later).
             pages = [
                 PageDoc(
                     url=fp.url,
                     text=fp.markdown,
                     html=None,
                     from_cache=fp.status == "cached",
+                    depth=fp.depth,
+                    crawl_score=fp.crawl_score,
+                    fetch_time_ms=fp.fetch_time_ms,
                 )
                 for fp in fetch_results
             ]
@@ -82,8 +91,8 @@ def run_pipeline(urls: list[tuple[str, int] | str], columns: list[ColumnSpec]) -
 
             for page in pages:
                 routed = filter_page(page, columns)
-                cells = extract_cells(routed.page, columns)
-                cells = verify_cells(cells, routed.page)
+                cells = extract_cells(routed.page, columns, entity_url=entity_url, diag=diag)
+                cells = verify_cells(cells, routed.page, entity_url=entity_url, diag=diag)
                 all_cells.extend(cells)
 
             t_filter_end = time.time()
@@ -97,12 +106,40 @@ def run_pipeline(urls: list[tuple[str, int] | str], columns: list[ColumnSpec]) -
             elapsed_aggregate = _format_elapsed(t_aggregate_end - t_aggregate)
             print(f"    ✓ Aggregate: {len(final_cells)} cell(s) — {elapsed_aggregate}")
 
-            rows.append(ExtractedRow(entity_url=entity_url, cells=final_cells))
+            # ========== SUMMARY ROW ==========
+            entity_acquire = [r for r in diag["acquire_log"] if r["entity_url"] == entity_url]
+            pages_fetched = len(entity_acquire)
+            pages_crawled = sum(1 for r in entity_acquire if r["depth"] > 0)
+
+            all_evidence = [e for c in all_cells for e in c.evidence]
+            total_claims = len(all_evidence)
+            claims_verified = sum(1 for e in all_evidence if e.verified)
+            cells_no_data = sum(1 for c in all_cells if not c.evidence)
+
+            diag["summary"].append({
+                "entity_url": entity_url,
+                "pages_fetched": pages_fetched,
+                "pages_crawled": pages_crawled,
+                "total_claims_found": total_claims,
+                "claims_verified": claims_verified,
+                "claims_unverified": total_claims - claims_verified,
+                "cells_with_no_data": cells_no_data,
+                "total_fetch_time": elapsed_acquire,
+                "total_extract_time": elapsed_filter,
+                "acquire_tool_used": cfg.acquire_tool,
+                "extract_tool_used": EXTRACT_TOOL,
+            })
+
+            rows.append(ExtractedRow(
+                entity_url=entity_url,
+                cells=final_cells,
+                all_cells=all_cells,
+            ))
 
         except Exception as e:
             print(f"    ✗ Failed: {e}")
             import traceback
             traceback.print_exc()
-            rows.append(ExtractedRow(entity_url=entity_url, cells=[]))
+            rows.append(ExtractedRow(entity_url=entity_url, cells=[], all_cells=[]))
 
-    return PipelineResult(rows=rows)
+    return PipelineResult(rows=rows), diag

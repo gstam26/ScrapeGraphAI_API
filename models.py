@@ -20,6 +20,9 @@ class PageDoc(BaseModel):
     text: str
     html: str | None = None
     from_cache: bool = False
+    depth: int = 0
+    crawl_score: float = 1.0
+    fetch_time_ms: int = 0
 
 
 class Config(BaseModel):
@@ -75,7 +78,8 @@ class CellContribution(ExtractedCell):
 class ExtractedRow(BaseModel):
     """All extracted cells for one entity across multiple pages."""
     entity_url: str
-    cells: list[ExtractedCell] = Field(default_factory=list)
+    cells: list[ExtractedCell] = Field(default_factory=list)        # aggregated (one per column)
+    all_cells: list[ExtractedCell] = Field(default_factory=list)    # pre-aggregation (one per page×column)
 
 
 class PipelineResult(BaseModel):

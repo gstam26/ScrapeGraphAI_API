@@ -16,7 +16,7 @@ if not API_KEY:
 # TOOLS
 # ============================================================
 
-ACQUIRE_TOOL = "requests"
+ACQUIRE_TOOL = "firecrawl"
 EXTRACT_TOOL = "sgai"
 VERIFY_TOOL = "rapidfuzz"
 

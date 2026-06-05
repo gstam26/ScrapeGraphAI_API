@@ -15,7 +15,7 @@ from config import (
 from models import ColumnSpec, Config, PageDoc
 from src.acquire.cache import read_cache, write_cache
 from src.acquire.fetcher import fetch_page_raw
-from src.acquire.link_scorer import score_link
+from src.acquire.link_scorer import score_links
 from src.acquire.models import EntityDoc, LinkCandidate
 
 
@@ -150,10 +150,8 @@ def crawl_entity(
 
         visited.add(current.url)
 
-        if current.depth > 0:
-            current = score_link(current, crawl_terms)
-            if current.score < CRAWL_MIN_SCORE:
-                continue
+        if current.depth > 0 and current.score < CRAWL_MIN_SCORE:
+            continue
 
         try:
             print(f"    Acquiring page: {current.url} (depth={current.depth}, score={current.score:.2f})")
@@ -174,13 +172,9 @@ def crawl_entity(
             cfg=cfg,
         )
 
-        scored_children = [
-            score_link(child, crawl_terms)
-            for child in child_links
-            if child.url not in visited
-        ]
-
-        scored_children = sorted(scored_children, key=lambda link: link.score, reverse=True)
+        unvisited = [c for c in child_links if c.url not in visited]
+        scored_children = score_links(unvisited, crawl_terms)
+        scored_children.sort(key=lambda c: c.score, reverse=True)
 
         for child in scored_children:
             if child.score >= CRAWL_MIN_SCORE:

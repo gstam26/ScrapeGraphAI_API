@@ -74,9 +74,12 @@ def _parse_depth(value: Any) -> int:
     if value is None or pd.isna(value) or str(value).strip() == "":
         return 0
     try:
-        return int(float(value))
+        depth = int(float(value))
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Depth must be an integer, got {value!r}") from exc
+    if depth not in {0, 1, 2}:
+        raise ValueError(f"Depth must be 0, 1, or 2, got {depth!r}")
+    return depth
 
 
 def _parse_entity_list(value: Any) -> list[str]:

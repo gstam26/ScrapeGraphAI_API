@@ -58,3 +58,13 @@ _FETCHERS = {
     "firecrawl": _fetch_firecrawl,
     "playwright": _fetch_playwright,
 }
+
+
+def fetch_page_raw(url: str, cfg: Config) -> tuple[str, str | None]:
+    """Fetch url; return (text, html). html is non-None only for the requests backend."""
+    if cfg.acquire_tool == "requests":
+        response = requests.get(url, timeout=cfg.request_timeout, headers=cfg.request_headers)
+        response.raise_for_status()
+        html = response.text
+        return _html_to_text(html), html
+    return _FETCHERS[cfg.acquire_tool](url, cfg), None

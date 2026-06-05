@@ -6,22 +6,20 @@ import requests
 from bs4 import BeautifulSoup
 
 from config import (
-    CACHE_DIR,
     CRAWL_FALLBACK_TERMS,
     CRAWL_MAX_DEPTH,
     CRAWL_MAX_LINKS_PER_PAGE,
     CRAWL_MAX_PAGES,
     CRAWL_MIN_SCORE,
-    REQUEST_HEADERS,
 )
-from models import ColumnSpec, PageDoc
+from models import ColumnSpec, Config, PageDoc
 from src.acquire.cache import read_cache, write_cache
-from src.acquire.fetcher import _html_to_text
+from src.acquire.fetcher import fetch_page_raw
 from src.acquire.link_scorer import score_link
 from src.acquire.models import EntityDoc, LinkCandidate
 
 
-# ── Crawl planner (moved from crawl_planner.py) ──────────────────────────────
+# ── Crawl planner ─────────────────────────────────────────────────────────────
 
 _STOPWORDS = {
     "the", "and", "for", "with", "from", "that", "this", "into", "only",
@@ -63,38 +61,39 @@ def _same_domain(start_url: str, candidate_url: str) -> bool:
     return start_domain == candidate_domain
 
 
-# ── Internal page fetcher used only by the crawler ───────────────────────────
+# ── Page fetcher ──────────────────────────────────────────────────────────────
 
-def _acquire_page(url: str) -> PageDoc:
-    cached = read_cache(url, CACHE_DIR)
+def _acquire_page_cfg(url: str, cfg: Config) -> PageDoc:
+    cached = read_cache(url, cfg.cache_dir)
     if cached is not None:
         return PageDoc(url=url, text=cached, html=None, from_cache=True)
 
-    response = requests.get(url, timeout=30, headers=REQUEST_HEADERS)
-    response.raise_for_status()
-
-    html = response.text
-    text = _html_to_text(html)
-
-    write_cache(url, text, CACHE_DIR)
+    text, html = fetch_page_raw(url, cfg)
+    write_cache(url, text, cfg.cache_dir)
     return PageDoc(url=url, text=text, html=html, from_cache=False)
 
 
 # ── Link discovery ────────────────────────────────────────────────────────────
 
-def _discover_links(page_url: str, start_url: str, depth: int) -> list[LinkCandidate]:
-    try:
-        response = requests.get(
-            page_url,
-            timeout=30,
-            headers={"User-Agent": "Mozilla/5.0 guided-entity-crawler"},
-        )
-        response.raise_for_status()
-    except Exception as e:
-        print(f"    ✗ Could not discover links from {page_url}: {e}")
-        return []
+def _discover_links(
+    page_url: str,
+    start_url: str,
+    depth: int,
+    html: str | None = None,
+    cfg: Config | None = None,
+) -> list[LinkCandidate]:
+    if html is None:
+        timeout = cfg.request_timeout if cfg else 30
+        headers = cfg.request_headers if cfg else {"User-Agent": "Mozilla/5.0 guided-entity-crawler"}
+        try:
+            response = requests.get(page_url, timeout=timeout, headers=headers)
+            response.raise_for_status()
+        except Exception as e:
+            print(f"    ✗ Could not discover links from {page_url}: {e}")
+            return []
+        html = response.text
 
-    soup = BeautifulSoup(response.text, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     candidates = []
 
     for a in soup.find_all("a", href=True):
@@ -116,13 +115,19 @@ def _discover_links(page_url: str, start_url: str, depth: int) -> list[LinkCandi
 
 # ── Guided crawl ─────────────────────────────────────────────────────────────
 
-def crawl_entity(start_url: str, columns: list[ColumnSpec]) -> EntityDoc:
+def crawl_entity(
+    start_url: str,
+    columns: list[ColumnSpec],
+    cfg: Config,
+    max_depth: int | None = None,
+) -> EntityDoc:
     """
     Guided crawler.
 
     Scores internal links against the user-defined extraction schema,
     then selectively follows only relevant pages.
     """
+    _max_depth = max_depth if max_depth is not None else CRAWL_MAX_DEPTH
     crawl_terms = build_crawl_terms(columns)
 
     visited: set[str] = set()
@@ -152,19 +157,21 @@ def crawl_entity(start_url: str, columns: list[ColumnSpec]) -> EntityDoc:
 
         try:
             print(f"    Acquiring page: {current.url} (depth={current.depth}, score={current.score:.2f})")
-            page = _acquire_page(current.url)
+            page = _acquire_page_cfg(current.url, cfg)
             selected_pages.append(page)
         except Exception as e:
             print(f"    ✗ Failed to acquire {current.url}: {e}")
             continue
 
-        if current.depth >= CRAWL_MAX_DEPTH:
+        if current.depth >= _max_depth:
             continue
 
         child_links = _discover_links(
             page_url=current.url,
             start_url=start_url,
             depth=current.depth + 1,
+            html=page.html,
+            cfg=cfg,
         )
 
         scored_children = [

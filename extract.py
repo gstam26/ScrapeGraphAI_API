@@ -2,34 +2,50 @@ from typing import Any
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
-from scrapegraph_py import ScrapeGraphAI, JsonFormatConfig
+try:
+    from scrapegraph_py import JsonFormatConfig, ScrapeGraphAI
+except ImportError:
+    JsonFormatConfig = None
+    ScrapeGraphAI = None
 
-from config import API_KEY, EXTRACT_TOOL, EXTRACT_TIMEOUT
-from models import PageDoc, ColumnSpec, ExtractedCell, SourceQuote
+from config import API_KEY, EXTRACT_TIMEOUT, EXTRACT_TOOL
+from models import ColumnSpec, Config, ExtractedCell, PageDoc, SourceQuote
 
 
-def _build_prompt(columns: list[ColumnSpec], page_text: str | None = None) -> str:
-    fields = ""
+def _build_prompt(
+    columns: list[ColumnSpec],
+    entities: list[str],
+    page_text: str | None = None,
+) -> str:
+    entity_fields = "".join(f'- "{entity}"\n' for entity in entities)
+    question_fields = ""
     for col in columns:
         if col.instruction:
-            fields += f'- "{col.name}": {col.instruction}\n'
+            question_fields += f'- "{col.name}": {col.instruction}\n'
         else:
-            fields += f'- "{col.name}"\n'
+            question_fields += f'- "{col.name}"\n'
 
     base = f"""
-Extract information from the provided webpage content.
+Extract answers to these questions about these specific entities from this page.
 
-Return a JSON object with exactly these top-level keys:
-{fields}
+Specific entities:
+{entity_fields}
 
-For each key, return an object with this structure:
+Return a JSON object with exactly these top-level keys, one per specific entity:
+{entity_fields}
+
+For each entity key, return an object with exactly these question keys:
+{question_fields}
+
+For each question key, return an object with this structure:
 {{
   "value": the extracted answer, or null if not found,
   "quote": a short exact quote from the page supporting the answer, or null if not found
 }}
 
 Rules:
-- Use exactly the requested column names.
+- Extract only answers about the specific entities listed above.
+- Use exactly the requested entity names and question names.
 - Do not invent information.
 - Only use information present in the content provided.
 - If the answer is not found, use null for both value and quote.
@@ -43,7 +59,11 @@ Rules:
     return base
 
 
-def _extract_with_sgai(page: PageDoc, columns: list[ColumnSpec]) -> tuple[dict[str, Any], dict]:
+def _extract_with_sgai(
+    page: PageDoc,
+    columns: list[ColumnSpec],
+    entities: list[str],
+) -> tuple[dict[str, Any], dict]:
     """
     Extract fields using ScrapeGraphAI.
 
@@ -51,30 +71,35 @@ def _extract_with_sgai(page: PageDoc, columns: list[ColumnSpec]) -> tuple[dict[s
       extraction_time_ms, timed_out, retry_count
     """
     page_text = page.text if getattr(page, "text", None) else None
-    prompt = _build_prompt(columns, page_text[:7000] if page_text else None)
+    prompt = _build_prompt(columns, entities, page_text[:7000] if page_text else None)
 
-    print(f"      → SGAI extracting: {page.url}")
+    if ScrapeGraphAI is None or JsonFormatConfig is None:
+        raise RuntimeError("scrapegraph-py is required when EXTRACT_TOOL='sgai'")
+    if not API_KEY:
+        raise RuntimeError("Missing SGAI_API_KEY in .env")
+
+    print(f"      -> SGAI extracting: {page.url}")
     t0 = time.time()
 
-    _MAX_ATTEMPTS = 2
-    _RETRY_WAIT_S = 5
-    _timed_out = False
-    _attempts_made = 0
+    max_attempts = 2
+    retry_wait_s = 5
+    timed_out = False
+    attempts_made = 0
 
-    def _make_timing():
+    def make_timing():
         return {
             "extraction_time_ms": int((time.time() - t0) * 1000),
-            "timed_out": _timed_out,
-            "retry_count": max(_attempts_made - 1, 0),
+            "timed_out": timed_out,
+            "retry_count": max(attempts_made - 1, 0),
         }
 
     result = None
     try:
-        for attempt in range(1, _MAX_ATTEMPTS + 1):
-            _attempts_made = attempt
+        for attempt in range(1, max_attempts + 1):
+            attempts_made = attempt
             sgai = ScrapeGraphAI(api_key=API_KEY)
 
-            def _do_scrape():
+            def do_scrape():
                 content_candidates = [
                     ("content", page.text),
                     ("html", page.html),
@@ -90,33 +115,36 @@ def _extract_with_sgai(page: PageDoc, columns: list[ColumnSpec]) -> tuple[dict[s
                 return sgai.scrape(page.url, formats=[JsonFormatConfig(prompt=prompt)])
 
             with ThreadPoolExecutor(max_workers=1) as ex:
-                future = ex.submit(_do_scrape)
+                future = ex.submit(do_scrape)
                 try:
                     result = future.result(timeout=EXTRACT_TIMEOUT)
                 except FuturesTimeoutError:
-                    _timed_out = True
+                    timed_out = True
                     duration = time.time() - t0
                     try:
                         sgai.close()
                     except Exception:
                         pass
-                    if attempt < _MAX_ATTEMPTS:
-                        print(f"      ⚠ SGAI timed out after {EXTRACT_TIMEOUT}s (attempt {attempt}/{_MAX_ATTEMPTS}) — retrying in {_RETRY_WAIT_S}s...")
-                        time.sleep(_RETRY_WAIT_S)
+                    if attempt < max_attempts:
+                        print(
+                            f"      ! SGAI timed out after {EXTRACT_TIMEOUT}s "
+                            f"(attempt {attempt}/{max_attempts}); retrying in {retry_wait_s}s..."
+                        )
+                        time.sleep(retry_wait_s)
                         continue
-                    print(f"      ⚠ SGAI timed out on final attempt after {EXTRACT_TIMEOUT}s (elapsed {duration:.2f}s)")
-                    return {}, _make_timing()
+                    print(f"      ! SGAI timed out on final attempt after {duration:.2f}s")
+                    return {}, make_timing()
                 except Exception as e:
                     duration = time.time() - t0
-                    print(f"      ✗ Extraction error during call after {duration:.2f}s: {e}")
+                    print(f"      X Extraction error during call after {duration:.2f}s: {e}")
                     try:
                         sgai.close()
                     except Exception:
                         pass
-                    return {}, _make_timing()
+                    return {}, make_timing()
 
             duration = time.time() - t0
-            print(f"      → SGAI call completed in {duration:.2f}s (attempt {attempt}/{_MAX_ATTEMPTS})")
+            print(f"      -> SGAI call completed in {duration:.2f}s (attempt {attempt}/{max_attempts})")
             try:
                 sgai.close()
             except Exception:
@@ -124,18 +152,18 @@ def _extract_with_sgai(page: PageDoc, columns: list[ColumnSpec]) -> tuple[dict[s
             break
 
         if result is None:
-            print("      ⚠ Result is None")
-            return {}, _make_timing()
+            print("      ! Result is None")
+            return {}, make_timing()
 
         data_obj = getattr(result, "data", None)
         if data_obj is None:
-            print("      ⚠ result.data is None")
-            return {}, _make_timing()
+            print("      ! result.data is None")
+            return {}, make_timing()
 
         results = getattr(data_obj, "results", None)
         if not results:
-            print("      ⚠ result.data.results is empty or falsy")
-            return {}, _make_timing()
+            print("      ! result.data.results is empty or falsy")
+            return {}, make_timing()
 
         json_data = {}
         if isinstance(results, dict):
@@ -147,19 +175,20 @@ def _extract_with_sgai(page: PageDoc, columns: list[ColumnSpec]) -> tuple[dict[s
             json_data = results
 
         if not json_data:
-            print(f"      ⚠ Extraction returned no usable JSON data (keys: {list(results.keys()) if isinstance(results, dict) else type(results)})")
-            return {}, _make_timing()
+            keys = list(results.keys()) if isinstance(results, dict) else type(results)
+            print(f"      ! Extraction returned no usable JSON data (keys: {keys})")
+            return {}, make_timing()
 
         if not isinstance(json_data, dict):
-            print(f"      ⚠ Parsed json_data is not a dict: {type(json_data)}")
-            return {}, _make_timing()
+            print(f"      ! Parsed json_data is not a dict: {type(json_data)}")
+            return {}, make_timing()
 
-        return json_data, _make_timing()
+        return json_data, make_timing()
 
     except Exception as e:
         duration = time.time() - t0
-        print(f"      ✗ Extraction error after {duration:.2f}s: {e}")
-        return {}, _make_timing()
+        print(f"      X Extraction error after {duration:.2f}s: {e}")
+        return {}, make_timing()
 
 
 def _parse_field_value(raw: Any) -> tuple[Any, list[SourceQuote]]:
@@ -175,7 +204,7 @@ def _parse_field_value(raw: Any) -> tuple[Any, list[SourceQuote]]:
             evidence.append(SourceQuote(value=value, quote=quote))
         return value, evidence
 
-    elif isinstance(raw, list):
+    if isinstance(raw, list):
         values = []
         for item in raw:
             if isinstance(item, dict):
@@ -190,68 +219,92 @@ def _parse_field_value(raw: Any) -> tuple[Any, list[SourceQuote]]:
                     evidence.append(SourceQuote(value=item, quote=None))
         return values if values else None, evidence
 
-    else:
-        if raw not in (None, "", []):
-            evidence.append(SourceQuote(value=raw, quote=None))
-        return raw, evidence
+    if raw not in (None, "", []):
+        evidence.append(SourceQuote(value=raw, quote=None))
+    return raw, evidence
+
+
+def _get_case_insensitive(mapping: dict[str, Any], key: str) -> Any:
+    if key in mapping:
+        return mapping[key]
+    key_lower = key.lower()
+    for candidate_key, value in mapping.items():
+        if str(candidate_key).lower() == key_lower:
+            return value
+    return None
+
+
+def _entity_payload(data: dict[str, Any], entity: str, entities: list[str]) -> dict[str, Any]:
+    payload = _get_case_insensitive(data, entity)
+    if isinstance(payload, dict):
+        return payload
+
+    # Backward tolerance for single-entity outputs that return the old flat shape.
+    if len(entities) == 1:
+        return data
+
+    return {}
 
 
 def extract_cells(
     page: PageDoc,
     columns: list[ColumnSpec],
-    entity_url: str = "",
+    entities: list[str],
+    cfg: Config | None = None,
     diag: dict | None = None,
 ) -> list[ExtractedCell]:
-    """
-    Extract cells from a page using configured extractor.
-    """
+    """Extract cells from a page using the configured extractor."""
     cells = []
+    runtime_cfg = cfg or Config(extract_tool=EXTRACT_TOOL)
 
-    if EXTRACT_TOOL != "sgai":
-        print(f"      ✗ Unknown EXTRACT_TOOL: {EXTRACT_TOOL}")
+    if runtime_cfg.extract_tool != "sgai":
+        print(f"      X Unknown EXTRACT_TOOL: {runtime_cfg.extract_tool}")
         return cells
 
-    data, timing = _extract_with_sgai(page, columns)
+    data, timing = _extract_with_sgai(page, columns, entities)
 
-    if diag is not None:
-        items_extracted = sum(
-            len(v) if isinstance(v, list) else (1 if v is not None else 0)
-            for v in data.values()
-        ) if data else 0
-        diag.setdefault("extract_log", []).append({
-            "entity_url": entity_url,
-            "source_url": page.url,
-            "question": "; ".join(c.name for c in columns),
-            "extract_tool": EXTRACT_TOOL,
-            "items_extracted": items_extracted,
-            "extraction_time_ms": timing["extraction_time_ms"],
-            "timed_out": timing["timed_out"],
-            "retry_count": timing["retry_count"],
-            "page_length_input": len(page.text) if page.text else 0,
-            "raw_answer_preview": str(data)[:300] if data else "",
-        })
+    for entity in entities:
+        payload = _entity_payload(data, entity, entities)
 
-    for col in columns:
-        raw = data.get(col.name)
-        value, evidence = _parse_field_value(raw)
+        if diag is not None:
+            items_extracted = sum(
+                len(v) if isinstance(v, list) else (1 if v is not None else 0)
+                for v in payload.values()
+            ) if payload else 0
+            diag.setdefault("extract_log", []).append({
+                "entity": entity,
+                "source_url": page.url,
+                "question": "; ".join(c.name for c in columns),
+                "extract_tool": runtime_cfg.extract_tool,
+                "items_extracted": items_extracted,
+                "extraction_time_ms": timing["extraction_time_ms"],
+                "timed_out": timing["timed_out"],
+                "retry_count": timing["retry_count"],
+                "page_length_input": len(page.text) if page.text else 0,
+                "raw_answer_preview": str(payload)[:300] if payload else "",
+            })
 
-        cell = ExtractedCell(
-            source_url=page.url,
-            column=col.name,
-            value=value,
-            evidence=evidence,
-        )
+        for col in columns:
+            raw = _get_case_insensitive(payload, col.name)
+            value, evidence = _parse_field_value(raw)
 
-        if not evidence:
-            print(f"      • {col.name}: (no data extracted)")
-        elif value is None:
-            print(f"      • {col.name}: (null value, {len(evidence)} evidence items)")
-        else:
-            if isinstance(value, list):
-                print(f"      • {col.name}: [{len(value)} items] ({len(evidence)} evidence)")
+            cell = ExtractedCell(
+                entity=entity,
+                source_url=page.url,
+                column=col.name,
+                value=value,
+                evidence=evidence,
+            )
+
+            if not evidence:
+                print(f"      - {entity} / {col.name}: (no data extracted)")
+            elif value is None:
+                print(f"      - {entity} / {col.name}: (null value, {len(evidence)} evidence items)")
+            elif isinstance(value, list):
+                print(f"      - {entity} / {col.name}: [{len(value)} items] ({len(evidence)} evidence)")
             else:
-                print(f"      • {col.name}: {str(value)[:40]} ({len(evidence)} evidence)")
+                print(f"      - {entity} / {col.name}: {str(value)[:40]} ({len(evidence)} evidence)")
 
-        cells.append(cell)
+            cells.append(cell)
 
     return cells

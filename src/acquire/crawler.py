@@ -10,8 +10,6 @@ from config import (
     CRAWL_FALLBACK_TERMS,
     CRAWL_MAX_DEPTH,
     CRAWL_MAX_LINKS_PER_PAGE,
-    CRAWL_MAX_PAGES,
-    CRAWL_MIN_SCORE,
 )
 from models import ColumnSpec, Config, PageDoc
 from src.acquire.cache import read_cache, write_cache
@@ -130,6 +128,8 @@ def crawl_entity(
     then selectively follows only relevant pages.
     """
     _max_depth = max_depth if max_depth is not None else CRAWL_MAX_DEPTH
+    _max_pages = cfg.crawl_max_pages
+    _min_score = cfg.crawl_min_score
     crawl_terms = build_crawl_terms(columns)
 
     visited: set[str] = set()
@@ -145,7 +145,7 @@ def crawl_entity(
         )
     ])
 
-    while queue and len(selected_pages) < CRAWL_MAX_PAGES:
+    while queue and len(selected_pages) < _max_pages:
         current = queue.popleft()
 
         if current.url in visited:
@@ -153,7 +153,7 @@ def crawl_entity(
 
         visited.add(current.url)
 
-        if current.depth > 0 and current.score < CRAWL_MIN_SCORE:
+        if current.depth > 0 and current.score < _min_score:
             continue
 
         try:
@@ -175,7 +175,7 @@ def crawl_entity(
                     "parent_url": current.parent_url,
                     "depth": current.depth,
                     "crawl_score": round(current.score, 3),
-                    "above_threshold": current.depth == 0 or current.score >= CRAWL_MIN_SCORE,
+                    "above_threshold": current.depth == 0 or current.score >= _min_score,
                     "fetch_tool": cfg.acquire_tool,
                     "page_length": len(page.text),
                     "fetch_time_ms": fetch_time_ms,
@@ -219,7 +219,7 @@ def crawl_entity(
         scored_children.sort(key=lambda c: c.score, reverse=True)
 
         for child in scored_children:
-            followed = child.score >= CRAWL_MIN_SCORE
+            followed = child.score >= _min_score
             if diag is not None:
                 diag.setdefault("crawl_candidates", []).append({
                     "parent_url": current.url,
@@ -227,7 +227,7 @@ def crawl_entity(
                     "anchor_text": child.anchor_text,
                     "url_path": urlparse(child.url).path,
                     "crawl_score": round(child.score, 3),
-                    "threshold": CRAWL_MIN_SCORE,
+                    "threshold": _min_score,
                     "followed": followed,
                     "skip_reason": "" if followed else "below_threshold",
                 })

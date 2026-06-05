@@ -2,28 +2,8 @@ import os
 import time
 
 from config import OUTPUT_DIR
-from io_excel import read_urls_from_excel, parse_columns, write_output_excel
+from io_excel import read_input, write_output_excel
 from pipeline import run_pipeline
-
-
-def get_columns_from_user() -> list[str]:
-    print("\nEnter column headers. Add a colon after the name to give extraction instructions.")
-    print('  Example: "Type of milk: return only the base word, e.g. pea, oat"')
-    print('  Example: "Claims or features: return as a list, one item per element"')
-    print("Type 'done' when finished.\n")
-
-    columns = []
-
-    while True:
-        entry = input(f"  Column {len(columns) + 1}: ").strip()
-
-        if entry.lower() == "done":
-            break
-
-        if entry:
-            columns.append(entry)
-
-    return columns
 
 
 def format_elapsed(seconds: int) -> str:
@@ -49,17 +29,21 @@ def main():
     print("=== Entity Extraction Pipeline ===\n")
 
     input_path = input("Path to input Excel file: ").strip()
-    urls = read_urls_from_excel(input_path)
+    pipeline_input = read_input(input_path)
 
-    print(f"\n✓ Loaded {len(urls)} URL(s) from '{input_path}'")
+    print(
+        f"\nLoaded {len(pipeline_input.entities)} entity/entities, "
+        f"{len(pipeline_input.urls)} URL(s), and "
+        f"{len(pipeline_input.columns)} question(s) from '{input_path}'"
+    )
 
-    raw_columns = get_columns_from_user()
-
-    if not raw_columns:
-        print("No columns provided. Exiting.")
+    if not pipeline_input.urls:
+        print("No URLs found. Exiting.")
         return
 
-    columns = parse_columns(raw_columns)
+    if not pipeline_input.columns:
+        print("No questions found. Exiting.")
+        return
 
     filename = input("\nOutput Excel filename: ").strip()
 
@@ -69,16 +53,16 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     output_path = os.path.join(OUTPUT_DIR, filename)
 
-    print(f"\nRunning pipeline on {len(urls)} URL(s)...\n")
+    print(f"\nRunning pipeline on {len(pipeline_input.urls)} URL(s)...\n")
     start = time.time()
 
-    result, diag = run_pipeline(urls, columns)
+    result, diag = run_pipeline(pipeline_input)
 
-    write_output_excel(result, columns, output_path, diag=diag)
+    write_output_excel(result, pipeline_input.columns, output_path, diag=diag)
 
     elapsed = int(time.time() - start)
 
-    print(f"\n✓ Results saved to '{output_path}' — completed in {format_elapsed(elapsed)}")
+    print(f"\nResults saved to '{output_path}' - completed in {format_elapsed(elapsed)}")
 
 
 if __name__ == "__main__":

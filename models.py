@@ -1,17 +1,27 @@
 from typing import Any
+
 from pydantic import BaseModel, Field
+
+
+class ColumnSpec(BaseModel):
+    """User-defined extraction question."""
+    name: str
+    instruction: str | None = None
+
+
+class UrlSpec(BaseModel):
+    """Input URL plus crawl depth and the entities it applies to."""
+    url: str
+    depth: int = 0
+    entities: list[str] = Field(default_factory=list)
 
 
 class PipelineInput(BaseModel):
     """User-provided extraction request."""
-    entity_url: str
-    columns: list['ColumnSpec'] = Field(default_factory=list)
-
-
-class ColumnSpec(BaseModel):
-    """User-defined extraction column."""
-    name: str
-    instruction: str | None = None
+    entities: list[str] = Field(default_factory=list)
+    urls: list[UrlSpec] = Field(default_factory=list)
+    columns: list[ColumnSpec] = Field(default_factory=list)
+    config_overrides: dict[str, Any] = Field(default_factory=dict)
 
 
 class PageDoc(BaseModel):
@@ -27,7 +37,8 @@ class PageDoc(BaseModel):
 
 class Config(BaseModel):
     """Runtime configuration passed to each pipeline layer."""
-    acquire_tool: str = "requests"   # "requests" | "sgai" | "firecrawl" | "playwright"
+    acquire_tool: str = "requests"  # "requests" | "sgai" | "firecrawl" | "playwright"
+    extract_tool: str = "sgai"
     cache_dir: str = "cache"
     request_headers: dict = Field(
         default_factory=lambda: {"User-Agent": "Mozilla/5.0 entity-extraction-pipeline"}
@@ -37,6 +48,8 @@ class Config(BaseModel):
     firecrawl_api_key: str | None = None
     fetch_wait_ms: int = 3000
     default_depth: int = 0
+    crawl_min_score: float = 0.12
+    crawl_max_pages: int = 2
 
 
 class SourceQuote(BaseModel):
@@ -59,13 +72,14 @@ class RoutedPage(BaseModel):
 
 
 class ExtractedCell(BaseModel):
-    """Extracted data for one entity/column/page combination."""
+    """Extracted data for one entity/question/page combination."""
+    entity: str = ""
     source_url: str
     column: str
     value: Any = None
-    # For list answers: store one evidence item per list element
+    # For list answers: store one evidence item per list element.
     evidence: list[SourceQuote] = Field(default_factory=list)
-    # For scalar answers: use primary evidence
+    # For scalar answers: use primary evidence.
     verified: bool = False
     verification_score: float | None = None
 
@@ -77,9 +91,9 @@ class CellContribution(ExtractedCell):
 
 class ExtractedRow(BaseModel):
     """All extracted cells for one entity across multiple pages."""
-    entity_url: str
-    cells: list[ExtractedCell] = Field(default_factory=list)        # aggregated (one per column)
-    all_cells: list[ExtractedCell] = Field(default_factory=list)    # pre-aggregation (one per page×column)
+    entity: str
+    cells: list[ExtractedCell] = Field(default_factory=list)        # aggregated (one per question)
+    all_cells: list[ExtractedCell] = Field(default_factory=list)    # pre-aggregation (one per page/question)
 
 
 class PipelineResult(BaseModel):

@@ -15,7 +15,7 @@ def _has_value(cell: ExtractedCell) -> bool:
 
 def aggregate_cells(cells: list[ExtractedCell]) -> list[ExtractedCell]:
     """
-    Group cells by column and select the best one.
+    Group cells by entity and column, then select the best one.
     
     Selection logic:
     - Prefer cells with values over evidence-only
@@ -25,17 +25,17 @@ def aggregate_cells(cells: list[ExtractedCell]) -> list[ExtractedCell]:
     Do NOT drop evidence-only cells.
     Preserve all evidence in the final cell.
     """
-    best_by_column: dict[str, ExtractedCell] = {}
+    best_by_key: dict[tuple[str, str], ExtractedCell] = {}
 
     for cell in cells:
         if not _has_value(cell):
             continue
 
-        column = cell.column
-        existing = best_by_column.get(column)
+        key = (cell.entity, cell.column)
+        existing = best_by_key.get(key)
 
         if existing is None:
-            best_by_column[column] = cell
+            best_by_key[key] = cell
             continue
 
         # Decide if new cell is better than existing
@@ -44,7 +44,7 @@ def aggregate_cells(cells: list[ExtractedCell]) -> list[ExtractedCell]:
 
         # Prefer cell with value over evidence-only
         if new_has_value and not existing_has_value:
-            best_by_column[column] = cell
+            best_by_key[key] = cell
             continue
 
         if not new_has_value and existing_has_value:
@@ -56,7 +56,7 @@ def aggregate_cells(cells: list[ExtractedCell]) -> list[ExtractedCell]:
         existing_verified = existing.verified
 
         if new_verified and not existing_verified:
-            best_by_column[column] = cell
+            best_by_key[key] = cell
             continue
 
         if not new_verified and existing_verified:
@@ -67,6 +67,6 @@ def aggregate_cells(cells: list[ExtractedCell]) -> list[ExtractedCell]:
         new_score = cell.verification_score or 0
 
         if new_score > existing_score:
-            best_by_column[column] = cell
+            best_by_key[key] = cell
 
-    return list(best_by_column.values())
+    return list(best_by_key.values())

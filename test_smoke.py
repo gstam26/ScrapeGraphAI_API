@@ -2,113 +2,116 @@
 Smoke tests for entity extraction pipeline.
 
 Tests:
-- Parser handles dict output
-- Parser handles list-of-dicts output
-- Parser handles scalar output
-- Aggregator does not drop evidence-only cells
-- Excel provenance produces rows for list evidence
+- Parser handles dict/list/scalar/null output.
+- Aggregator groups by entity and question.
+- Excel output uses entity rows and provenance entity/source URL columns.
+- New four-sheet input workbook is parsed correctly.
+- Blank URL entities fan out to all entities.
+- Specific URL entities stay scoped to those entities.
+- Backward compatibility treats URL as entity when entities sheet is missing.
+- main.py only prompts for input path and output filename.
 """
 
-from models import PageDoc, ColumnSpec, ExtractedCell, SourceQuote
-from extract import _parse_field_value
+import os
+import re
+import tempfile
+from pathlib import Path
+
+import pandas as pd
+
+import extract
 from aggregate import aggregate_cells
+from extract import _parse_field_value
+from io_excel import read_input, write_output_excel
+from models import ColumnSpec, Config, ExtractedCell, ExtractedRow, PageDoc, PipelineResult, SourceQuote
 
 
 def test_parse_dict_output():
-    """Test parsing dict response (value + quote)."""
     raw = {
         "value": "test value",
-        "quote": "test quote from page"
+        "quote": "test quote from page",
     }
-    
+
     value, evidence = _parse_field_value(raw)
-    
+
     assert value == "test value"
     assert len(evidence) == 1
     assert evidence[0].value == "test value"
     assert evidence[0].quote == "test quote from page"
-    print("✓ test_parse_dict_output passed")
+    print("OK test_parse_dict_output passed")
 
 
 def test_parse_list_of_dicts():
-    """Test parsing list of dict responses."""
     raw = [
         {"value": "item 1", "quote": "quote 1"},
         {"value": "item 2", "quote": "quote 2"},
     ]
-    
+
     value, evidence = _parse_field_value(raw)
-    
+
     assert isinstance(value, list)
     assert len(value) == 2
     assert len(evidence) == 2
     assert evidence[0].value == "item 1"
     assert evidence[1].value == "item 2"
-    print("✓ test_parse_list_of_dicts passed")
+    print("OK test_parse_list_of_dicts passed")
 
 
 def test_parse_scalar_output():
-    """Test parsing scalar (plain value, no quote)."""
     raw = "plain text value"
-    
+
     value, evidence = _parse_field_value(raw)
-    
+
     assert value == "plain text value"
     assert len(evidence) == 1
     assert evidence[0].value == "plain text value"
     assert evidence[0].quote is None
-    print("✓ test_parse_scalar_output passed")
+    print("OK test_parse_scalar_output passed")
 
 
 def test_parse_null_output():
-    """Test parsing null output."""
     raw = None
-    
+
     value, evidence = _parse_field_value(raw)
-    
+
     assert value is None
     assert len(evidence) == 0
-    print("✓ test_parse_null_output passed")
+    print("OK test_parse_null_output passed")
 
 
-def test_aggregator_preserves_evidence_only():
-    """Test that aggregator does not drop evidence-only cells."""
+def test_aggregator_groups_by_entity_and_question():
     cells = [
         ExtractedCell(
-            source_url="http://example.com/1",
-            column="test_col",
-            value=None,  # No value, only evidence
-            evidence=[
-                SourceQuote(value="found via evidence", quote="supporting quote")
-            ],
+            entity="Oatly",
+            source_url="http://example.com/oatly",
+            column="Sustainability claims",
+            value="oat claim",
+            evidence=[SourceQuote(value="oat claim", quote="quote")],
             verified=True,
             verification_score=90.0,
         ),
         ExtractedCell(
-            source_url="http://example.com/2",
-            column="test_col",
-            value="direct value",
-            evidence=[
-                SourceQuote(value="direct value", quote="direct quote")
-            ],
-            verified=False,
-            verification_score=50.0,
+            entity="Ripple",
+            source_url="http://example.com/ripple",
+            column="Sustainability claims",
+            value="pea claim",
+            evidence=[SourceQuote(value="pea claim", quote="quote")],
+            verified=True,
+            verification_score=90.0,
         ),
     ]
-    
+
     aggregated = aggregate_cells(cells)
-    
-    # Should keep the direct value over evidence-only
-    assert len(aggregated) == 1
-    assert aggregated[0].value == "direct value"
-    assert aggregated[0].source_url == "http://example.com/2"
-    print("✓ test_aggregator_preserves_evidence_only passed")
+
+    assert len(aggregated) == 2
+    assert {cell.entity for cell in aggregated} == {"Oatly", "Ripple"}
+    print("OK test_aggregator_groups_by_entity_and_question passed")
 
 
 def test_aggregator_prefers_verified():
-    """Test that aggregator prefers verified cells."""
     cells = [
         ExtractedCell(
+            entity="Oatly",
             source_url="http://example.com/1",
             column="test_col",
             value="unverified value",
@@ -117,6 +120,7 @@ def test_aggregator_prefers_verified():
             verification_score=40.0,
         ),
         ExtractedCell(
+            entity="Oatly",
             source_url="http://example.com/2",
             column="test_col",
             value="verified value",
@@ -125,32 +129,25 @@ def test_aggregator_prefers_verified():
             verification_score=85.0,
         ),
     ]
-    
+
     aggregated = aggregate_cells(cells)
-    
-    # Should prefer verified
+
     assert len(aggregated) == 1
     assert aggregated[0].verified is True
     assert aggregated[0].source_url == "http://example.com/2"
-    print("✓ test_aggregator_prefers_verified passed")
+    print("OK test_aggregator_prefers_verified passed")
 
 
-def test_excel_provenance_multiple_evidence():
-    """Test that Excel provenance handles multiple evidence items per cell."""
-    from io_excel import write_output_excel
-    from models import PipelineResult, ExtractedRow
-    import os
-    import tempfile
-    import pandas as pd
-    
+def test_excel_output_uses_entity_rows_and_provenance_entity():
     columns = [ColumnSpec(name="test_col")]
-    
+
     result = PipelineResult(
         rows=[
             ExtractedRow(
-                entity_url="http://example.com",
+                entity="Oatly",
                 cells=[
                     ExtractedCell(
+                        entity="Oatly",
                         source_url="http://example.com/page1",
                         column="test_col",
                         value=["item 1", "item 2"],
@@ -164,22 +161,101 @@ def test_excel_provenance_multiple_evidence():
             ),
         ]
     )
-    
+
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = os.path.join(tmpdir, "test_output.xlsx")
         write_output_excel(result, columns, output_path)
-        
-        # Read and check provenance sheet
+
+        matrix_df = pd.read_excel(output_path, sheet_name="Matrix")
         provenance_df = pd.read_excel(output_path, sheet_name="Provenance")
-        
-        # Should have 2 rows: one per evidence item
+
+        assert matrix_df.columns[0] == "Entity"
+        assert matrix_df.iloc[0]["Entity"] == "Oatly"
         assert len(provenance_df) == 2
-        assert provenance_df.iloc[0]["Value"] == "item 1"
-        assert provenance_df.iloc[1]["Value"] == "item 2"
-        assert provenance_df.iloc[0]["Quote"] == "quote 1"
-        assert provenance_df.iloc[1]["Quote"] == "quote 2"
-        
-        print("✓ test_excel_provenance_multiple_evidence passed")
+        assert provenance_df.iloc[0]["Entity"] == "Oatly"
+        assert provenance_df.iloc[0]["Source URL"] == "http://example.com/page1"
+        assert provenance_df.iloc[0]["Claim"] == "item 1"
+        assert provenance_df.iloc[1]["Claim"] == "item 2"
+        assert provenance_df.iloc[0]["Verbatim Quote"] == "quote 1"
+
+    print("OK test_excel_output_uses_entity_rows_and_provenance_entity passed")
+
+
+def test_sample_input_populates_entities_urls_questions_and_config():
+    data = read_input("samples/test_smoke.xlsx")
+
+    assert data.entities == ["Oatly", "Ripple", "Califia", "Silk", "Elmhurst"]
+    assert len(data.urls) == 6
+    assert len(data.columns) == 3
+    assert data.config_overrides == {"CRAWL_MAX_PAGES": 15, "DEFAULT_DEPTH": 1}
+    assert data.columns[0].name == "What sustainability claims does the brand make?"
+    assert data.columns[0].instruction == "return as a list, one claim per item"
+    print("OK test_sample_input_populates_entities_urls_questions_and_config passed")
+
+
+def test_blank_entities_url_gets_all_entities_and_specific_url_stays_scoped():
+    data = read_input("samples/test_smoke.xlsx")
+
+    assert data.urls[0].entities == ["Oatly"]
+    assert data.urls[-1].url == "https://www.mintel.com/food-and-drink/plant-based-milk"
+    assert data.urls[-1].entities == data.entities
+    print("OK test_blank_entities_url_gets_all_entities_and_specific_url_stays_scoped passed")
+
+
+def test_extract_cells_only_returns_requested_entities():
+    columns = [ColumnSpec(name="Question")]
+    page = PageDoc(url="http://example.com", text="Oatly claim. Ripple claim.")
+    original = extract._extract_with_sgai
+
+    def fake_extract(page, columns, entities):
+        return {
+            "Oatly": {"Question": {"value": "Oatly claim", "quote": "Oatly claim"}},
+            "Ripple": {"Question": {"value": "Ripple claim", "quote": "Ripple claim"}},
+        }, {"extraction_time_ms": 1, "timed_out": False, "retry_count": 0}
+
+    try:
+        extract._extract_with_sgai = fake_extract
+        cells = extract.extract_cells(
+            page,
+            columns,
+            entities=["Oatly"],
+            cfg=Config(extract_tool="sgai"),
+        )
+    finally:
+        extract._extract_with_sgai = original
+
+    assert len(cells) == 1
+    assert cells[0].entity == "Oatly"
+    assert cells[0].value == "Oatly claim"
+    print("OK test_extract_cells_only_returns_requested_entities passed")
+
+
+def test_backward_compatibility_without_entities_sheet():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = os.path.join(tmpdir, "legacy.xlsx")
+        with pd.ExcelWriter(path, engine="openpyxl") as writer:
+            pd.DataFrame({
+                "url": ["http://example.com/a", "http://example.com/b"],
+                "depth": [0, 1],
+            }).to_excel(writer, sheet_name="urls", index=False)
+            pd.DataFrame({
+                "question": ["Question"],
+            }).to_excel(writer, sheet_name="questions", index=False)
+
+        data = read_input(path)
+
+    assert data.entities == ["http://example.com/a", "http://example.com/b"]
+    assert data.urls[0].entities == ["http://example.com/a"]
+    assert data.urls[1].entities == ["http://example.com/b"]
+    print("OK test_backward_compatibility_without_entities_sheet passed")
+
+
+def test_main_only_two_terminal_prompts():
+    main_text = Path("main.py").read_text(encoding="utf-8")
+
+    assert len(re.findall(r"(?<![A-Za-z0-9_])input\(", main_text)) == 2
+    assert "get_columns_from_user" not in main_text
+    print("OK test_main_only_two_terminal_prompts passed")
 
 
 if __name__ == "__main__":
@@ -187,8 +263,13 @@ if __name__ == "__main__":
     test_parse_list_of_dicts()
     test_parse_scalar_output()
     test_parse_null_output()
-    test_aggregator_preserves_evidence_only()
+    test_aggregator_groups_by_entity_and_question()
     test_aggregator_prefers_verified()
-    test_excel_provenance_multiple_evidence()
-    
-    print("\n✅ All smoke tests passed!")
+    test_excel_output_uses_entity_rows_and_provenance_entity()
+    test_sample_input_populates_entities_urls_questions_and_config()
+    test_blank_entities_url_gets_all_entities_and_specific_url_stays_scoped()
+    test_extract_cells_only_returns_requested_entities()
+    test_backward_compatibility_without_entities_sheet()
+    test_main_only_two_terminal_prompts()
+
+    print("\nAll smoke tests passed!")

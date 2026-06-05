@@ -9,9 +9,6 @@ load_dotenv()
 
 API_KEY = os.getenv("SGAI_API_KEY")
 
-if not API_KEY:
-    raise ValueError("Missing SGAI_API_KEY in .env")
-
 # ============================================================
 # TOOLS
 # ============================================================
@@ -45,6 +42,9 @@ CRAWL_ENABLED = False
 
 # How many link hops away from the seed URL
 CRAWL_MAX_DEPTH = 1
+
+# Default depth used when a URL has no explicit depth outside the Excel urls sheet.
+DEFAULT_DEPTH = 0
 
 # Total pages allowed per entity
 CRAWL_MAX_PAGES = 2

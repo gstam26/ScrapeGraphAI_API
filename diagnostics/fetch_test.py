@@ -13,7 +13,7 @@ Requires FIRECRAWL_API_KEY in .env or environment.
 """
 
 import os
-import hashlib
+import sys
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -29,18 +29,17 @@ URLS = [
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE_DIR = os.path.join(_REPO_ROOT, "cache")
 
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from src.acquire.cache import cache_path as _cache_path_fn
+
 # Firecrawl fetch timeout in ms — these pages can be slow to render
 FETCH_TIMEOUT_MS = 60_000
 
 
-# ---------------------------------------------------------------------------
-# Cache
-# ---------------------------------------------------------------------------
-
 def _cache_path(url: str) -> str:
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    key = hashlib.sha256(url.encode("utf-8")).hexdigest()
-    return os.path.join(CACHE_DIR, f"{key}.md")
+    return _cache_path_fn(url, cache_dir=CACHE_DIR, ext=".md")
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import re
 from urllib.parse import urlparse
-from models import LinkCandidate
+
+from src.acquire.models import LinkCandidate
 
 
 def _tokens(text: str) -> set[str]:
@@ -21,7 +22,6 @@ def score_link(candidate: LinkCandidate, crawl_terms: list[str]) -> LinkCandidat
     - user-derived crawl terms
     - shallow depth preference
     """
-
     parsed = urlparse(candidate.url)
 
     link_text = f"{parsed.path} {candidate.anchor_text}".lower()
@@ -35,7 +35,6 @@ def score_link(candidate: LinkCandidate, crawl_terms: list[str]) -> LinkCandidat
     overlap = link_tokens.intersection(term_tokens)
     score = len(overlap) / max(len(term_tokens), 1)
 
-    # Prefer cleaner, shallower links
     if candidate.depth == 0:
         score += 0.20
     elif candidate.depth == 1:
@@ -43,7 +42,6 @@ def score_link(candidate: LinkCandidate, crawl_terms: list[str]) -> LinkCandidat
     else:
         score -= 0.05
 
-    # Penalise noisy URLs
     noisy_markers = ["privacy", "terms", "cookie", "login", "account", "cart", "checkout"]
     if any(marker in candidate.url.lower() for marker in noisy_markers):
         score -= 0.30

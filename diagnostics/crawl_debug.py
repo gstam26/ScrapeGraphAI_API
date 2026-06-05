@@ -16,11 +16,16 @@ No external models or API keys required beyond FIRECRAWL_API_KEY.
 
 import os
 import re
-import hashlib
+import sys
 from urllib.parse import urljoin, urlparse
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE_DIR  = os.path.join(_REPO_ROOT, "cache")
+
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from src.acquire.cache import cache_path_any
 
 # ── Hardcoded target URL (must already be cached by fetch_test.py) ──────────
 URL = "https://oatly.com"
@@ -52,12 +57,7 @@ _STOP = frozenset({
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _cache_path(url: str) -> str | None:
-    key = hashlib.sha256(url.encode("utf-8")).hexdigest()
-    for ext in (".md", ".txt"):
-        path = os.path.join(CACHE_DIR, f"{key}{ext}")
-        if os.path.exists(path):
-            return path
-    return None
+    return cache_path_any(url, cache_dir=CACHE_DIR)
 
 
 def _same_domain(base_url: str, candidate_url: str) -> bool:

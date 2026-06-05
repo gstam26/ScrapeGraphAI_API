@@ -5,8 +5,8 @@ Requires a live network connection — three real URLs are fetched.
 Run with: python test_acquire_smoke.py
 """
 
-from acquire import acquire
-from models import Config, FetchedPage
+from src.acquire import acquire, FetchedPage
+from models import Config
 
 URLS = [
     "https://example.com",

@@ -22,14 +22,6 @@ class PageDoc(BaseModel):
     from_cache: bool = False
 
 
-class FetchedPage(BaseModel):
-    """Output of the Acquire layer — one fetched (or cached) page."""
-    url: str
-    parent_url: str | None = None
-    markdown: str
-    status: str  # "ok" | "cached" | "error"
-
-
 class Config(BaseModel):
     """Runtime configuration passed to each pipeline layer."""
     acquire_tool: str = "requests"   # "requests" | "sgai" | "firecrawl" | "playwright"
@@ -41,20 +33,7 @@ class Config(BaseModel):
     sgai_api_key: str | None = None
     firecrawl_api_key: str | None = None
     fetch_wait_ms: int = 3000
-
-
-class EntityDoc(BaseModel):
-    """Container for all pages associated with one entity."""
-    start_url: str
-    pages: list[PageDoc] = Field(default_factory=list)
-
-
-class LinkCandidate(BaseModel):
-    """Link discovered during guided crawling."""
-    url: str
-    anchor_text: str = ""
-    depth: int = 0
-    score: float = 0.0
+    default_depth: int = 0
 
 
 class SourceQuote(BaseModel):

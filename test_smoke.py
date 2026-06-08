@@ -24,7 +24,7 @@ from aggregate import aggregate_cells
 from extract import _parse_field_value
 from io_excel import read_input, write_output_excel
 from models import ColumnSpec, Config, ExtractedCell, ExtractedRow, PageDoc, PipelineResult, SourceQuote
-from src.acquire.crawler import build_crawl_terms
+from src.acquire.crawler import build_crawl_query
 from src.acquire.link_scorer import score_links
 from src.acquire.models import LinkCandidate
 
@@ -269,7 +269,7 @@ def test_crawl_terms_include_questions_instructions_and_entities_only():
         )
     ]
 
-    terms = build_crawl_terms(columns, entities=["Acme-Tools"])
+    terms = build_crawl_query(columns, entities=["Acme-Tools"])
 
     assert "warranty" in terms
     assert "policy" in terms
@@ -296,7 +296,7 @@ def test_link_scorer_has_no_domain_specific_keyword_boosts():
         ),
     ]
 
-    scored = score_links(candidates, ["warranty", "policy", "acme"])
+    scored = score_links(candidates, {"warranty": 3.0, "policy": 3.0, "acme": 2.0})
 
     by_url = {candidate.url: candidate.score for candidate in scored}
     assert by_url["https://example.com/sustainability"] == 0.0

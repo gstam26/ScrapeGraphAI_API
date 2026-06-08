@@ -12,40 +12,61 @@ from config import (
 )
 from models import ColumnSpec, Config, PageDoc
 from src.acquire.cache import read_cache, write_cache
-from src.acquire.fetcher import fetch_page_raw
-from src.acquire.link_scorer import score_links
+from src.acquire.fetcher import fetch_page_with_provenance
+from src.acquire.link_scorer import _tokenize, score_links
 from src.acquire.models import EntityDoc, LinkCandidate
 
 
 # ── Crawl planner ─────────────────────────────────────────────────────────────
 
-_STOPWORDS = {
-    "the", "and", "for", "with", "from", "that", "this", "into", "only",
-    "return", "give", "show", "find", "extract", "information", "data",
-    "value", "values", "list", "item", "items", "field", "fields",
-    "about", "page", "website", "webpage",
-}
+_QUERY_WEIGHTS = {"question": 3.0, "entity": 2.0, "instruction": 1.0}
+
+_FALLBACK_TOP_K = 2
+_FALLBACK_MAX_DEPTH = 1
 
 
-def build_crawl_terms(columns: list[ColumnSpec], entities: list[str] | None = None) -> list[str]:
-    """Build crawl intent from user-defined extraction columns and entities."""
-    schema_text = " ".join(
-        f"{col.name} {col.instruction or ''}"
-        for col in columns
-    )
-    entity_text = " ".join(entities or [])
-    query_text = f"{schema_text} {entity_text}".lower()
+def build_crawl_query(
+    columns: list[ColumnSpec],
+    entities: list[str] | None = None,
+) -> dict[str, float]:
+    """
+    Build a weighted term dict from questions, entities, and instruction text.
 
-    tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9\-]+", query_text)
+    Term weights: question (3.0) > entity (2.0) > instruction (1.0).
+    Each term keeps its highest applicable weight.
+    No hardcoded fallback terms — all signal comes from the actual task input.
+    """
+    tiers = {
+        "question":    " ".join(col.name for col in columns),
+        "entity":      " ".join(entities or []),
+        "instruction": " ".join(col.instruction or "" for col in columns),
+    }
+    term_weights: dict[str, float] = {}
+    for tier, text in tiers.items():
+        w = _QUERY_WEIGHTS[tier]
+        for token in _tokenize(text):
+            if token not in term_weights or term_weights[token] < w:
+                term_weights[token] = w
+    return term_weights
 
-    terms = set()
-    for token in tokens:
-        token = token.lower().replace("-", " ")
-        for part in token.split():
-            if len(part) > 3 and part not in _STOPWORDS:
-                terms.add(part)
 
-    return sorted(terms)
+def _select_links_to_follow(
+    scored: list,
+    min_score: float,
+    depth: int,
+) -> list:
+    """
+    Return the subset of scored LinkCandidates to follow.
+
+    Normal: all candidates with score >= min_score.
+    Fallback (depth <= _FALLBACK_MAX_DEPTH, no candidate passes): top-_FALLBACK_TOP_K only.
+    """
+    above = [c for c in scored if c.score >= min_score]
+    if above:
+        return above
+    if depth <= _FALLBACK_MAX_DEPTH and scored:
+        return scored[:_FALLBACK_TOP_K]
+    return []
 
 
 # ── URL helpers ───────────────────────────────────────────────────────────────
@@ -65,11 +86,18 @@ def _same_domain(start_url: str, candidate_url: str) -> bool:
 def _acquire_page_cfg(url: str, cfg: Config) -> PageDoc:
     cached = read_cache(url, cfg.cache_dir)
     if cached is not None:
-        return PageDoc(url=url, text=cached, html=None, from_cache=True)
+        return PageDoc(
+            url=url, text=cached, html=None, from_cache=True,
+            backend="cache", render_fallback=False, gate_passed=None, gate_reason="",
+        )
 
-    text, html = fetch_page_raw(url, cfg)
+    text, html, prov = fetch_page_with_provenance(url, cfg)
     write_cache(url, text, cfg.cache_dir)
-    return PageDoc(url=url, text=text, html=html, from_cache=False)
+    return PageDoc(
+        url=url, text=text, html=html, from_cache=False,
+        backend=prov["backend"], render_fallback=prov["render_fallback"],
+        gate_passed=prov["gate_passed"], gate_reason=prov["gate_reason"],
+    )
 
 
 # ── Link discovery ────────────────────────────────────────────────────────────
@@ -131,7 +159,7 @@ def crawl_entity(
     _max_depth = max_depth if max_depth is not None else CRAWL_MAX_DEPTH
     _max_pages = cfg.crawl_max_pages
     _min_score = cfg.crawl_min_score
-    crawl_terms = build_crawl_terms(columns, entities=entities)
+    crawl_query = build_crawl_query(columns, entities=entities)
 
     visited: set[str] = set()
     selected_pages = []
@@ -170,6 +198,10 @@ def crawl_entity(
             selected_pages.append(page)
 
             if diag is not None:
+                _page_status = (
+                    "gate_failed" if page.gate_passed is False
+                    else ("ok" if page.text else "empty")
+                )
                 diag.setdefault("acquire_log", []).append({
                     "entity_url": start_url,
                     "page_url": page.url,
@@ -181,8 +213,12 @@ def crawl_entity(
                     "page_length": len(page.text),
                     "fetch_time_ms": fetch_time_ms,
                     "from_cache": page.from_cache,
-                    "status": "ok" if page.text else "empty",
+                    "status": _page_status,
                     "skip_reason": "",
+                    "backend": page.backend,
+                    "render_fallback": page.render_fallback,
+                    "gate_passed": page.gate_passed,
+                    "gate_reason": page.gate_reason,
                 })
 
         except Exception as e:
@@ -201,6 +237,10 @@ def crawl_entity(
                     "from_cache": False,
                     "status": "error",
                     "skip_reason": str(e),
+                    "backend": cfg.acquire_tool,
+                    "render_fallback": False,
+                    "gate_passed": None,
+                    "gate_reason": "",
                 })
             continue
 
@@ -216,11 +256,13 @@ def crawl_entity(
         )
 
         unvisited = [c for c in child_links if c.url not in visited]
-        scored_children = score_links(unvisited, crawl_terms)
+        scored_children = score_links(unvisited, crawl_query)
         scored_children.sort(key=lambda c: c.score, reverse=True)
 
+        to_follow = set(id(c) for c in _select_links_to_follow(scored_children, _min_score, current.depth))
+
         for child in scored_children:
-            followed = child.score >= _min_score
+            followed = id(child) in to_follow
             if diag is not None:
                 diag.setdefault("crawl_candidates", []).append({
                     "parent_url": current.url,

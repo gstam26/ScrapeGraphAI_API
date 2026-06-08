@@ -47,7 +47,7 @@ def test_cache_hit_on_second_call():
 
 def test_config_defaults():
     cfg = Config()
-    assert cfg.acquire_tool == "requests"
+    assert cfg.acquire_tool == "local"
     assert cfg.cache_dir == "cache"
     assert cfg.request_timeout == 30
     assert "User-Agent" in cfg.request_headers

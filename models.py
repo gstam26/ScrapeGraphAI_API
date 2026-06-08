@@ -33,11 +33,16 @@ class PageDoc(BaseModel):
     depth: int = 0
     crawl_score: float = 1.0
     fetch_time_ms: int = 0
+    # Fetch provenance — set by acquire layer, None/empty for cached pages
+    backend: str = ""          # "local_static" | "local_render" | "firecrawl" | "sgai" | "cache" | ...
+    render_fallback: bool = False  # True when Playwright re-render was used after gate failure
+    gate_passed: bool | None = None  # None = gate not run (cached or non-local backend)
+    gate_reason: str = ""      # empty when passed or not run; failure reason when gate_passed=False
 
 
 class Config(BaseModel):
     """Runtime configuration passed to each pipeline layer."""
-    acquire_tool: str = "requests"  # "requests" | "sgai" | "firecrawl" | "playwright"
+    acquire_tool: str = "local"  # "local" | "requests" | "sgai" | "firecrawl" | "playwright"
     extract_tool: str = "sgai"
     cache_dir: str = "cache"
     request_headers: dict = Field(

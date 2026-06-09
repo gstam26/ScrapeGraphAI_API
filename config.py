@@ -100,6 +100,13 @@ OLLAMA_KEEP_ALIVE = "10m" # keep model resident between bursts of link scoring
 OLLAMA_QUERY_PREFIX = "search_query: "
 OLLAMA_DOC_PREFIX = "search_document: "
 
+# Reference texts for page-type scoring in score_links_embed().
+# A link's type_score = cosine(link, INFORMATIONAL_REF) - cosine(link, TRANSACTIONAL_REF).
+# PAGE_TYPE_ALPHA controls how much the type signal adjusts the topic score.
+INFORMATIONAL_REF = "about us company information sustainability research reports press news corporate responsibility mission values environment science"
+TRANSACTIONAL_REF = "shop buy products add to cart checkout account order collection store purchase browse"
+PAGE_TYPE_ALPHA = 0.4
+
 # ============================================================
 # VERIFICATION
 # ============================================================

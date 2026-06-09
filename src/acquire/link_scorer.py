@@ -122,18 +122,23 @@ def score_links_embed(
     from config import (
         OLLAMA_HOST, OLLAMA_EMBED_MODEL, OLLAMA_TIMEOUT,
         OLLAMA_KEEP_ALIVE, OLLAMA_QUERY_PREFIX, OLLAMA_DOC_PREFIX,
+        INFORMATIONAL_REF, TRANSACTIONAL_REF, PAGE_TYPE_ALPHA,
     )
 
     if not candidates or not questions:
         return candidates
 
     query_texts = [OLLAMA_QUERY_PREFIX + q for q in questions]
+    ref_texts = [
+        OLLAMA_DOC_PREFIX + INFORMATIONAL_REF,
+        OLLAMA_DOC_PREFIX + TRANSACTIONAL_REF,
+    ]
     doc_texts = [
         OLLAMA_DOC_PREFIX + f"{c.anchor_text} {c.context} {urlparse(c.url).path}".strip()
         for c in candidates
     ]
 
-    all_texts = query_texts + doc_texts
+    all_texts = query_texts + ref_texts + doc_texts
     req = urllib.request.Request(
         f"{OLLAMA_HOST.rstrip('/')}/api/embed",
         data=json.dumps({
@@ -159,9 +164,15 @@ def score_links_embed(
         return dot / (na * nb) if na and nb else 0.0
 
     q_vecs = embs[:len(questions)]
-    d_vecs = embs[len(questions):]
+    informational_ref_emb = embs[len(questions)]
+    transactional_ref_emb = embs[len(questions) + 1]
+    d_vecs = embs[len(questions) + 2:]
 
     for candidate, dv in zip(candidates, d_vecs):
-        candidate.score = max(_cosine(qv, dv) for qv in q_vecs)
+        topic_score = max(_cosine(qv, dv) for qv in q_vecs)
+        info_score = _cosine(dv, informational_ref_emb)
+        trans_score = _cosine(dv, transactional_ref_emb)
+        type_score = info_score - trans_score
+        candidate.score = topic_score * (1 + PAGE_TYPE_ALPHA * type_score)
 
     return sorted(candidates, key=lambda c: c.score, reverse=True)

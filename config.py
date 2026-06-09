@@ -74,8 +74,12 @@ DEFAULT_DEPTH = 0
 # Total pages allowed per entity
 CRAWL_MAX_PAGES = 2
 
-# Ignore links below this relevance score
-CRAWL_MIN_SCORE = 0.12
+# Ignore links below this relevance score.
+# BM25 scores are per-batch relative (0-1); 0.12 = must reach 12% of best link.
+# Embed scores are absolute cosine; 0.50 blocks noise (~0.41-0.52) while keeping
+# borderline-relevant links (~0.54-0.56). Raise toward 0.55 for higher precision.
+CRAWL_MIN_SCORE = 0.12        # used by BM25 scorer
+CRAWL_MIN_SCORE_EMBED = 0.50  # used by Ollama embedding scorer
 
 # Maximum candidate links extracted from a page
 CRAWL_MAX_LINKS_PER_PAGE = 30

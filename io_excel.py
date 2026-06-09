@@ -31,6 +31,7 @@ _SUPPORTED_CONFIG_KEYS = {
     "ACQUIRE_TOOL",
     "EXTRACT_TOOL",
     "CRAWL_MIN_SCORE",
+    "CRAWL_MIN_SCORE_EMBED",
     "CRAWL_MAX_PAGES",
     "DEFAULT_DEPTH",
 }
@@ -151,7 +152,7 @@ def _coerce_config_value(key: str, value: Any) -> Any:
     if key in {"CRAWL_MAX_PAGES", "DEFAULT_DEPTH"}:
         return int(float(value))
 
-    if key == "CRAWL_MIN_SCORE":
+    if key in {"CRAWL_MIN_SCORE", "CRAWL_MIN_SCORE_EMBED"}:
         return float(value)
 
     return value

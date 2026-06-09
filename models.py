@@ -53,7 +53,8 @@ class Config(BaseModel):
     firecrawl_api_key: str | None = None
     fetch_wait_ms: int = 3000
     default_depth: int = 0
-    crawl_min_score: float = 0.12
+    crawl_min_score: float = 0.12        # BM25 relative threshold
+    crawl_min_score_embed: float = 0.50  # Ollama absolute cosine threshold
     crawl_max_pages: int = 2
 
 

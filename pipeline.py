@@ -8,6 +8,7 @@ from config import (
     CACHE_DIR,
     CRAWL_MAX_PAGES,
     CRAWL_MIN_SCORE,
+    CRAWL_MIN_SCORE_EMBED,
     DEFAULT_DEPTH,
     EXTRACT_TOOL,
     FETCH_BACKEND,
@@ -30,6 +31,7 @@ def _build_config(overrides: dict[str, Any] | None = None) -> Config:
         sgai_api_key=API_KEY,
         default_depth=DEFAULT_DEPTH,
         crawl_min_score=CRAWL_MIN_SCORE,
+        crawl_min_score_embed=CRAWL_MIN_SCORE_EMBED,
         crawl_max_pages=CRAWL_MAX_PAGES,
     )
 
@@ -37,6 +39,7 @@ def _build_config(overrides: dict[str, Any] | None = None) -> Config:
         "ACQUIRE_TOOL": "acquire_tool",
         "EXTRACT_TOOL": "extract_tool",
         "CRAWL_MIN_SCORE": "crawl_min_score",
+        "CRAWL_MIN_SCORE_EMBED": "crawl_min_score_embed",
         "CRAWL_MAX_PAGES": "crawl_max_pages",
         "DEFAULT_DEPTH": "default_depth",
     }

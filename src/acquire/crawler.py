@@ -9,11 +9,13 @@ from bs4 import BeautifulSoup
 from config import (
     CRAWL_MAX_DEPTH,
     CRAWL_MAX_LINKS_PER_PAGE,
+    CRAWL_MIN_SCORE_EMBED,
+    SCORER_TOOL,
 )
 from models import ColumnSpec, Config, PageDoc
 from src.acquire.cache import read_cache, write_cache
 from src.acquire.fetcher import fetch_page_with_provenance
-from src.acquire.link_scorer import _tokenize, score_links
+from src.acquire.link_scorer import _tokenize, score_links, score_links_embed
 from src.acquire.models import EntityDoc, LinkCandidate
 
 
@@ -81,6 +83,16 @@ def _same_domain(start_url: str, candidate_url: str) -> bool:
     return start_domain == candidate_domain
 
 
+_JUNK_EXTS = (
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico",
+    ".css", ".js", ".mp4", ".webm", ".pdf", ".zip",
+)
+
+
+def _is_junk_link(url: str) -> bool:
+    return urlparse(url).path.lower().rstrip("/").endswith(_JUNK_EXTS)
+
+
 # ── Page fetcher ──────────────────────────────────────────────────────────────
 
 def _acquire_page_cfg(url: str, cfg: Config) -> PageDoc:
@@ -102,13 +114,97 @@ def _acquire_page_cfg(url: str, cfg: Config) -> PageDoc:
 
 # ── Link discovery ────────────────────────────────────────────────────────────
 
+_MD_LINK_RE = re.compile(r'\[([^\]]+)\]\(([^)\s"]+)(?:\s+"[^"]*")?\)')
+
+
+def _discover_links_from_markdown(
+    page_url: str,
+    start_url: str,
+    depth: int,
+    text: str,
+) -> list[LinkCandidate]:
+    """Extract links with ±120-char context from Firecrawl markdown."""
+    seen: set[str] = set()
+    candidates = []
+
+    for m in _MD_LINK_RE.finditer(text):
+        anchor = m.group(1).strip()
+        raw_url = m.group(2).strip()
+
+        if raw_url.startswith(("mailto:", "javascript:", "#", "tel:", "data:")):
+            continue
+
+        absolute_url = _normalise_url(urljoin(page_url, raw_url))
+        if not absolute_url.startswith("http"):
+            continue
+        if not _same_domain(start_url, absolute_url):
+            continue
+        if _is_junk_link(absolute_url):
+            continue
+        if absolute_url in seen:
+            continue
+        seen.add(absolute_url)
+
+        cs = max(0, m.start() - 120)
+        ce = min(len(text), m.end() + 120)
+        raw = text[cs:ce].replace("\n", " ")
+        rs, re_ = m.start() - cs, m.end() - cs
+        ctx = (raw[:rs].rstrip() + " " + raw[re_:].lstrip()).strip()
+
+        candidates.append(
+            LinkCandidate(url=absolute_url, anchor_text=anchor, depth=depth, context=ctx)
+        )
+
+    return candidates[:CRAWL_MAX_LINKS_PER_PAGE]
+
+
+def _discover_links_from_html(
+    page_url: str,
+    start_url: str,
+    depth: int,
+    html: str,
+) -> list[LinkCandidate]:
+    """Extract links from HTML; context comes from the parent element text."""
+    soup = BeautifulSoup(html, "html.parser")
+    seen: set[str] = set()
+    candidates = []
+
+    for a in soup.find_all("a", href=True):
+        absolute_url = _normalise_url(urljoin(page_url, a["href"]))
+        if not absolute_url.startswith("http"):
+            continue
+        if not _same_domain(start_url, absolute_url):
+            continue
+        if _is_junk_link(absolute_url):
+            continue
+        if absolute_url in seen:
+            continue
+        seen.add(absolute_url)
+
+        anchor_text = a.get_text(" ", strip=True)
+        parent = a.parent
+        ctx = parent.get_text(" ", strip=True)[:240] if parent else ""
+
+        candidates.append(
+            LinkCandidate(url=absolute_url, anchor_text=anchor_text, depth=depth, context=ctx)
+        )
+
+    return candidates[:CRAWL_MAX_LINKS_PER_PAGE]
+
+
 def _discover_links(
     page_url: str,
     start_url: str,
     depth: int,
     html: str | None = None,
+    page_text: str | None = None,
     cfg: Config | None = None,
 ) -> list[LinkCandidate]:
+    # Markdown path: produced by Firecrawl, includes context naturally.
+    if page_text and "](" in page_text:
+        return _discover_links_from_markdown(page_url, start_url, depth, page_text)
+
+    # HTML path: use BeautifulSoup, context from parent element.
     if html is None:
         timeout = cfg.request_timeout if cfg else 30
         headers = cfg.request_headers if cfg else {"User-Agent": "Mozilla/5.0 guided-entity-crawler"}
@@ -120,24 +216,7 @@ def _discover_links(
             return []
         html = response.text
 
-    soup = BeautifulSoup(html, "html.parser")
-    candidates = []
-
-    for a in soup.find_all("a", href=True):
-        absolute_url = _normalise_url(urljoin(page_url, a["href"]))
-
-        if not absolute_url.startswith("http"):
-            continue
-
-        if not _same_domain(start_url, absolute_url):
-            continue
-
-        anchor_text = a.get_text(" ", strip=True)
-        candidates.append(
-            LinkCandidate(url=absolute_url, anchor_text=anchor_text, depth=depth)
-        )
-
-    return candidates[:CRAWL_MAX_LINKS_PER_PAGE]
+    return _discover_links_from_html(page_url, start_url, depth, html)
 
 
 # ── Guided crawl ─────────────────────────────────────────────────────────────
@@ -158,7 +237,10 @@ def crawl_entity(
     """
     _max_depth = max_depth if max_depth is not None else CRAWL_MAX_DEPTH
     _max_pages = cfg.crawl_max_pages
-    _min_score = cfg.crawl_min_score
+    _min_score = (
+        cfg.crawl_min_score_embed if SCORER_TOOL == "ollama"
+        else cfg.crawl_min_score
+    )
     crawl_query = build_crawl_query(columns, entities=entities)
 
     visited: set[str] = set()
@@ -252,12 +334,22 @@ def crawl_entity(
             start_url=start_url,
             depth=current.depth + 1,
             html=page.html,
+            page_text=page.text,
             cfg=cfg,
         )
 
         unvisited = [c for c in child_links if c.url not in visited]
-        scored_children = score_links(unvisited, crawl_query)
-        scored_children.sort(key=lambda c: c.score, reverse=True)
+
+        if SCORER_TOOL == "ollama":
+            try:
+                scored_children = score_links_embed(unvisited, crawl_query)
+            except Exception as exc:
+                print(f"    ! Ollama scorer failed ({exc}); falling back to BM25")
+                scored_children = score_links(unvisited, crawl_query)
+                scored_children.sort(key=lambda c: c.score, reverse=True)
+        else:
+            scored_children = score_links(unvisited, crawl_query)
+            scored_children.sort(key=lambda c: c.score, reverse=True)
 
         to_follow = set(id(c) for c in _select_links_to_follow(scored_children, _min_score, current.depth))
 

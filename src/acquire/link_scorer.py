@@ -71,7 +71,7 @@ def _bm25_score_doc(
 
 def score_links(candidates: list[LinkCandidate], crawl_query: dict[str, float]) -> list[LinkCandidate]:
     """
-    Score all candidates using BM25 over anchor text + URL path.
+    Score all candidates using BM25 over anchor text + surrounding context + URL path.
 
     crawl_query maps pre-tokenized terms to their query weights.
     Scores are normalised to 0-1 per call (relative ranking within this batch).
@@ -82,7 +82,7 @@ def score_links(candidates: list[LinkCandidate], crawl_query: dict[str, float]) 
     query_tokens = list(crawl_query.keys())
 
     doc_texts = [
-        f"{c.anchor_text} {urlparse(c.url).path}"
+        f"{c.anchor_text} {c.context} {urlparse(c.url).path}"
         for c in candidates
     ]
     tokenized_docs = [_tokenize(t) for t in doc_texts]
@@ -98,3 +98,67 @@ def score_links(candidates: list[LinkCandidate], crawl_query: dict[str, float]) 
         candidate.score = raw / max_score if max_score > 0 else 0.0
 
     return candidates
+
+
+def score_links_embed(
+    candidates: list[LinkCandidate],
+    crawl_query: dict[str, float],
+) -> list[LinkCandidate]:
+    """
+    Score candidates using Ollama nomic-embed-text cosine similarity.
+
+    Returns absolute cosine scores (not per-batch normalised) so the
+    CRAWL_MIN_SCORE threshold has consistent meaning across pages.
+    Raises on network/embedding failure — caller should fall back to BM25.
+    """
+    import json
+    import math
+    import urllib.request
+    from config import (
+        OLLAMA_HOST, OLLAMA_EMBED_MODEL, OLLAMA_TIMEOUT,
+        OLLAMA_KEEP_ALIVE, OLLAMA_QUERY_PREFIX, OLLAMA_DOC_PREFIX,
+    )
+
+    if not candidates:
+        return candidates
+
+    query_terms = " ".join(
+        t for t, _ in sorted(crawl_query.items(), key=lambda x: -x[1])
+    )
+    query_text = OLLAMA_QUERY_PREFIX + query_terms
+
+    doc_texts = [
+        OLLAMA_DOC_PREFIX + f"{c.anchor_text} {c.context} {urlparse(c.url).path}".strip()
+        for c in candidates
+    ]
+
+    all_texts = [query_text] + doc_texts
+    req = urllib.request.Request(
+        f"{OLLAMA_HOST.rstrip('/')}/api/embed",
+        data=json.dumps({
+            "model": OLLAMA_EMBED_MODEL,
+            "input": all_texts,
+            "keep_alive": OLLAMA_KEEP_ALIVE,
+        }).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as resp:
+        body = json.loads(resp.read().decode("utf-8"))
+
+    embs = body.get("embeddings")
+    if not embs or len(embs) != len(all_texts):
+        raise RuntimeError(
+            f"embed returned {len(embs) if embs else 0} vectors for {len(all_texts)} inputs"
+        )
+
+    def _cosine(a: list[float], b: list[float]) -> float:
+        dot = sum(x * y for x, y in zip(a, b))
+        na = math.sqrt(sum(x * x for x in a))
+        nb = math.sqrt(sum(x * x for x in b))
+        return dot / (na * nb) if na and nb else 0.0
+
+    query_vec = embs[0]
+    for candidate, vec in zip(candidates, embs[1:]):
+        candidate.score = _cosine(query_vec, vec)
+
+    return sorted(candidates, key=lambda c: c.score, reverse=True)

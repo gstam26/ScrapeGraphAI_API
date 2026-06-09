@@ -24,6 +24,7 @@ class LinkCandidate(BaseModel):
     depth: int = 0
     score: float = 0.0
     parent_url: str | None = None
+    context: str = ""  # surrounding text extracted from the page (±120 chars)
 
 
 class EntityDoc(BaseModel):

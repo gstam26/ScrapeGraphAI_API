@@ -18,7 +18,7 @@ API_KEY = os.getenv("SGAI_API_KEY")
 FETCH_BACKEND = "local"
 
 ACQUIRE_TOOL = FETCH_BACKEND
-EXTRACT_TOOL = "sgai"
+EXTRACT_TOOL = "llmapi"
 VERIFY_TOOL = "rapidfuzz"
 
 # ============================================================

@@ -1,4 +1,5 @@
 from typing import Any
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
@@ -191,6 +192,68 @@ def _extract_with_sgai(
         return {}, make_timing()
 
 
+def _extract_with_llmapi(
+    page: PageDoc,
+    columns: list[ColumnSpec],
+    entities: list[str],
+) -> tuple[dict[str, Any], dict]:
+    """Extract fields using the internal LLMAPI HTTP endpoint."""
+    from diagnostics.llmapi import LLMAPI
+
+    page_text = page.text if getattr(page, "text", None) else None
+    prompt = _build_prompt(columns, entities, page_text[:7000] if page_text else None)
+
+    print(f"      -> LLMAPI extracting: {page.url}")
+    t0 = time.time()
+    timed_out = False
+
+    def make_timing():
+        return {
+            "extraction_time_ms": int((time.time() - t0) * 1000),
+            "timed_out": timed_out,
+            "retry_count": 0,
+        }
+
+    try:
+        llm = LLMAPI()
+
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(llm.call, prompt)
+            try:
+                raw = future.result(timeout=EXTRACT_TIMEOUT)
+            except FuturesTimeoutError:
+                timed_out = True
+                duration = time.time() - t0
+                print(f"      ! LLMAPI timed out after {duration:.2f}s")
+                return {}, make_timing()
+            except Exception as e:
+                duration = time.time() - t0
+                print(f"      X LLMAPI call error after {duration:.2f}s: {e}")
+                return {}, make_timing()
+
+        duration = time.time() - t0
+        print(f"      -> LLMAPI call completed in {duration:.2f}s")
+
+        text = raw.strip()
+        if text.startswith("```"):
+            text = text.split("```", 2)[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.rsplit("```", 1)[0].strip()
+
+        json_data = json.loads(text)
+        if not isinstance(json_data, dict):
+            print(f"      ! LLMAPI response is not a dict: {type(json_data)}")
+            return {}, make_timing()
+
+        return json_data, make_timing()
+
+    except Exception as e:
+        duration = time.time() - t0
+        print(f"      X LLMAPI extraction error after {duration:.2f}s: {e}")
+        return {}, make_timing()
+
+
 def _parse_field_value(raw: Any) -> tuple[Any, list[SourceQuote]]:
     evidence = []
 
@@ -257,11 +320,13 @@ def extract_cells(
     cells = []
     runtime_cfg = cfg or Config(extract_tool=EXTRACT_TOOL)
 
-    if runtime_cfg.extract_tool != "sgai":
+    if runtime_cfg.extract_tool == "sgai":
+        data, timing = _extract_with_sgai(page, columns, entities)
+    elif runtime_cfg.extract_tool == "llmapi":
+        data, timing = _extract_with_llmapi(page, columns, entities)
+    else:
         print(f"      X Unknown EXTRACT_TOOL: {runtime_cfg.extract_tool}")
         return cells
-
-    data, timing = _extract_with_sgai(page, columns, entities)
 
     for entity in entities:
         payload = _entity_payload(data, entity, entities)

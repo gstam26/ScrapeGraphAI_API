@@ -116,6 +116,11 @@ PAGE_TYPE_ALPHA = 0.4
 # being lenient enough not to drop borderline-relevant content.
 FILTER_THRESHOLD = 0.35
 
+# Page text is split into ~this many characters per chunk (on paragraph
+# boundaries where possible) before embedding; a column's page score is the
+# max cosine across chunks.
+FILTER_CHUNK_SIZE = 1000
+
 # ============================================================
 # VERIFICATION
 # ============================================================

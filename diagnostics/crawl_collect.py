@@ -228,10 +228,6 @@ def _embed_batch(texts: list[str]) -> list[list[float]]:
     return embs
 
 
-def _embed_query(topics: list[str]) -> list[float]:
-    return _embed_batch([QUERY_PREFIX + " ".join(topics)])[0]
-
-
 def _cosine(a, b) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
@@ -239,23 +235,26 @@ def _cosine(a, b) -> float:
     return 0.0 if na == 0 or nb == 0 else dot / (na * nb)
 
 
-def _score_links(links: list[dict], query_vec: list[float]) -> list[dict]:
+def _score_links(links: list[dict], topics: list[str]) -> list[dict]:
     if not links:
         return []
-    docs = []
+    query_texts = [QUERY_PREFIX + topic for topic in topics]
+    doc_texts = []
     for lk in links:
         marker = f"<<{lk['anchor']}>>"
         clean_ctx = lk["context"].replace(marker, "").strip()
-        docs.append(DOC_PREFIX + f"{lk['anchor']} {clean_ctx} {lk['url']}")
-    vecs = _embed_batch(docs)
-    for lk, v in zip(links, vecs):
-        lk["score"] = _cosine(query_vec, v)
+        doc_texts.append(DOC_PREFIX + f"{lk['anchor']} {clean_ctx} {lk['url']}")
+    all_vecs = _embed_batch(query_texts + doc_texts)
+    q_vecs = all_vecs[:len(topics)]
+    d_vecs = all_vecs[len(topics):]
+    for lk, dv in zip(links, d_vecs):
+        lk["score"] = max(_cosine(qv, dv) for qv in q_vecs)
     return sorted(links, key=lambda x: x["score"], reverse=True)
 
 
 # -- Crawl ---------------------------------------------------------------------
 
-def _crawl(url, depth, visited, results, state, app, query_vec):
+def _crawl(url, depth, visited, results, state, app, topics):
     if state["fetched"] >= MAX_PAGES:
         return
 
@@ -278,7 +277,7 @@ def _crawl(url, depth, visited, results, state, app, query_vec):
     if not links:
         return
 
-    scored = _score_links(links, query_vec)
+    scored = _score_links(links, topics)
 
     for lk in scored:
         if lk["score"] < FOLLOW_THRESHOLD:
@@ -288,14 +287,14 @@ def _crawl(url, depth, visited, results, state, app, query_vec):
         prev = results.get(ckey)
         if prev is None or lk["score"] > prev["score"]:
             results[ckey] = {
-                "url": _clean_display(lk["url"]),   # EMIT cleaned url
+                "url": _clean_display(lk["url"]),
                 "score": lk["score"],
                 "parent": url,
                 "anchor": lk["anchor"],
             }
 
         if depth < MAX_DEPTH and ckey not in visited and state["fetched"] < MAX_PAGES:
-            _crawl(lk["url"], depth + 1, visited, results, state, app, query_vec)
+            _crawl(lk["url"], depth + 1, visited, results, state, app, topics)
 
 
 # -- Main ----------------------------------------------------------------------
@@ -320,7 +319,7 @@ def main() -> None:
     print(f"  topics     : {len(TOPICS)}\n")
 
     try:
-        query_vec = _embed_query(TOPICS)
+        _embed_batch([QUERY_PREFIX + TOPICS[0]])  # reachability check
     except (urllib.error.URLError, RuntimeError) as exc:
         print(f"ERROR: cannot reach Ollama at {OLLAMA_HOST} -- {exc}")
         return
@@ -336,7 +335,7 @@ def main() -> None:
     }
 
     t0 = time.time()
-    _crawl(URL, 0, visited, results, state, app, query_vec)
+    _crawl(URL, 0, visited, results, state, app, TOPICS)
     elapsed = time.time() - t0
 
     ranked = sorted(results.values(), key=lambda x: x["score"], reverse=True)

@@ -213,18 +213,6 @@ def _embed_batch(texts: list[str]) -> list[list[float]]:
     return embeddings
 
 
-def _embed_query(topics: list[str]) -> list[float]:
-    """Embed the topic set as a single query string (direct analogue of the
-    BM25 bag-of-topics query). Returns one query vector reused for all links.
-
-    Alternative not used here: embed each topic separately and take the max
-    similarity per link — more faithful to 'relevant to ANY topic' but costs
-    more. Try it if the joined query looks mushy.
-    """
-    joined = " ".join(topics)
-    return _embed_batch([QUERY_PREFIX + joined])[0]
-
-
 def _cosine(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
@@ -234,24 +222,24 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
-def _score_links(links: list[dict], query_vec: list[float]) -> list[dict]:
-    """Score each link by cosine similarity to the topic query, then normalise
-    per-page to 0-1. Same output contract as the BM25 version: attaches
-    raw_score / score / rank / follow, returns sorted descending.
+def _score_links(links: list[dict], topics: list[str]) -> list[dict]:
+    """Score each link as max cosine across per-topic embeddings, then normalise
+    per-page to 0-1. Attaches raw_score / score / rank / follow.
     """
     if not links:
         return []
 
-    # Build the same doc text the BM25 version uses: anchor + context + url.
-    # URL included because paths reveal intent (/sustainability, /esg, /report).
+    query_texts = [QUERY_PREFIX + topic for topic in topics]
     doc_texts = []
     for lk in links:
         clean_ctx = lk["context"].replace(f"<<{lk['anchor']}>>", "").strip()
         doc_texts.append(DOC_PREFIX + f"{lk['anchor']} {clean_ctx} {lk['url']}")
 
-    doc_vecs = _embed_batch(doc_texts)
+    all_vecs = _embed_batch(query_texts + doc_texts)
+    q_vecs = all_vecs[:len(topics)]
+    d_vecs = all_vecs[len(topics):]
 
-    raw_scores = [_cosine(query_vec, dv) for dv in doc_vecs]
+    raw_scores = [max(_cosine(qv, dv) for qv in q_vecs) for dv in d_vecs]
     max_score = max(raw_scores) if raw_scores else 0.0
 
     for lk, raw in zip(links, raw_scores):
@@ -308,7 +296,7 @@ def _crawl(
     visited: set[str],
     stats: dict,
     app,
-    query_vec: list[float],
+    topics: list[str],
     indent: str,
     dry_run: bool = False,
 ) -> None:
@@ -354,7 +342,7 @@ def _crawl(
     print(f"{indent}  {len(links)} same-domain link(s) -- depth {depth}")
 
     try:
-        scored = _score_links(links, query_vec)
+        scored = _score_links(links, topics)
     except (urllib.error.URLError, RuntimeError) as exc:
         print(f"{indent}  SCORING FAILED (embedding endpoint): {exc}")
         print(f"{indent}  -> is the Ollama host reachable from here? ({OLLAMA_HOST})")
@@ -394,7 +382,7 @@ def _crawl(
                 visited=visited,
                 stats=stats,
                 app=app,
-                query_vec=query_vec,
+                topics=topics,
                 indent=indent + "  ",
                 dry_run=False,
             )
@@ -440,13 +428,13 @@ def main() -> None:
     print()
 
     try:
-        query_vec = _embed_query(TOPICS)
+        _embed_batch([QUERY_PREFIX + TOPICS[0]])  # reachability check
     except (urllib.error.URLError, RuntimeError) as exc:
-        print(f"ERROR: could not embed query — is {OLLAMA_HOST} reachable?")
+        print(f"ERROR: could not reach Ollama — is {OLLAMA_HOST} reachable?")
         print(f"       {exc}")
         return
 
-    print(f"  query embedded OK ({len(query_vec)} dims)")
+    print(f"  Ollama reachable OK  ({len(TOPICS)} topics, scored per-topic max)")
     print()
 
     app = V1FirecrawlApp(api_key=api_key)
@@ -463,7 +451,7 @@ def main() -> None:
         visited=visited,
         stats=stats,
         app=app,
-        query_vec=query_vec,
+        topics=TOPICS,
         indent="",
         dry_run=dry_run,
     )

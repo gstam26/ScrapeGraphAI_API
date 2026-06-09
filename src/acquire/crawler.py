@@ -21,7 +21,7 @@ from src.acquire.models import EntityDoc, LinkCandidate
 
 # ── Crawl planner ─────────────────────────────────────────────────────────────
 
-_QUERY_WEIGHTS = {"question": 3.0, "entity": 2.0, "instruction": 1.0}
+_QUERY_WEIGHTS = {"question": 3.0, "instruction": 1.0}
 
 _FALLBACK_TOP_K = 2
 _FALLBACK_MAX_DEPTH = 1
@@ -32,15 +32,14 @@ def build_crawl_query(
     entities: list[str] | None = None,
 ) -> dict[str, float]:
     """
-    Build a weighted term dict from questions, entities, and instruction text.
+    Build a weighted term dict from questions and instruction text (BM25 scorer).
 
-    Term weights: question (3.0) > entity (2.0) > instruction (1.0).
-    Each term keeps its highest applicable weight.
-    No hardcoded fallback terms — all signal comes from the actual task input.
+    Entity names are intentionally excluded — they dilute relevance scoring
+    and belong in link hygiene filtering (_same_domain) instead.
+    Term weights: question (3.0) > instruction (1.0).
     """
     tiers = {
         "question":    " ".join(col.name for col in columns),
-        "entity":      " ".join(entities or []),
         "instruction": " ".join(col.instruction or "" for col in columns),
     }
     term_weights: dict[str, float] = {}
@@ -342,7 +341,8 @@ def crawl_entity(
 
         if SCORER_TOOL == "ollama":
             try:
-                scored_children = score_links_embed(unvisited, crawl_query)
+                questions = [col.name for col in columns]
+                scored_children = score_links_embed(unvisited, questions)
             except Exception as exc:
                 print(f"    ! Ollama scorer failed ({exc}); falling back to BM25")
                 scored_children = score_links(unvisited, crawl_query)

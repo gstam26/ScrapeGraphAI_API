@@ -102,10 +102,15 @@ def score_links(candidates: list[LinkCandidate], crawl_query: dict[str, float]) 
 
 def score_links_embed(
     candidates: list[LinkCandidate],
-    crawl_query: dict[str, float],
+    questions: list[str],
 ) -> list[LinkCandidate]:
     """
     Score candidates using Ollama nomic-embed-text cosine similarity.
+
+    Each question is embedded separately; a candidate's score is the MAX
+    cosine across all question vectors. This prevents a diluted joint query
+    from suppressing pages that are strongly relevant to just one question.
+    Entity names are excluded — they belong in link hygiene, not scoring.
 
     Returns absolute cosine scores (not per-batch normalised) so the
     CRAWL_MIN_SCORE threshold has consistent meaning across pages.
@@ -119,20 +124,16 @@ def score_links_embed(
         OLLAMA_KEEP_ALIVE, OLLAMA_QUERY_PREFIX, OLLAMA_DOC_PREFIX,
     )
 
-    if not candidates:
+    if not candidates or not questions:
         return candidates
 
-    query_terms = " ".join(
-        t for t, _ in sorted(crawl_query.items(), key=lambda x: -x[1])
-    )
-    query_text = OLLAMA_QUERY_PREFIX + query_terms
-
+    query_texts = [OLLAMA_QUERY_PREFIX + q for q in questions]
     doc_texts = [
         OLLAMA_DOC_PREFIX + f"{c.anchor_text} {c.context} {urlparse(c.url).path}".strip()
         for c in candidates
     ]
 
-    all_texts = [query_text] + doc_texts
+    all_texts = query_texts + doc_texts
     req = urllib.request.Request(
         f"{OLLAMA_HOST.rstrip('/')}/api/embed",
         data=json.dumps({
@@ -157,8 +158,10 @@ def score_links_embed(
         nb = math.sqrt(sum(x * x for x in b))
         return dot / (na * nb) if na and nb else 0.0
 
-    query_vec = embs[0]
-    for candidate, vec in zip(candidates, embs[1:]):
-        candidate.score = _cosine(query_vec, vec)
+    q_vecs = embs[:len(questions)]
+    d_vecs = embs[len(questions):]
+
+    for candidate, dv in zip(candidates, d_vecs):
+        candidate.score = max(_cosine(qv, dv) for qv in q_vecs)
 
     return sorted(candidates, key=lambda c: c.score, reverse=True)

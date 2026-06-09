@@ -72,7 +72,7 @@ CRAWL_MAX_DEPTH = 1
 DEFAULT_DEPTH = 0
 
 # Total pages allowed per entity
-CRAWL_MAX_PAGES = 2
+CRAWL_MAX_PAGES = 15
 
 # Ignore links below this relevance score.
 # BM25 scores are per-batch relative (0-1); 0.12 = must reach 12% of best link.

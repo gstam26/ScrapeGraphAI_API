@@ -108,6 +108,15 @@ TRANSACTIONAL_REF = "shop buy products add to cart checkout account order collec
 PAGE_TYPE_ALPHA = 0.4
 
 # ============================================================
+# FILTER
+# ============================================================
+
+# Minimum cosine similarity between page text and a question for that column
+# to be included in extraction. 0.35 keeps clearly irrelevant pages out while
+# being lenient enough not to drop borderline-relevant content.
+FILTER_THRESHOLD = 0.35
+
+# ============================================================
 # VERIFICATION
 # ============================================================
 

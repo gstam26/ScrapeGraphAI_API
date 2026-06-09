@@ -13,6 +13,7 @@ Usage:
 """
 
 import argparse
+import math
 import os
 import sys
 import time
@@ -33,6 +34,9 @@ from config import (
     CRAWL_MIN_SCORE,
     CRAWL_MIN_SCORE_EMBED,
     DEFAULT_DEPTH,
+    FILTER_THRESHOLD,
+    OLLAMA_DOC_PREFIX,
+    OLLAMA_QUERY_PREFIX,
     REQUEST_HEADERS,
 )
 from src.io_excel import read_input
@@ -54,6 +58,62 @@ def _bar(n: int, total: int, width: int = 20) -> str:
 def _preview(text: str, chars: int = 120) -> str:
     t = text.strip().replace("\n", " ")
     return t[:chars] + "…" if len(t) > chars else t
+
+
+# ── Filter scoring (diagnostic-only, mirrors src/filter.py logic) ─────────────
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(x * x for x in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def _filter_with_scores(pages: list, columns: list, threshold: float) -> list[dict]:
+    """
+    Embed each page and each question, return per-page routing with per-column
+    cosine scores. Questions are embedded once for all pages.
+    Raises on Ollama failure — caller wraps in try/except.
+    """
+    from src.embed import embed_batch
+
+    all_names = [col.name for col in columns]
+    if not all_names:
+        return []
+
+    question_texts = [OLLAMA_QUERY_PREFIX + name for name in all_names]
+    q_embs = embed_batch(question_texts)
+
+    results = []
+    for p in pages:
+        text = (p.markdown or "")[:2000]
+        if not text:
+            results.append({
+                "url": p.url,
+                "scores": {name: None for name in all_names},
+                "relevant": set(all_names),
+                "fallback": True,
+            })
+            continue
+
+        page_emb = embed_batch([OLLAMA_DOC_PREFIX + text])[0]
+        scores = {
+            name: round(_cosine(page_emb, qv), 3)
+            for name, qv in zip(all_names, q_embs)
+        }
+        relevant = {name for name, s in scores.items() if s >= threshold}
+        fallback = not relevant
+        if fallback:
+            relevant = set(all_names)
+
+        results.append({
+            "url": p.url,
+            "scores": scores,
+            "relevant": relevant,
+            "fallback": fallback,
+        })
+
+    return results
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -164,6 +224,44 @@ def main() -> None:
 
     print()
 
+    # ── Filter routing ────────────────────────────────────────────────────────
+
+    filter_rows = []
+    if pipeline_input.columns:
+        print(f"  FILTER ROUTING  (threshold={FILTER_THRESHOLD})")
+        print()
+        try:
+            filter_results = _filter_with_scores(pages, pipeline_input.columns, FILTER_THRESHOLD)
+            total_cols = len(pipeline_input.columns)
+
+            for fr in filter_results:
+                n_relevant = len(fr["relevant"])
+                fallback_note = "  [fallback: all]" if fr["fallback"] else ""
+                print(f"  {fr['url']}")
+                print(f"    {n_relevant}/{total_cols} relevant{fallback_note}")
+                for name, score in fr["scores"].items():
+                    tick = "✓" if name in fr["relevant"] else "✗"
+                    score_str = f"{score:.3f}" if score is not None else "n/a "
+                    print(f"    {tick} {score_str}  {name}")
+                print()
+
+                for name, score in fr["scores"].items():
+                    filter_rows.append({
+                        "url": fr["url"],
+                        "column": name,
+                        "score": score,
+                        "above_threshold": (score is not None and score >= FILTER_THRESHOLD),
+                        "relevant": name in fr["relevant"],
+                        "fallback": fr["fallback"],
+                    })
+
+        except Exception as exc:
+            print(f"  [filter] Ollama not reachable — skipping filter section ({exc})")
+            print()
+    else:
+        print("  FILTER ROUTING  (skipped — no columns in input)")
+        print()
+
     # ── Save report ───────────────────────────────────────────────────────────
 
     output_path = args.output
@@ -180,9 +278,14 @@ def main() -> None:
         columns=["parent_url", "candidate_url", "anchor_text", "crawl_score", "threshold", "followed", "skip_reason"]
     )
 
+    df_filter = pd.DataFrame(filter_rows) if filter_rows else pd.DataFrame(
+        columns=["url", "column", "score", "above_threshold", "relevant", "fallback"]
+    )
+
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         df_pages.to_excel(writer, sheet_name="Pages", index=False)
         df_crawl.to_excel(writer, sheet_name="Crawl Candidates", index=False)
+        df_filter.to_excel(writer, sheet_name="Filter", index=False)
 
     print(f"  Report saved → {output_path}\n")
 

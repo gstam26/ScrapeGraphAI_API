@@ -3,7 +3,7 @@ import time
 from models import Config, ColumnSpec, PageDoc
 from src.acquire.cache import read_cache, write_cache
 from src.acquire.fetcher import fetch_page_with_provenance, _VALID_BACKENDS
-from src.acquire.models import FetchedPage
+from src.acquire.acquire_models import FetchedPage
 
 __all__ = ["acquire", "FetchedPage"]
 

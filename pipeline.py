@@ -14,12 +14,12 @@ from config import (
     FETCH_BACKEND,
     REQUEST_HEADERS,
 )
-from aggregate import aggregate_cells
-from extract import extract_cells
-from filter import filter_page
+from src.aggregate import aggregate_cells
+from src.extract import extract_cells
+from src.filter import filter_page
 from models import ColumnSpec, Config, ExtractedRow, PageDoc, PipelineInput, PipelineResult, UrlSpec
 from src.acquire import FetchedPage, acquire
-from verify import verify_cells
+from src.verify import verify_cells
 
 
 def _build_config(overrides: dict[str, Any] | None = None) -> Config:

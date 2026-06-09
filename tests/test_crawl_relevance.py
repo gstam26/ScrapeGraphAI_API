@@ -11,7 +11,7 @@ from src.acquire.crawler import (
     build_crawl_query,
 )
 from src.acquire.link_scorer import score_links
-from src.acquire.models import LinkCandidate
+from src.acquire.acquire_models import LinkCandidate
 
 
 def _make_candidate(url: str, anchor: str, score: float = 0.0) -> LinkCandidate:

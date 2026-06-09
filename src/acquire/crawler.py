@@ -16,7 +16,7 @@ from models import ColumnSpec, Config, PageDoc
 from src.acquire.cache import read_cache, write_cache
 from src.acquire.fetcher import fetch_page_with_provenance
 from src.acquire.link_scorer import _tokenize, score_links, score_links_embed
-from src.acquire.models import EntityDoc, LinkCandidate
+from src.acquire.acquire_models import EntityDoc, LinkCandidate
 
 
 # ── Crawl planner ─────────────────────────────────────────────────────────────

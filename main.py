@@ -2,7 +2,7 @@ import os
 import time
 
 from config import OUTPUT_DIR
-from io_excel import read_input, write_output_excel
+from src.io_excel import read_input, write_output_excel
 from pipeline import run_pipeline
 
 

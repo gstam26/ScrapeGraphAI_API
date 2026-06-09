@@ -2,7 +2,7 @@ import math
 import re
 from urllib.parse import urlparse
 
-from src.acquire.models import LinkCandidate
+from src.acquire.acquire_models import LinkCandidate
 
 BM25_K1 = 1.5
 BM25_B = 0.75

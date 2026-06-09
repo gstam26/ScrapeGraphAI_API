@@ -19,14 +19,14 @@ from pathlib import Path
 
 import pandas as pd
 
-import extract
-from aggregate import aggregate_cells
-from extract import _parse_field_value
-from io_excel import read_input, write_output_excel
+import src.extract as extract
+from src.aggregate import aggregate_cells
+from src.extract import _parse_field_value
+from src.io_excel import read_input, write_output_excel
 from models import ColumnSpec, Config, ExtractedCell, ExtractedRow, PageDoc, PipelineResult, SourceQuote
 from src.acquire.crawler import build_crawl_query
 from src.acquire.link_scorer import score_links
-from src.acquire.models import LinkCandidate
+from src.acquire.acquire_models import LinkCandidate
 
 
 def test_parse_dict_output():

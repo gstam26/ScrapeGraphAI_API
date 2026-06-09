@@ -198,7 +198,7 @@ def _extract_with_llmapi(
     entities: list[str],
 ) -> tuple[dict[str, Any], dict]:
     """Extract fields using the internal LLMAPI HTTP endpoint."""
-    from diagnostics.llmapi import LLMAPI
+    from src.llmapi import LLMAPI
 
     page_text = page.text if getattr(page, "text", None) else None
     prompt = _build_prompt(columns, entities, page_text[:7000] if page_text else None)

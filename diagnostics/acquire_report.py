@@ -35,7 +35,7 @@ from config import (
     DEFAULT_DEPTH,
     REQUEST_HEADERS,
 )
-from io_excel import read_input
+from src.io_excel import read_input
 from models import Config
 from src.acquire import FetchedPage, acquire
 

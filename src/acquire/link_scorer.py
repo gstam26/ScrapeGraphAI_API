@@ -116,14 +116,11 @@ def score_links_embed(
     CRAWL_MIN_SCORE threshold has consistent meaning across pages.
     Raises on network/embedding failure — caller should fall back to BM25.
     """
-    import json
-    import math
-    import urllib.request
     from config import (
-        OLLAMA_HOST, OLLAMA_EMBED_MODEL, OLLAMA_TIMEOUT,
-        OLLAMA_KEEP_ALIVE, OLLAMA_QUERY_PREFIX, OLLAMA_DOC_PREFIX,
+        OLLAMA_QUERY_PREFIX, OLLAMA_DOC_PREFIX,
         INFORMATIONAL_REF, TRANSACTIONAL_REF, PAGE_TYPE_ALPHA,
     )
+    from src.embed import embed_batch
 
     if not candidates or not questions:
         return candidates
@@ -139,23 +136,7 @@ def score_links_embed(
     ]
 
     all_texts = query_texts + ref_texts + doc_texts
-    req = urllib.request.Request(
-        f"{OLLAMA_HOST.rstrip('/')}/api/embed",
-        data=json.dumps({
-            "model": OLLAMA_EMBED_MODEL,
-            "input": all_texts,
-            "keep_alive": OLLAMA_KEEP_ALIVE,
-        }).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as resp:
-        body = json.loads(resp.read().decode("utf-8"))
-
-    embs = body.get("embeddings")
-    if not embs or len(embs) != len(all_texts):
-        raise RuntimeError(
-            f"embed returned {len(embs) if embs else 0} vectors for {len(all_texts)} inputs"
-        )
+    embs = embed_batch(all_texts)
 
     def _cosine(a: list[float], b: list[float]) -> float:
         dot = sum(x * y for x, y in zip(a, b))

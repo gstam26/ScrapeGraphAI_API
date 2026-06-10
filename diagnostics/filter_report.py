@@ -2,11 +2,11 @@
 Filter-layer diagnostic.
 
 Fetches pages using the Acquire layer, then runs the Filter layer and shows
-per-page routing decisions with per-column cosine scores so you can inspect
-why each column was included or excluded.
+per-page routing decisions with per-column cosine scores and keyword-gate
+flags so you can inspect why each column was included or excluded.
 
-Note: src/filter.py exposes filter_page() per-page only. Scores are computed
-here by calling embed_batch() directly, mirroring filter.py's logic exactly.
+Scoring is done via score_page_columns() imported directly from src/filter.py
+so the diagnostic can never drift from the production logic.
 
 Usage:
     python diagnostics/filter_report.py samples/input1.xlsx
@@ -19,7 +19,6 @@ Requires:
 """
 
 import argparse
-import math
 import os
 import sys
 import time
@@ -40,23 +39,15 @@ from config import (
     CRAWL_MIN_SCORE_EMBED,
     DEFAULT_DEPTH,
     FILTER_THRESHOLD,
-    OLLAMA_DOC_PREFIX,
-    OLLAMA_QUERY_PREFIX,
     REQUEST_HEADERS,
 )
 from src.io_excel import read_input
 from models import Config
 from src.acquire import FetchedPage, acquire
+from src.filter import score_page_columns, _keywords
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _cosine(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(x * x for x in b))
-    return dot / (na * nb) if na and nb else 0.0
-
 
 def _bar(n: int, total: int, width: int = 20) -> str:
     filled = int(width * n / total) if total else 0
@@ -69,38 +60,40 @@ def _filter_with_scores(
     threshold: float,
 ) -> list[dict]:
     """
-    Embed all questions once, then score each page against every question.
-    Returns per-page dicts with routing decision and per-column cosine scores.
+    Score each page using the production score_page_columns() from src/filter.
+    Returns per-page dicts with routing decision, per-column cosine scores,
+    and per-column keyword-gate flags.
     Raises on Ollama failure — caller wraps in try/except.
     """
-    from src.embed import embed_batch
-
     all_names = [col.name for col in columns]
     if not all_names:
         return []
 
-    question_texts = [OLLAMA_QUERY_PREFIX + name for name in all_names]
-    q_embs = embed_batch(question_texts)
-
     results = []
     for p in pages:
-        text = (p.markdown or "")[:2000]
+        text = p.markdown or ""
         if not text:
             results.append({
                 "url": p.url,
                 "depth": p.depth,
                 "scores": {name: None for name in all_names},
+                "keyword_gate": {name: False for name in all_names},
                 "relevant": set(all_names),
                 "fallback": True,
             })
             continue
 
-        page_emb = embed_batch([OLLAMA_DOC_PREFIX + text])[0]
-        scores = {
-            name: round(_cosine(page_emb, qv), 3)
-            for name, qv in zip(all_names, q_embs)
+        raw_scores = score_page_columns(text, columns)
+        scores = {name: round(raw_scores.get(name, 0.0), 3) for name in all_names}
+        text_lower = text.lower()
+        keyword_gate = {
+            name: any(kw in text_lower for kw in _keywords(name))
+            for name in all_names
         }
-        relevant = {name for name, s in scores.items() if s >= threshold}
+        relevant = {
+            name for name in all_names
+            if scores[name] >= threshold or keyword_gate[name]
+        }
         fallback = not relevant
         if fallback:
             relevant = set(all_names)
@@ -109,6 +102,7 @@ def _filter_with_scores(
             "url": p.url,
             "depth": p.depth,
             "scores": scores,
+            "keyword_gate": keyword_gate,
             "relevant": relevant,
             "fallback": fallback,
         })
@@ -203,7 +197,8 @@ def main() -> None:
         for name, score in fr["scores"].items():
             tick = "✓" if name in fr["relevant"] else "✗"
             score_str = f"{score:.3f}" if score is not None else "n/a "
-            print(f"    {tick} {score_str}  {name}")
+            kw_flag = "[K]" if fr["keyword_gate"].get(name) else "   "
+            print(f"    {tick} {score_str} {kw_flag}  {name}")
         print()
 
         for name, score in fr["scores"].items():
@@ -213,6 +208,7 @@ def main() -> None:
                 "column": name,
                 "score": score,
                 "above_threshold": (score is not None and score >= FILTER_THRESHOLD),
+                "keyword_gate": fr["keyword_gate"].get(name, False),
                 "relevant": name in fr["relevant"],
                 "fallback": fr["fallback"],
             })
@@ -258,7 +254,7 @@ def main() -> None:
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
     df = pd.DataFrame(excel_rows) if excel_rows else pd.DataFrame(
-        columns=["url", "depth", "column", "score", "above_threshold", "relevant", "fallback"]
+        columns=["url", "depth", "column", "score", "above_threshold", "keyword_gate", "relevant", "fallback"]
     )
 
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:

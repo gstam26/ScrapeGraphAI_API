@@ -77,25 +77,52 @@ def _keywords(column_name: str) -> set[str]:
     }
 
 
+def score_page_columns(text: str, columns: list[ColumnSpec]) -> dict[str, float]:
+    """
+    Return max-chunk cosine similarity per column name.
+
+    Chunks *text* with _chunk_text(), embeds all chunks in one call, then
+    takes the per-column max cosine across chunks. Question embeddings are
+    cached per unique column set (computed once per process, not per page).
+
+    Raises on embedding failure — callers should wrap in try/except.
+    Returns {} when text or columns is empty.
+    """
+    if not text or not columns:
+        return {}
+
+    all_names = [col.name for col in columns]
+    cache_key = tuple(all_names)
+    chunks = _chunk_text(text)
+    print(f"    [DEBUG score_page_columns] len(text)={len(text)}, chunks={len(chunks)}")
+    chunk_texts = [OLLAMA_DOC_PREFIX + c for c in chunks]
+
+    if cache_key not in _question_emb_cache:
+        question_texts = [OLLAMA_QUERY_PREFIX + name for name in all_names]
+        all_embs = embed_batch(question_texts + chunk_texts)
+        _question_emb_cache[cache_key] = all_embs[:len(all_names)]
+        chunk_embs = all_embs[len(all_names):]
+    else:
+        chunk_embs = embed_batch(chunk_texts)
+
+    question_embs = _question_emb_cache[cache_key]
+    return {
+        name: max((_cosine(cv, qv) for cv in chunk_embs), default=0.0)
+        for name, qv in zip(all_names, question_embs)
+    }
+
+
 def filter_page(page: PageDoc, columns: list[ColumnSpec] | None = None) -> RoutedPage:
     """
     Route a page to extraction with cell relevance markers.
 
-    The page text is split into ~FILTER_CHUNK_SIZE-char chunks (paragraph
-    boundaries preferred, capped at 100 chunks) and all chunks are embedded
-    in one call. A column's page score is the MAX cosine across chunks, so a
-    single relevant paragraph is enough — long pages no longer dilute the
-    signal the way a single whole-page embedding did.
-
-    A column is relevant if EITHER gate passes:
+    Delegates scoring to score_page_columns(). A column is relevant if EITHER
+    gate passes:
       1. max chunk cosine >= FILTER_THRESHOLD
-      2. any significant keyword from the column name appears in the page
-         text (case-insensitive)
+      2. any significant keyword from the column name appears in the page text
 
-    Question embeddings are cached per unique column set — computed once per
-    run, not per page. Falls back to all columns if no column clears either
-    gate or if the embedding endpoint is unreachable — never produces an
-    empty relevant_columns.
+    Falls back to all columns when none clear either gate or when the
+    embedding endpoint is unreachable — never produces an empty relevant_columns.
     """
     all_columns = columns or []
     all_names = [col.name for col in all_columns]
@@ -105,31 +132,14 @@ def filter_page(page: PageDoc, columns: list[ColumnSpec] | None = None) -> Route
         return RoutedPage(page=page, relevant_columns=full_set)
 
     try:
-        cache_key = tuple(all_names)
-        chunks = _chunk_text(page.text)
-        chunk_texts = [OLLAMA_DOC_PREFIX + c for c in chunks]
-
-        if cache_key not in _question_emb_cache:
-            # First call: batch questions + this page's chunks in one call.
-            question_texts = [OLLAMA_QUERY_PREFIX + name for name in all_names]
-            all_embs = embed_batch(question_texts + chunk_texts)
-            _question_emb_cache[cache_key] = all_embs[:len(all_names)]
-            chunk_embs = all_embs[len(all_names):]
-        else:
-            chunk_embs = embed_batch(chunk_texts)
-
-        question_embs = _question_emb_cache[cache_key]
+        scores = score_page_columns(page.text, all_columns)
         page_text_lower = page.text.lower()
 
         relevant_columns = set()
-        for name, qv in zip(all_names, question_embs):
-            max_score = max(
-                (_cosine(cv, qv) for cv in chunk_embs), default=0.0
-            )
+        for name, max_score in scores.items():
             if max_score >= FILTER_THRESHOLD:
                 relevant_columns.add(name)
-                continue
-            if any(kw in page_text_lower for kw in _keywords(name)):
+            elif any(kw in page_text_lower for kw in _keywords(name)):
                 relevant_columns.add(name)
 
         if not relevant_columns:

@@ -392,7 +392,8 @@ def _make_provenance_df(
 ) -> pd.DataFrame:
     col_names = [
         "Entity", "Source URL", "Question", "Claim", "Verbatim Quote",
-        "Verified", "Verification Score", "Match Type", "Semantic Score", "Source Page Depth",
+        "Page Title", "Extraction Method", "Confidence Score", "Verified",
+        "Verification Score", "Match Type", "Semantic Score", "Source Page Depth",
     ]
 
     url_to_depth: dict[str, int] = {}
@@ -409,17 +410,21 @@ def _make_provenance_df(
                     continue
                 score = ev.verification_score
                 verified = ev.verified
+                source_url = ev.source_url or cell.source_url
                 rows.append({
                     "Entity": cell.entity or entity_row.entity,
-                    "Source URL": cell.source_url,
+                    "Source URL": source_url,
                     "Question": cell.column,
                     "Claim": str(ev.value),
                     "Verbatim Quote": ev.quote or "",
+                    "Page Title": ev.page_title,
+                    "Extraction Method": ev.extraction_method,
+                    "Confidence Score": round(ev.confidence_score, 3) if isinstance(ev.confidence_score, float) else "",
                     "Verified": verified,
                     "Verification Score": round(score, 1) if isinstance(score, float) else "",
                     "Match Type": _match_type_str(verified, score),
                     "Semantic Score": round(ev.semantic_score, 3) if isinstance(ev.semantic_score, float) else "",
-                    "Source Page Depth": url_to_depth.get(cell.source_url, 0),
+                    "Source Page Depth": url_to_depth.get(source_url, 0),
                 })
 
     return pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)

@@ -1,72 +1,117 @@
-from models import ExtractedCell
+from typing import Any
+
+from models import ExtractedCell, SourceQuote
 
 
 def _has_value(cell: ExtractedCell) -> bool:
     """Check if cell has any value, including evidence-only values."""
     if cell.value not in (None, "", []):
         return True
+    return bool(cell.evidence)
 
-    # Even if value is null, if we have evidence, keep it
-    if cell.evidence:
-        return True
 
-    return False
+def _iter_values(value: Any) -> list[Any]:
+    if value in (None, "", []):
+        return []
+    if isinstance(value, list):
+        return [item for item in value if item not in (None, "", [])]
+    return [value]
+
+
+def _normalise_value(value: Any) -> str:
+    return " ".join(str(value).strip().lower().split())
+
+
+def _confidence_score(evidence: SourceQuote) -> float | None:
+    if evidence.semantic_score is not None:
+        return evidence.semantic_score
+    return evidence.verification_score
+
+
+def _copy_evidence_with_provenance(cell: ExtractedCell, evidence: SourceQuote) -> SourceQuote:
+    copied = evidence.model_copy(deep=True)
+    if not copied.source_url:
+        copied.source_url = cell.source_url
+    if not copied.page_title:
+        copied.page_title = getattr(cell, "page_title", "") or ""
+    if not copied.extraction_method:
+        copied.extraction_method = getattr(cell, "extraction_method", "") or ""
+    if copied.confidence_score is None:
+        copied.confidence_score = _confidence_score(copied)
+    return copied
+
+
+def _evidence_from_cell_value(cell: ExtractedCell) -> list[SourceQuote]:
+    return [
+        SourceQuote(
+            value=value,
+            source_url=cell.source_url,
+            page_title=getattr(cell, "page_title", "") or "",
+            extraction_method=getattr(cell, "extraction_method", "") or "",
+        )
+        for value in _iter_values(cell.value)
+    ]
 
 
 def aggregate_cells(cells: list[ExtractedCell]) -> list[ExtractedCell]:
     """
-    Group cells by entity and column, then select the best one.
-    
-    Selection logic:
-    - Prefer cells with values over evidence-only
-    - Prefer verified cells
-    - Prefer higher verification score
-    
-    Do NOT drop evidence-only cells.
-    Preserve all evidence in the final cell.
-    """
-    best_by_key: dict[tuple[str, str], ExtractedCell] = {}
+    Group cells by entity and column, then collect all contributions.
 
+    This first-pass aggregation does not choose a winner or synthesize a final
+    answer. It deduplicates evidence by normalized value, quote, and source URL,
+    keeps conflicting values, and stores cell.value as a list of unique values.
+    """
+    grouped: dict[tuple[str, str], list[ExtractedCell]] = {}
     for cell in cells:
         if not _has_value(cell):
             continue
+        grouped.setdefault((cell.entity, cell.column), []).append(cell)
 
-        key = (cell.entity, cell.column)
-        existing = best_by_key.get(key)
+    aggregated: list[ExtractedCell] = []
+    for (entity, column), group in grouped.items():
+        deduped_evidence: list[SourceQuote] = []
+        seen_evidence: set[tuple[str, str, str]] = set()
+        unique_values: list[Any] = []
+        seen_values: set[str] = set()
+        source_urls: set[str] = set()
 
-        if existing is None:
-            best_by_key[key] = cell
-            continue
+        for cell in group:
+            if cell.source_url:
+                source_urls.add(cell.source_url)
 
-        # Decide if new cell is better than existing
-        new_has_value = cell.value not in (None, "", [])
-        existing_has_value = existing.value not in (None, "", [])
+            source_evidence = cell.evidence or _evidence_from_cell_value(cell)
+            for evidence in source_evidence:
+                copied = _copy_evidence_with_provenance(cell, evidence)
+                if copied.value in (None, "", []):
+                    continue
 
-        # Prefer cell with value over evidence-only
-        if new_has_value and not existing_has_value:
-            best_by_key[key] = cell
-            continue
+                value_key = _normalise_value(copied.value)
+                evidence_key = (value_key, copied.quote or "", copied.source_url or "")
+                if evidence_key in seen_evidence:
+                    continue
+                seen_evidence.add(evidence_key)
+                deduped_evidence.append(copied)
 
-        if not new_has_value and existing_has_value:
-            continue
+                if value_key not in seen_values:
+                    seen_values.add(value_key)
+                    unique_values.append(copied.value)
 
-        # Both have values or both evidence-only
-        # Prefer verified
-        new_verified = cell.verified
-        existing_verified = existing.verified
+        scores = [
+            evidence.verification_score
+            for evidence in deduped_evidence
+            if evidence.verification_score is not None
+        ]
+        aggregated.append(ExtractedCell(
+            entity=entity,
+            source_url="; ".join(sorted(source_urls)),
+            column=column,
+            value=unique_values,
+            evidence=deduped_evidence,
+            verified=bool(deduped_evidence) and all(ev.verified for ev in deduped_evidence),
+            verification_score=sum(scores) / len(scores) if scores else None,
+            has_conflict=len(unique_values) > 1,
+            num_sources=len(source_urls),
+            num_unique_values=len(unique_values),
+        ))
 
-        if new_verified and not existing_verified:
-            best_by_key[key] = cell
-            continue
-
-        if not new_verified and existing_verified:
-            continue
-
-        # Same verification status: prefer higher score
-        existing_score = existing.verification_score or 0
-        new_score = cell.verification_score or 0
-
-        if new_score > existing_score:
-            best_by_key[key] = cell
-
-    return list(best_by_key.values())
+    return aggregated

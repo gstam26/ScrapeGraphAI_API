@@ -139,14 +139,14 @@ def test_aggregator_groups_by_entity_and_question():
     print("OK test_aggregator_groups_by_entity_and_question passed")
 
 
-def test_aggregator_prefers_verified():
+def test_aggregator_merges_contributions_without_winner_selection():
     cells = [
         ExtractedCell(
             entity="Oatly",
             source_url="http://example.com/1",
             column="test_col",
             value="unverified value",
-            evidence=[SourceQuote(value="unverified", quote="quote")],
+            evidence=[SourceQuote(value="unverified value", quote="quote 1")],
             verified=False,
             verification_score=40.0,
         ),
@@ -155,7 +155,7 @@ def test_aggregator_prefers_verified():
             source_url="http://example.com/2",
             column="test_col",
             value="verified value",
-            evidence=[SourceQuote(value="verified", quote="quote")],
+            evidence=[SourceQuote(value="verified value", quote="quote 2", verified=True, verification_score=85.0)],
             verified=True,
             verification_score=85.0,
         ),
@@ -164,9 +164,52 @@ def test_aggregator_prefers_verified():
     aggregated = aggregate_cells(cells)
 
     assert len(aggregated) == 1
-    assert aggregated[0].verified is True
-    assert aggregated[0].source_url == "http://example.com/2"
-    print("OK test_aggregator_prefers_verified passed")
+    assert aggregated[0].value == ["unverified value", "verified value"]
+    assert aggregated[0].verified is False
+    assert aggregated[0].has_conflict is True
+    assert aggregated[0].num_sources == 2
+    assert aggregated[0].num_unique_values == 2
+    assert {ev.source_url for ev in aggregated[0].evidence} == {
+        "http://example.com/1",
+        "http://example.com/2",
+    }
+    print("OK test_aggregator_merges_contributions_without_winner_selection passed")
+
+
+def test_aggregator_dedupes_by_value_quote_and_source_url():
+    cells = [
+        ExtractedCell(
+            entity="Silk",
+            source_url="http://example.com/a",
+            column="Parent companies",
+            value="Danone North America",
+            evidence=[SourceQuote(value="Danone North America", quote="owned by Danone")],
+        ),
+        ExtractedCell(
+            entity="Silk",
+            source_url="http://example.com/a",
+            column="Parent companies",
+            value="danone   north america",
+            evidence=[SourceQuote(value="danone   north america", quote="owned by Danone")],
+        ),
+        ExtractedCell(
+            entity="Silk",
+            source_url="http://example.com/b",
+            column="Parent companies",
+            value="Danone North America",
+            evidence=[SourceQuote(value="Danone North America", quote="owned by Danone")],
+        ),
+    ]
+
+    aggregated = aggregate_cells(cells)
+
+    assert len(aggregated) == 1
+    assert aggregated[0].value == ["Danone North America"]
+    assert len(aggregated[0].evidence) == 2
+    assert aggregated[0].has_conflict is False
+    assert aggregated[0].num_sources == 2
+    assert aggregated[0].num_unique_values == 1
+    print("OK test_aggregator_dedupes_by_value_quote_and_source_url passed")
 
 
 def test_excel_output_uses_entity_rows_and_provenance_entity():
@@ -341,7 +384,8 @@ if __name__ == "__main__":
     test_parse_null_output()
     test_merge_chunk_data_recursively_flattens_nested_values()
     test_aggregator_groups_by_entity_and_question()
-    test_aggregator_prefers_verified()
+    test_aggregator_merges_contributions_without_winner_selection()
+    test_aggregator_dedupes_by_value_quote_and_source_url()
     test_excel_output_uses_entity_rows_and_provenance_entity()
     test_sample_input_populates_entities_urls_questions_and_config()
     test_blank_entities_url_gets_all_entities_and_specific_url_stays_scoped()

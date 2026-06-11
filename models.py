@@ -62,6 +62,10 @@ class SourceQuote(BaseModel):
     """Evidence item: one piece of extracted data with a supporting quote."""
     value: Any = None
     quote: str | None = None
+    source_url: str = ""
+    page_title: str = ""
+    extraction_method: str = ""
+    confidence_score: float | None = None
     verified: bool = False
     verification_score: float | None = None
     char_span: tuple[int, int] | None = None
@@ -91,6 +95,9 @@ class ExtractedCell(BaseModel):
     # For scalar answers: use primary evidence.
     verified: bool = False
     verification_score: float | None = None
+    has_conflict: bool = False
+    num_sources: int = 0
+    num_unique_values: int = 0
 
 
 class CellContribution(ExtractedCell):

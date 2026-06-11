@@ -128,26 +128,35 @@ def _run_acquire_report(
 
     env = os.environ.copy()
     env.setdefault("PYTHONIOENCODING", "utf-8")
-    proc = subprocess.run(
-        cmd,
-        cwd=_REPO_ROOT,
-        env=env,
-        text=True,
-        capture_output=True,
-    )
-    combined = "\n".join(
-        part for part in (proc.stdout, proc.stderr) if part
-    )
+    env.setdefault("PYTHONUNBUFFERED", "1")
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(combined, encoding="utf-8")
-    error_tail = _tail(combined) if proc.returncode else ""
+    output_lines: list[str] = []
+    with log_path.open("w", encoding="utf-8") as log_file:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=_REPO_ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+        )
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            print(line, end="")
+            log_file.write(line)
+            output_lines.append(line)
+        returncode = proc.wait()
+
+    combined = "".join(output_lines)
+    error_tail = _tail(combined) if returncode else ""
     return {
         "input": str(input_path),
         "report": str(output_path),
         "log": str(log_path),
         "command": " ".join(cmd),
-        "status": "ok" if proc.returncode == 0 else "failed",
-        "returncode": proc.returncode,
+        "status": "ok" if returncode == 0 else "failed",
+        "returncode": returncode,
         "error": error_tail,
     }
 

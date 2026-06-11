@@ -22,6 +22,7 @@ import argparse
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -38,6 +39,7 @@ from config import (
     CRAWL_MIN_SCORE,
     CRAWL_MIN_SCORE_EMBED,
     DEFAULT_DEPTH,
+    EXTRACT_PAGE_WORKERS,
     EXTRACT_TOOL,
     REQUEST_HEADERS,
 )
@@ -167,24 +169,83 @@ def main() -> None:
 
     print(f"{'─'*72}")
 
-    for fp in fetched:
+    def process_page(index: int, fp: FetchedPage) -> dict:
         page = _page_doc(fp)
         page_len = len(page.text) if page.text else 0
+
+        try:
+            routed = filter_page(page, columns)
+        except Exception as exc:
+            return {
+                "index": index,
+                "fp": fp,
+                "page_len": page_len,
+                "error": f"Filter failed: {exc}",
+            }
+
+        relevant_cols = [c for c in columns if c.name in routed.relevant_columns]
+        skipped_cols  = [c for c in columns if c.name not in routed.relevant_columns]
+
+        local_diag: dict = {}
+        t1 = time.time()
+        try:
+            cells = extract_cells(routed.page, relevant_cols, entities, cfg=cfg, diag=local_diag)
+        except Exception as exc:
+            return {
+                "index": index,
+                "fp": fp,
+                "page_len": page_len,
+                "error": f"Extraction failed: {exc}",
+            }
+        elapsed_extract = time.time() - t1
+        return {
+            "index": index,
+            "fp": fp,
+            "page_len": page_len,
+            "relevant_cols": relevant_cols,
+            "skipped_cols": skipped_cols,
+            "local_diag": local_diag,
+            "cells": cells,
+            "elapsed_extract": elapsed_extract,
+        }
+
+    page_results: list[dict | None] = [None for _ in fetched]
+    max_workers = min(EXTRACT_PAGE_WORKERS, len(fetched)) if fetched else 1
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {
+            ex.submit(process_page, index, fp): index
+            for index, fp in enumerate(fetched)
+        }
+        for future in as_completed(futures):
+            index = futures[future]
+            try:
+                page_results[index] = future.result()
+            except Exception as exc:
+                page_results[index] = {
+                    "index": index,
+                    "fp": fetched[index],
+                    "page_len": len(fetched[index].markdown or ""),
+                    "error": str(exc),
+                }
+
+    for result in sorted((r for r in page_results if r is not None), key=lambda r: r["index"]):
+        fp = result["fp"]
+        page_len = result["page_len"]
         depth_tag = f"  [depth={fp.depth}]" if fp.depth > 0 else ""
         cache_tag = "  [cached]" if fp.status == "cached" else ""
         print(f"\n  {fp.url}{depth_tag}{cache_tag}")
         print(f"    {page_len:,} chars  |  entities: {', '.join(entities)}")
 
-        # Filter
-        try:
-            routed = filter_page(page, columns)
-        except Exception as exc:
-            print(f"    ! Filter failed: {exc}")
+        if result.get("error"):
+            print(f"    ! {result['error']}")
             total_errors += 1
             continue
 
-        relevant_cols = [c for c in columns if c.name in routed.relevant_columns]
-        skipped_cols  = [c for c in columns if c.name not in routed.relevant_columns]
+        relevant_cols = result["relevant_cols"]
+        skipped_cols = result["skipped_cols"]
+        local_diag = result["local_diag"]
+        cells = result["cells"]
+        elapsed_extract = result["elapsed_extract"]
 
         print(f"    filter: {len(relevant_cols)}/{total_cols} columns relevant", end="")
         if skipped_cols:
@@ -192,17 +253,6 @@ def main() -> None:
         print()
 
         total_skipped += len(skipped_cols) * len(entities)
-
-        # Extract
-        local_diag: dict = {}
-        t1 = time.time()
-        try:
-            cells = extract_cells(routed.page, relevant_cols, entities, cfg=cfg, diag=local_diag)
-        except Exception as exc:
-            print(f"    ! Extraction failed: {exc}")
-            total_errors += 1
-            continue
-        elapsed_extract = time.time() - t1
 
         # One page = one set of chunk calls shared across entities; count once.
         if any(l.get("timed_out") for l in local_diag.get("extract_log", [])):

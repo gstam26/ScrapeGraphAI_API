@@ -1,5 +1,6 @@
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from config import (
@@ -11,6 +12,7 @@ from config import (
     CRAWL_MIN_SCORE_EMBED,
     DEFAULT_DEPTH,
     EXTRACT_TOOL,
+    EXTRACT_PAGE_WORKERS,
     FETCH_BACKEND,
     REQUEST_HEADERS,
 )
@@ -193,7 +195,8 @@ def run_pipeline(
             t_extract = time.time()
             url_cells = []
 
-            for page in pages:
+            def process_page(index: int, page: PageDoc) -> dict[str, Any]:
+                local_diag: dict = {"extract_log": [], "verify_log": []}
                 routed = filter_page(page, request.columns)
                 relevant_cols = [c for c in request.columns if c.name in routed.relevant_columns]
                 cells = extract_cells(
@@ -201,9 +204,44 @@ def run_pipeline(
                     relevant_cols,
                     entities=relevant_entities,
                     cfg=cfg,
-                    diag=diag,
+                    diag=local_diag,
                 )
-                cells = verify_cells(cells, routed.page, diag=diag)
+                cells = verify_cells(cells, routed.page, diag=local_diag)
+                return {
+                    "index": index,
+                    "cells": cells,
+                    "diag": local_diag,
+                }
+
+            page_results: list[dict[str, Any] | None] = [None for _ in pages]
+            max_workers = min(EXTRACT_PAGE_WORKERS, len(pages)) if pages else 1
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                futures = {
+                    ex.submit(process_page, index, page): index
+                    for index, page in enumerate(pages)
+                }
+                for future in as_completed(futures):
+                    index = futures[future]
+                    try:
+                        page_results[index] = future.result()
+                    except Exception as exc:
+                        page_results[index] = {
+                            "index": index,
+                            "cells": [],
+                            "diag": {"extract_log": [], "verify_log": []},
+                            "error": exc,
+                        }
+
+            for result in page_results:
+                if not result:
+                    continue
+                if result.get("error"):
+                    print(f"    X Page failed: {result['error']}")
+                    continue
+                local_diag = result["diag"]
+                diag["extract_log"].extend(local_diag.get("extract_log", []))
+                diag["verify_log"].extend(local_diag.get("verify_log", []))
+                cells = result["cells"]
                 url_cells.extend(cells)
                 for cell in cells:
                     cells_by_entity[cell.entity].append(cell)

@@ -145,3 +145,16 @@ EXTRACT_PAGE_WORKERS = 4
 ENABLE_PROVENANCE = True
 
 DIAGNOSTICS = True  # True = all 7 sheets; False = Summary, Matrix, Provenance only
+
+# ============================================================
+# AGGREGATION DIAGNOSTICS
+# ============================================================
+
+AGGREGATION_NEAR_DUPLICATE_THRESHOLD = 85
+AGGREGATION_LOW_RELEVANCE_THRESHOLD = 35
+# Generic diagnostic defaults only. Do not add domain, entity, product, or
+# question-specific terms here; pass those per run through diagnostic config/CLI.
+AGGREGATION_BOILERPLATE_TERMS = {
+    "the", "and", "or", "of", "in", "to", "for", "with", "on", "at", "by",
+    "a", "an", "is", "are", "be", "this", "that", "it", "its",
+}

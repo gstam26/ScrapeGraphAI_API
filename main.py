@@ -1,3 +1,4 @@
+import argparse
 import os
 import time
 
@@ -26,16 +27,27 @@ def format_elapsed(seconds: int) -> str:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Entity extraction pipeline")
+    parser.add_argument("--backend", default="", help="Override ACQUIRE_TOOL (local/firecrawl/playwright/requests)")
+    args = parser.parse_args()
+
     print("=== Entity Extraction Pipeline ===\n")
 
     input_path = input("Path to input Excel file: ").strip()
     pipeline_input = read_input(input_path)
+    if args.backend:
+        pipeline_input.config_overrides = {
+            **pipeline_input.config_overrides,
+            "ACQUIRE_TOOL": args.backend,
+        }
 
     print(
         f"\nLoaded {len(pipeline_input.entities)} entity/entities, "
         f"{len(pipeline_input.urls)} URL(s), and "
         f"{len(pipeline_input.columns)} question(s) from '{input_path}'"
     )
+    if args.backend:
+        print(f"Acquire backend override: {args.backend}")
 
     if not pipeline_input.urls:
         print("No URLs found. Exiting.")

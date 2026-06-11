@@ -21,7 +21,7 @@ import pandas as pd
 
 import src.extract as extract
 from src.aggregate import aggregate_cells
-from src.extract import _parse_field_value
+from src.extract import _merge_chunk_data, _parse_field_value
 from src.io_excel import read_input, write_output_excel
 from models import ColumnSpec, Config, ExtractedCell, ExtractedRow, PageDoc, PipelineResult, SourceQuote
 from src.acquire.crawler import build_crawl_query
@@ -80,6 +80,34 @@ def test_parse_null_output():
     assert value is None
     assert len(evidence) == 0
     print("OK test_parse_null_output passed")
+
+
+def test_merge_chunk_data_recursively_flattens_nested_values():
+    chunk_results = [
+        {
+            "Oatly": {
+                "Ingredients": [
+                    "oat",
+                    ["oat"],
+                    [[{"value": "oats", "quote": "made with oats"}]],
+                    {"value": ["barley", ["barley"]], "quote": "contains barley"},
+                ]
+            }
+        }
+    ]
+
+    merged = _merge_chunk_data(chunk_results)
+
+    assert merged == {
+        "Oatly": {
+            "Ingredients": [
+                {"value": "oat", "quote": None},
+                {"value": "oats", "quote": "made with oats"},
+                {"value": "barley", "quote": "contains barley"},
+            ]
+        }
+    }
+    print("OK test_merge_chunk_data_recursively_flattens_nested_values passed")
 
 
 def test_aggregator_groups_by_entity_and_question():
@@ -311,6 +339,7 @@ if __name__ == "__main__":
     test_parse_list_of_dicts()
     test_parse_scalar_output()
     test_parse_null_output()
+    test_merge_chunk_data_recursively_flattens_nested_values()
     test_aggregator_groups_by_entity_and_question()
     test_aggregator_prefers_verified()
     test_excel_output_uses_entity_rows_and_provenance_entity()

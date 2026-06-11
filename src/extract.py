@@ -402,17 +402,19 @@ def _merge_chunk_data(chunk_results: list[dict[str, Any]]) -> dict[str, Any]:
             value = raw.get("value")
             if value in (None, "", []):
                 return []
+            if isinstance(value, list):
+                items = []
+                for item in value:
+                    if isinstance(item, dict):
+                        items.extend(normalise_items(item))
+                    else:
+                        items.extend(normalise_items({"value": item, "quote": raw.get("quote")}))
+                return items
             return [{"value": value, "quote": raw.get("quote")}]
 
         if isinstance(raw, list):
             items = []
-            flattened = []
             for item in raw:
-                if isinstance(item, list):
-                    flattened.extend(item)
-                else:
-                    flattened.append(item)
-            for item in flattened:
                 items.extend(normalise_items(item))
             return items
 

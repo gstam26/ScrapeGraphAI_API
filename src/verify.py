@@ -4,6 +4,15 @@ from config import VERIFY_THRESHOLD, VERIFY_TOOL
 from models import ExtractedCell, PageDoc
 
 
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(x * x for x in b) ** 0.5
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
 def _verify_quote(quote: str | None, page_text: str) -> tuple[bool, float | None, tuple[int, int] | None, str]:
     if not quote:
         return False, None, None, "none"
@@ -56,6 +65,7 @@ def verify_cell(
                 "verified": verified,
                 "match_type": match_type,
                 "verification_score": round(score, 1) if score is not None else "",
+                "semantic_score": None,  # populated by verify_cells after batch embedding
                 "verifier_tool": VERIFY_TOOL,
             })
 
@@ -74,5 +84,37 @@ def verify_cells(
     entity: str | None = None,
     diag: dict | None = None,
 ) -> list[ExtractedCell]:
-    """Verify all cells against a page."""
-    return [verify_cell(cell, page, entity=entity, diag=diag) for cell in cells]
+    """Verify all cells against a page, then add semantic similarity scores in one batch."""
+    diag_start = len(diag.get("verify_log", [])) if diag is not None else 0
+    result = [verify_cell(cell, page, entity=entity, diag=diag) for cell in cells]
+
+    # Map each evidence item (value + quote both present) to its diag log index.
+    eligible: list[tuple] = []
+    diag_idx = diag_start
+    for cell in result:
+        for ev in cell.evidence:
+            if ev.value is not None and ev.quote:
+                eligible.append((ev, diag_idx if diag is not None else None))
+            if diag is not None:
+                diag_idx += 1
+
+    if not eligible:
+        return result
+
+    texts: list[str] = []
+    for ev, _ in eligible:
+        texts.append(str(ev.value))
+        texts.append(ev.quote)
+
+    try:
+        from src.embed import embed_batch
+        vectors = embed_batch(texts)
+        for i, (ev, d_idx) in enumerate(eligible):
+            score = round(_cosine(vectors[2 * i], vectors[2 * i + 1]), 4)
+            ev.semantic_score = score
+            if d_idx is not None and diag is not None:
+                diag["verify_log"][d_idx]["semantic_score"] = score
+    except Exception as exc:
+        print(f"      ! Semantic scoring unavailable: {exc}")
+
+    return result

@@ -66,6 +66,7 @@ class SourceQuote(BaseModel):
     verification_score: float | None = None
     char_span: tuple[int, int] | None = None
     match_type: str = "none"
+    semantic_score: float | None = None
 
 
 class EvidenceItem(SourceQuote):

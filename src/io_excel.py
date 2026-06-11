@@ -392,7 +392,7 @@ def _make_provenance_df(
 ) -> pd.DataFrame:
     col_names = [
         "Entity", "Source URL", "Question", "Claim", "Verbatim Quote",
-        "Verified", "Verification Score", "Match Type", "Source Page Depth",
+        "Verified", "Verification Score", "Match Type", "Semantic Score", "Source Page Depth",
     ]
 
     url_to_depth: dict[str, int] = {}
@@ -418,6 +418,7 @@ def _make_provenance_df(
                     "Verified": verified,
                     "Verification Score": round(score, 1) if isinstance(score, float) else "",
                     "Match Type": _match_type_str(verified, score),
+                    "Semantic Score": round(ev.semantic_score, 3) if isinstance(ev.semantic_score, float) else "",
                     "Source Page Depth": url_to_depth.get(cell.source_url, 0),
                 })
 
@@ -549,11 +550,11 @@ def write_output_excel(
 
     ver_col_keys = [
         "entity", "source_url", "question", "claim_preview", "quote_preview",
-        "verified", "match_type", "verification_score", "verifier_tool",
+        "verified", "match_type", "verification_score", "semantic_score", "verifier_tool",
     ]
     ver_col_names = [
         "Entity", "Source URL", "Question", "Claim Preview", "Quote Preview",
-        "Verified", "Match Type", "Verification Score", "Verifier Tool",
+        "Verified", "Match Type", "Verification Score", "Semantic Score", "Verifier Tool",
     ]
 
     sheets: list[tuple[str, pd.DataFrame]] = [

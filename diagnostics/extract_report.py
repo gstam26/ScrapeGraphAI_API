@@ -100,6 +100,7 @@ def main() -> None:
     )
     parser.add_argument("--max-pages", type=int, default=0, help="Override CRAWL_MAX_PAGES")
     parser.add_argument("--no-crawl", action="store_true", help="Force depth=0 for all URLs (no crawling)")
+    parser.add_argument("--no-extract-cache", action="store_true", help="Bypass cached extraction responses")
     args = parser.parse_args()
 
     pipeline_input = read_input(args.input)
@@ -123,6 +124,7 @@ def main() -> None:
     print(f"  input        : {args.input}")
     print(f"  backend      : {cfg.acquire_tool}")
     print(f"  extract tool : {cfg.extract_tool}")
+    print(f"  extract cache: {'off' if args.no_extract_cache else 'on'}")
     print(f"  entities     : {', '.join(entities)}")
     print(f"  columns      : {total_cols}")
     print(f"{'='*72}\n")
@@ -189,7 +191,14 @@ def main() -> None:
         local_diag: dict = {}
         t1 = time.time()
         try:
-            cells = extract_cells(routed.page, relevant_cols, entities, cfg=cfg, diag=local_diag)
+            cells = extract_cells(
+                routed.page,
+                relevant_cols,
+                entities,
+                cfg=cfg,
+                diag=local_diag,
+                use_cache=not args.no_extract_cache,
+            )
         except Exception as exc:
             return {
                 "index": index,

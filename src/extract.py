@@ -1,5 +1,7 @@
 from typing import Any
+import hashlib
 import json
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 
@@ -13,6 +15,7 @@ from config import (
     API_KEY,
     EXTRACT_CHUNK_OVERLAP,
     EXTRACT_CHUNK_SIZE,
+    EXTRACT_CACHE_DIR,
     EXTRACT_MAX_WORKERS,
     EXTRACT_TIMEOUT,
     EXTRACT_TOOL,
@@ -344,6 +347,49 @@ def _chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
     return chunks
 
 
+def _extract_cache_key(
+    chunk_text: str,
+    columns: list[ColumnSpec],
+    entities: list[str],
+    extract_tool: str,
+) -> str:
+    payload = {
+        "chunk_text": chunk_text,
+        "columns": sorted(c.name for c in columns),
+        "entities": sorted(entities),
+        "extract_tool": extract_tool,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _extract_cache_path(cache_key: str) -> str:
+    os.makedirs(EXTRACT_CACHE_DIR, exist_ok=True)
+    return os.path.join(EXTRACT_CACHE_DIR, f"{cache_key}.json")
+
+
+def _read_extract_cache(cache_key: str) -> dict[str, Any] | None:
+    path = _extract_cache_path(cache_key)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"      ! Extract cache read failed: {exc}")
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _write_extract_cache(cache_key: str, data: dict[str, Any]) -> None:
+    path = _extract_cache_path(cache_key)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except OSError as exc:
+        print(f"      ! Extract cache write failed: {exc}")
+
+
 def _merge_chunk_data(chunk_results: list[dict[str, Any]]) -> dict[str, Any]:
     """Merge per-chunk extraction dicts. Non-null answers accumulate; nulls are dropped."""
     merged: dict[str, dict[str, list]] = {}
@@ -415,6 +461,7 @@ def extract_cells(
     entities: list[str],
     cfg: Config | None = None,
     diag: dict | None = None,
+    use_cache: bool = True,
 ) -> list[ExtractedCell]:
     """Extract cells from a page using the configured extractor."""
     cells = []
@@ -430,6 +477,13 @@ def extract_cells(
     agg_timing: dict = {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
 
     def extract_chunk(chunk: str) -> tuple[dict[str, Any], dict]:
+        cache_key = _extract_cache_key(chunk, columns, entities, runtime_cfg.extract_tool)
+        if use_cache:
+            cached = _read_extract_cache(cache_key)
+            if cached is not None:
+                print(f"      -> Extract cache hit: {page.url}")
+                return cached, {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
+
         chunk_page = PageDoc(
             url=page.url, text=chunk, html=None,
             from_cache=page.from_cache, depth=page.depth,
@@ -444,6 +498,8 @@ def extract_cells(
         else:
             print(f"      X Unknown EXTRACT_TOOL: {runtime_cfg.extract_tool}")
             return {}, {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
+        if use_cache and chunk_data and not timing["timed_out"]:
+            _write_extract_cache(cache_key, chunk_data)
         return chunk_data, timing
 
     if runtime_cfg.extract_tool not in {"sgai", "llmapi"}:
@@ -462,9 +518,9 @@ def extract_cells(
                 chunk_data = {}
                 timing = {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
             chunk_results[index] = chunk_data
-        agg_timing["extraction_time_ms"] += timing["extraction_time_ms"]
-        agg_timing["timed_out"] = agg_timing["timed_out"] or timing["timed_out"]
-        agg_timing["retry_count"] += timing["retry_count"]
+            agg_timing["extraction_time_ms"] += timing["extraction_time_ms"]
+            agg_timing["timed_out"] = agg_timing["timed_out"] or timing["timed_out"]
+            agg_timing["retry_count"] += timing["retry_count"]
 
     data = _merge_chunk_data(chunk_results)
     timing = agg_timing

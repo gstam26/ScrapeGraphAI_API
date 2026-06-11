@@ -26,6 +26,7 @@ VERIFY_TOOL = "rapidfuzz"
 # ============================================================
 
 CACHE_DIR = "cache"
+EXTRACT_CACHE_DIR = "cache/extract/"
 OUTPUT_DIR = "outputs"
 
 # ============================================================

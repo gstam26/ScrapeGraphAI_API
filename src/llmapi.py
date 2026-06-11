@@ -15,9 +15,12 @@ class LLMAPI(requests.Session):
         if not self.base_url:
             raise RuntimeError("LLM_API_URL not set in .env")
 
-    def call(self, text: str):
+    def call(self, text: str, timeout: int | float | None = None):
         payload = {"text": text}
-        response = self.post(self.base_url, json=payload)
+        try:
+            response = self.post(self.base_url, json=payload, timeout=timeout)
+        except requests.exceptions.Timeout as exc:
+            raise TimeoutError(str(exc)) from exc
         response.raise_for_status()
         return response.json()["response"]
 

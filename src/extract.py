@@ -1,7 +1,7 @@
 from typing import Any
 import json
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 
 try:
     from scrapegraph_py import JsonFormatConfig, ScrapeGraphAI
@@ -9,7 +9,14 @@ except ImportError:
     JsonFormatConfig = None
     ScrapeGraphAI = None
 
-from config import API_KEY, EXTRACT_CHUNK_OVERLAP, EXTRACT_CHUNK_SIZE, EXTRACT_TIMEOUT, EXTRACT_TOOL
+from config import (
+    API_KEY,
+    EXTRACT_CHUNK_OVERLAP,
+    EXTRACT_CHUNK_SIZE,
+    EXTRACT_MAX_WORKERS,
+    EXTRACT_TIMEOUT,
+    EXTRACT_TOOL,
+)
 from models import ColumnSpec, Config, ExtractedCell, PageDoc, SourceQuote
 
 
@@ -215,20 +222,17 @@ def _extract_with_llmapi(
 
     try:
         llm = LLMAPI()
-
-        with ThreadPoolExecutor(max_workers=1) as ex:
-            future = ex.submit(llm.call, prompt)
-            try:
-                raw = future.result(timeout=EXTRACT_TIMEOUT)
-            except FuturesTimeoutError:
-                timed_out = True
-                duration = time.time() - t0
-                print(f"      ! LLMAPI timed out after {duration:.2f}s")
-                return {}, make_timing()
-            except Exception as e:
-                duration = time.time() - t0
-                print(f"      X LLMAPI call error after {duration:.2f}s: {e}")
-                return {}, make_timing()
+        try:
+            raw = llm.call(prompt, timeout=EXTRACT_TIMEOUT)
+        except TimeoutError:
+            timed_out = True
+            duration = time.time() - t0
+            print(f"      ! LLMAPI timed out after {duration:.2f}s")
+            return {}, make_timing()
+        except Exception as e:
+            duration = time.time() - t0
+            print(f"      X LLMAPI call error after {duration:.2f}s: {e}")
+            return {}, make_timing()
 
         duration = time.time() - t0
         print(f"      -> LLMAPI call completed in {duration:.2f}s")
@@ -422,10 +426,10 @@ def extract_cells(
     text = page.text or ""
     chunks = _chunk_text(text, EXTRACT_CHUNK_SIZE, EXTRACT_CHUNK_OVERLAP) or [""]
 
-    chunk_results: list[dict[str, Any]] = []
+    chunk_results: list[dict[str, Any]] = [{} for _ in chunks]
     agg_timing: dict = {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
 
-    for chunk in chunks:
+    def extract_chunk(chunk: str) -> tuple[dict[str, Any], dict]:
         chunk_page = PageDoc(
             url=page.url, text=chunk, html=None,
             from_cache=page.from_cache, depth=page.depth,
@@ -439,8 +443,25 @@ def extract_cells(
             chunk_data, timing = _extract_with_llmapi(chunk_page, columns, entities)
         else:
             print(f"      X Unknown EXTRACT_TOOL: {runtime_cfg.extract_tool}")
-            return cells
-        chunk_results.append(chunk_data)
+            return {}, {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
+        return chunk_data, timing
+
+    if runtime_cfg.extract_tool not in {"sgai", "llmapi"}:
+        print(f"      X Unknown EXTRACT_TOOL: {runtime_cfg.extract_tool}")
+        return cells
+
+    max_workers = min(EXTRACT_MAX_WORKERS, len(chunks))
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {ex.submit(extract_chunk, chunk): index for index, chunk in enumerate(chunks)}
+        for future in as_completed(futures):
+            index = futures[future]
+            try:
+                chunk_data, timing = future.result()
+            except Exception as exc:
+                print(f"      X Chunk extraction failed: {exc}")
+                chunk_data = {}
+                timing = {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
+            chunk_results[index] = chunk_data
         agg_timing["extraction_time_ms"] += timing["extraction_time_ms"]
         agg_timing["timed_out"] = agg_timing["timed_out"] or timing["timed_out"]
         agg_timing["retry_count"] += timing["retry_count"]

@@ -9,7 +9,7 @@ except ImportError:
     JsonFormatConfig = None
     ScrapeGraphAI = None
 
-from config import API_KEY, EXTRACT_TIMEOUT, EXTRACT_TOOL
+from config import API_KEY, EXTRACT_CHUNK_OVERLAP, EXTRACT_CHUNK_SIZE, EXTRACT_TIMEOUT, EXTRACT_TOOL
 from models import ColumnSpec, Config, ExtractedCell, PageDoc, SourceQuote
 
 
@@ -55,8 +55,7 @@ Rules:
 - Return only JSON, no other text.
 """
     if page_text:
-        snippet = page_text[:7000]
-        return base + "\nPage content (truncated):\n'''\n" + snippet + "\n'''\n"
+        return base + "\nPage content:\n'''\n" + page_text + "\n'''\n"
     return base
 
 
@@ -72,7 +71,7 @@ def _extract_with_sgai(
       extraction_time_ms, timed_out, retry_count
     """
     page_text = page.text if getattr(page, "text", None) else None
-    prompt = _build_prompt(columns, entities, page_text[:7000] if page_text else None)
+    prompt = _build_prompt(columns, entities, page_text)
 
     if ScrapeGraphAI is None or JsonFormatConfig is None:
         raise RuntimeError("scrapegraph-py is required when EXTRACT_TOOL='sgai'")
@@ -201,7 +200,7 @@ def _extract_with_llmapi(
     from src.llmapi import LLMAPI
 
     page_text = page.text if getattr(page, "text", None) else None
-    prompt = _build_prompt(columns, entities, page_text[:7000] if page_text else None)
+    prompt = _build_prompt(columns, entities, page_text)
 
     print(f"      -> LLMAPI extracting: {page.url}")
     t0 = time.time()
@@ -309,6 +308,64 @@ def _entity_payload(data: dict[str, Any], entity: str, entities: list[str]) -> d
     return {}
 
 
+def _chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
+    if not text:
+        return []
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end])
+        if end >= len(text):
+            break
+        start = end - overlap
+    return chunks
+
+
+def _merge_chunk_data(chunk_results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge per-chunk extraction dicts. Non-null answers accumulate; nulls are dropped."""
+    merged: dict[str, dict[str, list]] = {}
+
+    for chunk_data in chunk_results:
+        if not chunk_data:
+            continue
+        for entity, entity_data in chunk_data.items():
+            if not isinstance(entity_data, dict):
+                continue
+            merged.setdefault(entity, {})
+            for question, raw in entity_data.items():
+                merged[entity].setdefault(question, [])
+                if raw is None:
+                    continue
+                if isinstance(raw, dict):
+                    if raw.get("value") not in (None, "", []):
+                        merged[entity][question].append(raw)
+                elif isinstance(raw, list):
+                    for item in raw:
+                        if item is None:
+                            continue
+                        if isinstance(item, dict):
+                            if item.get("value") not in (None, "", []):
+                                merged[entity][question].append(item)
+                        elif item not in (None, "", []):
+                            merged[entity][question].append({"value": item, "quote": None})
+                elif raw not in (None, "", []):
+                    merged[entity][question].append({"value": raw, "quote": None})
+
+    result: dict[str, Any] = {}
+    for entity, questions in merged.items():
+        result[entity] = {}
+        for question, items in questions.items():
+            if not items:
+                result[entity][question] = None
+            elif len(items) == 1:
+                result[entity][question] = items[0]
+            else:
+                result[entity][question] = items
+
+    return result
+
+
 def extract_cells(
     page: PageDoc,
     columns: list[ColumnSpec],
@@ -318,15 +375,39 @@ def extract_cells(
 ) -> list[ExtractedCell]:
     """Extract cells from a page using the configured extractor."""
     cells = []
+    if not columns:
+        return cells
+
     runtime_cfg = cfg or Config(extract_tool=EXTRACT_TOOL)
 
-    if runtime_cfg.extract_tool == "sgai":
-        data, timing = _extract_with_sgai(page, columns, entities)
-    elif runtime_cfg.extract_tool == "llmapi":
-        data, timing = _extract_with_llmapi(page, columns, entities)
-    else:
-        print(f"      X Unknown EXTRACT_TOOL: {runtime_cfg.extract_tool}")
-        return cells
+    text = page.text or ""
+    chunks = _chunk_text(text, EXTRACT_CHUNK_SIZE, EXTRACT_CHUNK_OVERLAP) or [""]
+
+    chunk_results: list[dict[str, Any]] = []
+    agg_timing: dict = {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
+
+    for chunk in chunks:
+        chunk_page = PageDoc(
+            url=page.url, text=chunk, html=None,
+            from_cache=page.from_cache, depth=page.depth,
+            crawl_score=page.crawl_score, fetch_time_ms=page.fetch_time_ms,
+            backend=page.backend, render_fallback=page.render_fallback,
+            gate_passed=page.gate_passed, gate_reason=page.gate_reason,
+        )
+        if runtime_cfg.extract_tool == "sgai":
+            chunk_data, timing = _extract_with_sgai(chunk_page, columns, entities)
+        elif runtime_cfg.extract_tool == "llmapi":
+            chunk_data, timing = _extract_with_llmapi(chunk_page, columns, entities)
+        else:
+            print(f"      X Unknown EXTRACT_TOOL: {runtime_cfg.extract_tool}")
+            return cells
+        chunk_results.append(chunk_data)
+        agg_timing["extraction_time_ms"] += timing["extraction_time_ms"]
+        agg_timing["timed_out"] = agg_timing["timed_out"] or timing["timed_out"]
+        agg_timing["retry_count"] += timing["retry_count"]
+
+    data = _merge_chunk_data(chunk_results)
+    timing = agg_timing
 
     for entity in entities:
         payload = _entity_payload(data, entity, entities)

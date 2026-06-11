@@ -195,9 +195,10 @@ def run_pipeline(
 
             for page in pages:
                 routed = filter_page(page, request.columns)
+                relevant_cols = [c for c in request.columns if c.name in routed.relevant_columns]
                 cells = extract_cells(
                     routed.page,
-                    request.columns,
+                    relevant_cols,
                     entities=relevant_entities,
                     cfg=cfg,
                     diag=diag,

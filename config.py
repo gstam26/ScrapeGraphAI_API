@@ -136,6 +136,8 @@ ENABLE_LATENCY_TRACKING = False
 
 # Timeout for extractor SGAI calls (seconds). Lower to fail fast for unreliable endpoints.
 EXTRACT_TIMEOUT = 120
+EXTRACT_CHUNK_SIZE = 8000
+EXTRACT_CHUNK_OVERLAP = 200
 
 ENABLE_PROVENANCE = True
 

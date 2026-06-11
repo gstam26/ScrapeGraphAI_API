@@ -1,15 +1,18 @@
 """
 Acquire-layer diagnostic.
 
-Runs only the acquire layer on an Excel input file and prints a clear
-per-page table, then saves a report Excel so you can compare fetch backends
-and crawl quality without running the full pipeline.
+Runs the acquire layer on an Excel input file, then optionally runs
+filter/extract/verify/aggregate over the fetched pages to measure whether
+crawl score predicts downstream usefulness. Saves a report Excel so you can
+compare fetch backends, crawl quality, and contribution yield without
+changing production crawl scoring.
 
 Usage:
     python diagnostics/acquire_report.py samples/input1.xlsx
     python diagnostics/acquire_report.py samples/input1.xlsx --output outputs/acquire_report.xlsx
     python diagnostics/acquire_report.py samples/input1.xlsx --backend firecrawl
     python diagnostics/acquire_report.py samples/input1.xlsx --no-crawl
+    python diagnostics/acquire_report.py samples/input1.xlsx --no-usefulness
 """
 
 import argparse
@@ -17,6 +20,9 @@ import math
 import os
 import sys
 import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -34,14 +40,18 @@ from config import (
     CRAWL_MIN_SCORE,
     CRAWL_MIN_SCORE_EMBED,
     DEFAULT_DEPTH,
+    EXTRACT_PAGE_WORKERS,
+    EXTRACT_TOOL,
     FILTER_THRESHOLD,
-    OLLAMA_DOC_PREFIX,
-    OLLAMA_QUERY_PREFIX,
     REQUEST_HEADERS,
 )
 from src.io_excel import read_input
-from models import Config
+from models import Config, ExtractedCell, PageDoc
 from src.acquire import FetchedPage, acquire
+from src.aggregate import aggregate_cells
+from src.extract import extract_cells
+from src.filter import filter_page, score_page_columns, _keywords
+from src.verify import verify_cells
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -62,6 +72,39 @@ def _preview(text: str, chars: int = 120) -> str:
 
 # ── Filter scoring (diagnostic-only, mirrors src/filter.py logic) ─────────────
 
+def _page_doc(fp: FetchedPage) -> PageDoc:
+    return PageDoc(
+        url=fp.url,
+        text=fp.markdown,
+        html=None,
+        from_cache=fp.status == "cached",
+        depth=fp.depth,
+        crawl_score=fp.crawl_score,
+        fetch_time_ms=fp.fetch_time_ms,
+        backend=fp.backend,
+        render_fallback=fp.render_fallback,
+        gate_passed=fp.gate_passed,
+        gate_reason=fp.gate_reason,
+    )
+
+
+def _page_title(text: str) -> str:
+    for line in (text or "").splitlines():
+        clean = line.strip()
+        if not clean:
+            continue
+        if clean.startswith("#"):
+            return clean.lstrip("#").strip()[:180]
+        if len(clean.split()) <= 14:
+            return clean[:180]
+    return ""
+
+
+def _avg(values: list[float]) -> float | None:
+    clean = [v for v in values if isinstance(v, (int, float))]
+    return sum(clean) / len(clean) if clean else None
+
+
 def _cosine(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
@@ -69,7 +112,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
-def _filter_with_scores(pages: list, columns: list, threshold: float) -> list[dict]:
+def _legacy_filter_with_scores(pages: list, columns: list, threshold: float) -> list[dict]:
     """
     Embed each page and each question, return per-page routing with per-column
     cosine scores. Questions are embedded once for all pages.
@@ -118,6 +161,244 @@ def _filter_with_scores(pages: list, columns: list, threshold: float) -> list[di
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def _filter_with_scores(pages: list, columns: list, threshold: float) -> list[dict]:
+    """Production-aligned filter scoring for the acquire diagnostic."""
+    all_names = [col.name for col in columns]
+    if not all_names:
+        return []
+
+    results = []
+    for p in pages:
+        text = p.markdown or ""
+        if not text:
+            results.append({
+                "url": p.url,
+                "depth": p.depth,
+                "scores": {name: None for name in all_names},
+                "keyword_gate": {name: False for name in all_names},
+                "relevant": set(all_names),
+                "fallback": True,
+            })
+            continue
+
+        raw_scores = score_page_columns(text, columns)
+        scores = {name: round(raw_scores.get(name, 0.0), 3) for name in all_names}
+        text_lower = text.lower()
+        keyword_gate = {
+            name: any(kw in text_lower for kw in _keywords(name))
+            for name in all_names
+        }
+        relevant = {
+            name for name in all_names
+            if scores[name] >= threshold or keyword_gate[name]
+        }
+        fallback = not relevant
+        if fallback:
+            relevant = set(all_names)
+
+        results.append({
+            "url": p.url,
+            "depth": p.depth,
+            "scores": scores,
+            "keyword_gate": keyword_gate,
+            "relevant": relevant,
+            "fallback": fallback,
+        })
+
+    return results
+
+
+def _aggregate_final_evidence(cells: list[ExtractedCell], entities: list[str]) -> list:
+    final_evidence = []
+    grouped: dict[str, list[ExtractedCell]] = defaultdict(list)
+    for cell in cells:
+        grouped[cell.entity].append(cell)
+    for entity in entities:
+        for cell in aggregate_cells(grouped.get(entity, [])):
+            for ev in cell.evidence:
+                final_evidence.append((cell, ev))
+    return final_evidence
+
+
+def _build_usefulness_rows(
+    pages: list[FetchedPage],
+    columns: list,
+    entities: list[str],
+    cfg: Config,
+    use_cache: bool,
+) -> tuple[list[dict], list[dict]]:
+    if not pages or not columns or not entities:
+        return [], []
+
+    page_docs = [_page_doc(fp) for fp in pages]
+    all_cells: list[ExtractedCell] = []
+    per_url_cells: dict[str, list[ExtractedCell]] = defaultdict(list)
+    per_url_scores: dict[str, dict[str, float]] = {}
+    per_url_errors: dict[str, str] = {}
+
+    def process_page(index: int, page: PageDoc) -> dict:
+        local_diag: dict = {"extract_log": [], "verify_log": []}
+        try:
+            raw_scores = score_page_columns(page.text or "", columns)
+        except Exception as exc:
+            raw_scores = {}
+            local_diag["score_error"] = str(exc)
+
+        try:
+            routed = filter_page(page, columns)
+            relevant_cols = [c for c in columns if c.name in routed.relevant_columns]
+            cells = extract_cells(
+                routed.page,
+                relevant_cols,
+                entities,
+                cfg=cfg,
+                diag=local_diag,
+                use_cache=use_cache,
+            )
+            cells = verify_cells(cells, routed.page, diag=local_diag)
+            return {
+                "index": index,
+                "url": page.url,
+                "cells": cells,
+                "scores": raw_scores,
+                "diag": local_diag,
+            }
+        except Exception as exc:
+            return {
+                "index": index,
+                "url": page.url,
+                "cells": [],
+                "scores": raw_scores,
+                "diag": local_diag,
+                "error": str(exc),
+            }
+
+    results: list[dict | None] = [None for _ in page_docs]
+    max_workers = min(EXTRACT_PAGE_WORKERS, len(page_docs)) if page_docs else 1
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {ex.submit(process_page, index, page): index for index, page in enumerate(page_docs)}
+        for future in as_completed(futures):
+            index = futures[future]
+            try:
+                results[index] = future.result()
+            except Exception as exc:
+                results[index] = {
+                    "index": index,
+                    "url": page_docs[index].url,
+                    "cells": [],
+                    "scores": {},
+                    "diag": {},
+                    "error": str(exc),
+                }
+
+    for result in results:
+        if not result:
+            continue
+        url = result["url"]
+        cells = result["cells"]
+        all_cells.extend(cells)
+        per_url_cells[url].extend(cells)
+        per_url_scores[url] = result.get("scores", {})
+        if result.get("error"):
+            per_url_errors[url] = result["error"]
+        elif result.get("diag", {}).get("score_error"):
+            per_url_errors[url] = f"score_error: {result['diag']['score_error']}"
+
+    final_by_url: dict[str, list[tuple[ExtractedCell, Any]]] = defaultdict(list)
+    for cell, ev in _aggregate_final_evidence(all_cells, entities):
+        source_url = ev.source_url or cell.source_url
+        final_by_url[source_url].append((cell, ev))
+
+    usefulness_rows: list[dict] = []
+    detail_rows: list[dict] = []
+    for fp in pages:
+        cells = per_url_cells.get(fp.url, [])
+        evidence = [ev for cell in cells for ev in cell.evidence]
+        final_items = final_by_url.get(fp.url, [])
+        extracted_candidates = len(evidence)
+        verified_facts = sum(1 for ev in evidence if ev.verified)
+        final_contributions = len(final_items)
+        contributed_questions = sorted({cell.column for cell, _ in final_items})
+        contribution_rate = final_contributions / extracted_candidates if extracted_candidates else 0.0
+        avg_relevance = _avg(list(per_url_scores.get(fp.url, {}).values()))
+        avg_confidence = _avg([
+            ev.verification_score
+            for ev in evidence
+            if isinstance(ev.verification_score, (int, float))
+        ])
+
+        usefulness_rows.append({
+            "url": fp.url,
+            "page_title": _page_title(fp.markdown or ""),
+            "crawl_score": round(fp.crawl_score, 3),
+            "depth": fp.depth,
+            "fetch_status": fp.status,
+            "extracted_candidates": extracted_candidates,
+            "verified_facts": verified_facts,
+            "final_matrix_contributions": final_contributions,
+            "questions_contributed_to": "; ".join(contributed_questions),
+            "contribution_rate": round(contribution_rate, 3),
+            "average_question_relevance": round(avg_relevance, 3) if avg_relevance is not None else "",
+            "average_verification_confidence": round(avg_confidence, 1) if avg_confidence is not None else "",
+            "diagnostic_error": per_url_errors.get(fp.url, ""),
+        })
+
+        for cell, ev in final_items:
+            detail_rows.append({
+                "url": fp.url,
+                "entity": cell.entity,
+                "question": cell.column,
+                "value": ev.value,
+                "verified": ev.verified,
+                "verification_score": ev.verification_score,
+                "quote": ev.quote,
+                "match_type": ev.match_type,
+            })
+
+    return usefulness_rows, detail_rows
+
+
+def _ranking_rows(usefulness_rows: list[dict]) -> list[dict]:
+    rows = []
+    zero = [row for row in usefulness_rows if row["final_matrix_contributions"] == 0]
+    for rank, row in enumerate(sorted(zero, key=lambda r: r["crawl_score"], reverse=True)[:20], start=1):
+        rows.append({"ranking": "highest_scoring_zero_contributions", "rank": rank, **row})
+
+    many = [row for row in usefulness_rows if row["final_matrix_contributions"] > 0]
+    for rank, row in enumerate(
+        sorted(many, key=lambda r: (r["crawl_score"], -r["final_matrix_contributions"]))[:20],
+        start=1,
+    ):
+        rows.append({"ranking": "lowest_scoring_many_contributions", "rank": rank, **row})
+
+    if usefulness_rows:
+        max_contrib = max(row["final_matrix_contributions"] for row in usefulness_rows) or 1
+        scored = []
+        for row in usefulness_rows:
+            norm_contrib = row["final_matrix_contributions"] / max_contrib
+            scored.append((norm_contrib - row["crawl_score"], row))
+
+        for rank, (surprise, row) in enumerate(
+            sorted(scored, key=lambda item: item[0], reverse=True)[:15],
+            start=1,
+        ):
+            rows.append({
+                "ranking": "unexpectedly_high_usefulness_vs_score",
+                "rank": rank,
+                "surprise": round(surprise, 3),
+                **row,
+            })
+        for rank, (surprise, row) in enumerate(sorted(scored, key=lambda item: item[0])[:15], start=1):
+            rows.append({
+                "ranking": "unexpectedly_low_usefulness_vs_score",
+                "rank": rank,
+                "surprise": round(surprise, 3),
+                **row,
+            })
+
+    return rows
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Acquire-layer diagnostic")
     parser.add_argument("input", help="Path to the input Excel file")
@@ -125,12 +406,19 @@ def main() -> None:
     parser.add_argument("--backend", default="", help="Override ACQUIRE_TOOL (local/firecrawl/playwright/requests)")
     parser.add_argument("--max-pages", type=int, default=0, help="Override CRAWL_MAX_PAGES")
     parser.add_argument("--no-crawl", action="store_true", help="Force depth=0 for all URLs (no crawling)")
+    parser.add_argument(
+        "--no-usefulness",
+        action="store_true",
+        help="Skip downstream extract/verify/aggregate usefulness analysis",
+    )
+    parser.add_argument("--no-extract-cache", action="store_true", help="Bypass cached extraction responses")
     args = parser.parse_args()
 
     pipeline_input = read_input(args.input)
 
     cfg = Config(
         acquire_tool=args.backend or ACQUIRE_TOOL,
+        extract_tool=EXTRACT_TOOL,
         cache_dir=CACHE_DIR,
         request_headers=REQUEST_HEADERS,
         default_depth=DEFAULT_DEPTH,
@@ -248,9 +536,11 @@ def main() -> None:
                 for name, score in fr["scores"].items():
                     filter_rows.append({
                         "url": fr["url"],
+                        "depth": fr.get("depth", ""),
                         "column": name,
                         "score": score,
                         "above_threshold": (score is not None and score >= FILTER_THRESHOLD),
+                        "keyword_gate": fr.get("keyword_gate", {}).get(name, False),
                         "relevant": name in fr["relevant"],
                         "fallback": fr["fallback"],
                     })
@@ -263,6 +553,35 @@ def main() -> None:
         print()
 
     # ── Save report ───────────────────────────────────────────────────────────
+
+    usefulness_rows = []
+    contribution_rows = []
+    ranking_rows = []
+    if args.no_usefulness:
+        print("  PAGE USEFULNESS  (skipped by --no-usefulness)")
+        print()
+    elif not pipeline_input.columns or not pipeline_input.entities:
+        print("  PAGE USEFULNESS  (skipped - requires columns and entities)")
+        print()
+    else:
+        print("  PAGE USEFULNESS  (filter + extract + verify + aggregate)")
+        t_use = time.time()
+        usefulness_rows, contribution_rows = _build_usefulness_rows(
+            pages,
+            pipeline_input.columns,
+            pipeline_input.entities,
+            cfg,
+            use_cache=not args.no_extract_cache,
+        )
+        ranking_rows = _ranking_rows(usefulness_rows)
+        elapsed_use = time.time() - t_use
+        contributing_pages = sum(1 for row in usefulness_rows if row["final_matrix_contributions"] > 0)
+        total_contributions = sum(row["final_matrix_contributions"] for row in usefulness_rows)
+        print(
+            f"    {contributing_pages}/{len(usefulness_rows)} page(s) contributed "
+            f"{total_contributions} final matrix item(s) in {elapsed_use:.1f}s"
+        )
+        print()
 
     output_path = args.output
     if not output_path:
@@ -279,13 +598,41 @@ def main() -> None:
     )
 
     df_filter = pd.DataFrame(filter_rows) if filter_rows else pd.DataFrame(
-        columns=["url", "column", "score", "above_threshold", "relevant", "fallback"]
+        columns=["url", "depth", "column", "score", "above_threshold", "keyword_gate", "relevant", "fallback"]
+    )
+
+    df_usefulness = pd.DataFrame(usefulness_rows) if usefulness_rows else pd.DataFrame(
+        columns=[
+            "url", "page_title", "crawl_score", "depth", "fetch_status",
+            "extracted_candidates", "verified_facts", "final_matrix_contributions",
+            "questions_contributed_to", "contribution_rate",
+            "average_question_relevance", "average_verification_confidence",
+            "diagnostic_error",
+        ]
+    )
+    df_rankings = pd.DataFrame(ranking_rows) if ranking_rows else pd.DataFrame(
+        columns=[
+            "ranking", "rank", "surprise", "url", "page_title", "crawl_score",
+            "depth", "fetch_status", "extracted_candidates", "verified_facts",
+            "final_matrix_contributions", "questions_contributed_to",
+            "contribution_rate", "average_question_relevance",
+            "average_verification_confidence", "diagnostic_error",
+        ]
+    )
+    df_contrib = pd.DataFrame(contribution_rows) if contribution_rows else pd.DataFrame(
+        columns=[
+            "url", "entity", "question", "value", "verified",
+            "verification_score", "quote", "match_type",
+        ]
     )
 
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         df_pages.to_excel(writer, sheet_name="Pages", index=False)
         df_crawl.to_excel(writer, sheet_name="Crawl Candidates", index=False)
         df_filter.to_excel(writer, sheet_name="Filter", index=False)
+        df_usefulness.to_excel(writer, sheet_name="Page Usefulness", index=False)
+        df_rankings.to_excel(writer, sheet_name="Usefulness Rankings", index=False)
+        df_contrib.to_excel(writer, sheet_name="Contribution Details", index=False)
 
     print(f"  Report saved → {output_path}\n")
 

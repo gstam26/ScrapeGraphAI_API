@@ -399,6 +399,211 @@ def _ranking_rows(usefulness_rows: list[dict]) -> list[dict]:
     return rows
 
 
+def _number(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _paired_values(rows: list[dict], x_key: str, y_key: str) -> tuple[list[float], list[float]]:
+    xs: list[float] = []
+    ys: list[float] = []
+    for row in rows:
+        x = _number(row.get(x_key))
+        y = _number(row.get(y_key))
+        if x is None or y is None:
+            continue
+        xs.append(x)
+        ys.append(y)
+    return xs, ys
+
+
+def _pearson(xs: list[float], ys: list[float]) -> float | None:
+    if len(xs) < 2 or len(xs) != len(ys):
+        return None
+    mean_x = sum(xs) / len(xs)
+    mean_y = sum(ys) / len(ys)
+    dx = [x - mean_x for x in xs]
+    dy = [y - mean_y for y in ys]
+    denom_x = sum(v * v for v in dx)
+    denom_y = sum(v * v for v in dy)
+    if denom_x <= 0 or denom_y <= 0:
+        return None
+    return sum(a * b for a, b in zip(dx, dy)) / math.sqrt(denom_x * denom_y)
+
+
+def _ranks(values: list[float]) -> list[float]:
+    indexed = sorted(enumerate(values), key=lambda item: item[1])
+    ranks = [0.0 for _ in values]
+    i = 0
+    while i < len(indexed):
+        j = i
+        while j + 1 < len(indexed) and indexed[j + 1][1] == indexed[i][1]:
+            j += 1
+        avg_rank = (i + 1 + j + 1) / 2
+        for k in range(i, j + 1):
+            ranks[indexed[k][0]] = avg_rank
+        i = j + 1
+    return ranks
+
+
+def _spearman(xs: list[float], ys: list[float]) -> float | None:
+    if len(xs) < 2 or len(xs) != len(ys):
+        return None
+    return _pearson(_ranks(xs), _ranks(ys))
+
+
+def _correlation_rows(usefulness_rows: list[dict]) -> list[dict]:
+    pairs = [
+        ("crawl_score", "extracted_candidates"),
+        ("crawl_score", "verified_facts"),
+        ("crawl_score", "final_matrix_contributions"),
+        ("depth", "final_matrix_contributions"),
+    ]
+    rows = []
+    for x_key, y_key in pairs:
+        xs, ys = _paired_values(usefulness_rows, x_key, y_key)
+        pearson = _pearson(xs, ys)
+        spearman = _spearman(xs, ys)
+        rows.append({
+            "x_metric": x_key,
+            "y_metric": y_key,
+            "sample_size": len(xs),
+            "pearson": round(pearson, 4) if pearson is not None else "",
+            "spearman": round(spearman, 4) if spearman is not None else "",
+            "status": "ok" if pearson is not None or spearman is not None else "insufficient_variation_or_sample",
+        })
+    return rows
+
+
+def _score_bin(score: float) -> str:
+    bins = [
+        (0.0, 0.2, "0.0-0.2"),
+        (0.2, 0.4, "0.2-0.4"),
+        (0.4, 0.6, "0.4-0.6"),
+        (0.6, 0.8, "0.6-0.8"),
+        (0.8, 1.0000001, "0.8-1.0"),
+    ]
+    for low, high, label in bins:
+        if low <= score < high:
+            return label
+    if score < 0.0:
+        return "<0.0"
+    return ">1.0"
+
+
+def _calibration_rows(usefulness_rows: list[dict]) -> list[dict]:
+    labels = ["0.0-0.2", "0.2-0.4", "0.4-0.6", "0.6-0.8", "0.8-1.0"]
+    grouped: dict[str, list[dict]] = {label: [] for label in labels}
+    for row in usefulness_rows:
+        score = _number(row.get("crawl_score"))
+        if score is None:
+            continue
+        label = _score_bin(score)
+        grouped.setdefault(label, []).append(row)
+
+    out = []
+    for label in labels:
+        rows = grouped.get(label, [])
+        out.append({
+            "crawl_score_bin": label,
+            "page_count": len(rows),
+            "avg_extracted_candidates": round(_avg([r["extracted_candidates"] for r in rows]) or 0.0, 3),
+            "avg_verified_facts": round(_avg([r["verified_facts"] for r in rows]) or 0.0, 3),
+            "avg_contributions": round(_avg([r["final_matrix_contributions"] for r in rows]) or 0.0, 3),
+            "avg_contribution_rate": round(_avg([r["contribution_rate"] for r in rows]) or 0.0, 3),
+        })
+    return out
+
+
+def _false_positive_rows(usefulness_rows: list[dict]) -> list[dict]:
+    if not usefulness_rows:
+        return []
+    avg_contrib = _avg([row["final_matrix_contributions"] for row in usefulness_rows]) or 0.0
+    rows = [
+        row for row in usefulness_rows
+        if row["crawl_score"] >= 0.6 and row["final_matrix_contributions"] <= avg_contrib
+    ]
+    return sorted(
+        rows,
+        key=lambda row: (-row["crawl_score"], row["final_matrix_contributions"], row["extracted_candidates"]),
+    )
+
+
+def _false_negative_rows(usefulness_rows: list[dict]) -> list[dict]:
+    if not usefulness_rows:
+        return []
+    avg_contrib = _avg([row["final_matrix_contributions"] for row in usefulness_rows]) or 0.0
+    avg_rate = _avg([row["contribution_rate"] for row in usefulness_rows]) or 0.0
+    rows = [
+        row for row in usefulness_rows
+        if row["crawl_score"] <= 0.4
+        and (
+            row["final_matrix_contributions"] > avg_contrib
+            or row["contribution_rate"] > avg_rate
+        )
+    ]
+    return sorted(rows, key=lambda row: (-row["contribution_rate"], row["crawl_score"]))
+
+
+def _interpret_correlation(value: float | None) -> str:
+    if value is None:
+        return "insufficient data to assess crawl-score predictiveness"
+    abs_value = abs(value)
+    if value > 0 and abs_value >= 0.7:
+        return "crawl score is strongly predictive of downstream usefulness"
+    if value > 0 and abs_value >= 0.4:
+        return "crawl score is moderately predictive of downstream usefulness"
+    if abs_value < 0.3:
+        return "crawl score shows weak relationship with downstream contribution"
+    if value < 0:
+        return "crawl score is inversely related to downstream contribution in this run"
+    return "crawl score shows limited predictive value for downstream usefulness"
+
+
+def _evaluation_summary_rows(
+    usefulness_rows: list[dict],
+    correlation_rows: list[dict],
+    false_positive_rows: list[dict],
+    false_negative_rows: list[dict],
+) -> list[dict]:
+    correlations = []
+    for row in correlation_rows:
+        for metric in ("pearson", "spearman"):
+            value = _number(row.get(metric))
+            if value is not None:
+                correlations.append({
+                    "label": f"{metric}: {row['x_metric']} vs {row['y_metric']}",
+                    "value": value,
+                })
+
+    positive = [row for row in correlations if row["value"] > 0]
+    strongest = max(positive, key=lambda row: row["value"], default=None)
+    weakest = min(correlations, key=lambda row: abs(row["value"]), default=None)
+    primary_x, primary_y = _paired_values(usefulness_rows, "crawl_score", "final_matrix_contributions")
+    primary_corr = _spearman(primary_x, primary_y)
+
+    return [
+        {"metric": "total_pages_analysed", "value": len(usefulness_rows)},
+        {"metric": "average_crawl_score", "value": round(_avg([r["crawl_score"] for r in usefulness_rows]) or 0.0, 3)},
+        {"metric": "average_contributions", "value": round(_avg([r["final_matrix_contributions"] for r in usefulness_rows]) or 0.0, 3)},
+        {
+            "metric": "strongest_positive_correlation",
+            "value": "" if strongest is None else f"{strongest['label']} = {strongest['value']:.4f}",
+        },
+        {
+            "metric": "weakest_correlation",
+            "value": "" if weakest is None else f"{weakest['label']} = {weakest['value']:.4f}",
+        },
+        {"metric": "high_score_zero_or_low_contribution_pages", "value": len(false_positive_rows)},
+        {"metric": "low_score_high_contribution_pages", "value": len(false_negative_rows)},
+        {"metric": "interpretation", "value": _interpret_correlation(primary_corr)},
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Acquire-layer diagnostic")
     parser.add_argument("input", help="Path to the input Excel file")
@@ -557,6 +762,11 @@ def main() -> None:
     usefulness_rows = []
     contribution_rows = []
     ranking_rows = []
+    correlation_rows = []
+    calibration_rows = []
+    false_positive_rows = []
+    false_negative_rows = []
+    evaluation_summary_rows = []
     if args.no_usefulness:
         print("  PAGE USEFULNESS  (skipped by --no-usefulness)")
         print()
@@ -574,6 +784,16 @@ def main() -> None:
             use_cache=not args.no_extract_cache,
         )
         ranking_rows = _ranking_rows(usefulness_rows)
+        correlation_rows = _correlation_rows(usefulness_rows)
+        calibration_rows = _calibration_rows(usefulness_rows)
+        false_positive_rows = _false_positive_rows(usefulness_rows)
+        false_negative_rows = _false_negative_rows(usefulness_rows)
+        evaluation_summary_rows = _evaluation_summary_rows(
+            usefulness_rows,
+            correlation_rows,
+            false_positive_rows,
+            false_negative_rows,
+        )
         elapsed_use = time.time() - t_use
         contributing_pages = sum(1 for row in usefulness_rows if row["final_matrix_contributions"] > 0)
         total_contributions = sum(row["final_matrix_contributions"] for row in usefulness_rows)
@@ -581,6 +801,12 @@ def main() -> None:
             f"    {contributing_pages}/{len(usefulness_rows)} page(s) contributed "
             f"{total_contributions} final matrix item(s) in {elapsed_use:.1f}s"
         )
+        interpretation = next(
+            (row["value"] for row in evaluation_summary_rows if row["metric"] == "interpretation"),
+            "",
+        )
+        if interpretation:
+            print(f"    Interpretation: {interpretation}")
         print()
 
     output_path = args.output
@@ -625,12 +851,41 @@ def main() -> None:
             "verification_score", "quote", "match_type",
         ]
     )
+    df_correlations = pd.DataFrame(correlation_rows) if correlation_rows else pd.DataFrame(
+        columns=["x_metric", "y_metric", "sample_size", "pearson", "spearman", "status"]
+    )
+    df_calibration = pd.DataFrame(calibration_rows) if calibration_rows else pd.DataFrame(
+        columns=[
+            "crawl_score_bin", "page_count", "avg_extracted_candidates",
+            "avg_verified_facts", "avg_contributions", "avg_contribution_rate",
+        ]
+    )
+    diagnostic_cols = [
+        "url", "page_title", "crawl_score", "depth", "extracted_candidates",
+        "verified_facts", "final_matrix_contributions",
+    ]
+    df_false_positives = pd.DataFrame(false_positive_rows) if false_positive_rows else pd.DataFrame(
+        columns=diagnostic_cols
+    )
+    df_false_positives = df_false_positives.reindex(columns=diagnostic_cols)
+    df_false_negatives = pd.DataFrame(false_negative_rows) if false_negative_rows else pd.DataFrame(
+        columns=diagnostic_cols
+    )
+    df_false_negatives = df_false_negatives.reindex(columns=diagnostic_cols)
+    df_evaluation = pd.DataFrame(evaluation_summary_rows) if evaluation_summary_rows else pd.DataFrame(
+        columns=["metric", "value"]
+    )
 
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         df_pages.to_excel(writer, sheet_name="Pages", index=False)
         df_crawl.to_excel(writer, sheet_name="Crawl Candidates", index=False)
         df_filter.to_excel(writer, sheet_name="Filter", index=False)
+        df_evaluation.to_excel(writer, sheet_name="Crawl Score Evaluation", index=False)
         df_usefulness.to_excel(writer, sheet_name="Page Usefulness", index=False)
+        df_correlations.to_excel(writer, sheet_name="Score Correlations", index=False)
+        df_calibration.to_excel(writer, sheet_name="Score Calibration", index=False)
+        df_false_positives.to_excel(writer, sheet_name="False Positives", index=False)
+        df_false_negatives.to_excel(writer, sheet_name="False Negatives", index=False)
         df_rankings.to_excel(writer, sheet_name="Usefulness Rankings", index=False)
         df_contrib.to_excel(writer, sheet_name="Contribution Details", index=False)
 

@@ -64,6 +64,8 @@ class SourceQuote(BaseModel):
     quote: str | None = None
     verified: bool = False
     verification_score: float | None = None
+    char_span: tuple[int, int] | None = None
+    match_type: str = "none"
 
 
 class EvidenceItem(SourceQuote):

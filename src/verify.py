@@ -4,21 +4,19 @@ from config import VERIFY_THRESHOLD, VERIFY_TOOL
 from models import ExtractedCell, PageDoc
 
 
-def _verify_quote(quote: str | None, page_text: str) -> tuple[bool, float | None]:
+def _verify_quote(quote: str | None, page_text: str) -> tuple[bool, float | None, tuple[int, int] | None, str]:
     if not quote:
-        return False, None
+        return False, None, None, "none"
+
+    start = page_text.find(quote)
+    if start >= 0:
+        end = start + len(quote)
+        return True, 100.0, (start, end), "exact"
+
     score = fuzz.partial_ratio(quote.lower(), page_text.lower())
-    return score >= VERIFY_THRESHOLD, float(score)
-
-
-def _match_type(verified: bool, score: float | None) -> str:
-    if score is None:
-        return "none"
-    if score >= 100:
-        return "exact"
-    if verified:
-        return "fuzzy"
-    return "none"
+    verified = score >= VERIFY_THRESHOLD
+    match_type = "fuzzy" if verified else "none"
+    return verified, float(score), None, match_type
 
 
 def verify_cell(
@@ -42,9 +40,11 @@ def verify_cell(
         return cell
 
     for evidence in cell.evidence:
-        verified, score = _verify_quote(evidence.quote, page.text)
+        verified, score, char_span, match_type = _verify_quote(evidence.quote, page.text)
         evidence.verified = verified
         evidence.verification_score = score
+        evidence.char_span = char_span
+        evidence.match_type = match_type
 
         if diag is not None:
             diag.setdefault("verify_log", []).append({
@@ -54,13 +54,13 @@ def verify_cell(
                 "claim_preview": str(evidence.value)[:150] if evidence.value is not None else "",
                 "quote_preview": (evidence.quote or "")[:150],
                 "verified": verified,
-                "match_type": _match_type(verified, score),
+                "match_type": match_type,
                 "verification_score": round(score, 1) if score is not None else "",
                 "verifier_tool": VERIFY_TOOL,
             })
 
-    all_verified = all(ev.verified for ev in cell.evidence if ev.quote)
-    cell.verified = all_verified
+    quoted_evidence = [ev for ev in cell.evidence if ev.quote]
+    cell.verified = bool(quoted_evidence) and all(ev.verified for ev in quoted_evidence)
 
     scores = [ev.verification_score for ev in cell.evidence if ev.verification_score is not None]
     cell.verification_score = sum(scores) / len(scores) if scores else None

@@ -344,6 +344,41 @@ def _merge_chunk_data(chunk_results: list[dict[str, Any]]) -> dict[str, Any]:
     """Merge per-chunk extraction dicts. Non-null answers accumulate; nulls are dropped."""
     merged: dict[str, dict[str, list]] = {}
 
+    def normalise_items(raw: Any) -> list[dict[str, Any]]:
+        if raw is None:
+            return []
+
+        if isinstance(raw, dict):
+            value = raw.get("value")
+            if value in (None, "", []):
+                return []
+            return [{"value": value, "quote": raw.get("quote")}]
+
+        if isinstance(raw, list):
+            items = []
+            flattened = []
+            for item in raw:
+                if isinstance(item, list):
+                    flattened.extend(item)
+                else:
+                    flattened.append(item)
+            for item in flattened:
+                items.extend(normalise_items(item))
+            return items
+
+        if raw in (None, "", []):
+            return []
+        return [{"value": raw, "quote": None}]
+
+    def merge_item(items: list[dict[str, Any]], item: dict[str, Any]) -> None:
+        value_key = str(item.get("value"))
+        for existing in items:
+            if str(existing.get("value")) == value_key:
+                if existing.get("quote") in (None, "") and item.get("quote") not in (None, ""):
+                    existing["quote"] = item.get("quote")
+                return
+        items.append(item)
+
     for chunk_data in chunk_results:
         if not chunk_data:
             continue
@@ -353,22 +388,8 @@ def _merge_chunk_data(chunk_results: list[dict[str, Any]]) -> dict[str, Any]:
             merged.setdefault(entity, {})
             for question, raw in entity_data.items():
                 merged[entity].setdefault(question, [])
-                if raw is None:
-                    continue
-                if isinstance(raw, dict):
-                    if raw.get("value") not in (None, "", []):
-                        merged[entity][question].append(raw)
-                elif isinstance(raw, list):
-                    for item in raw:
-                        if item is None:
-                            continue
-                        if isinstance(item, dict):
-                            if item.get("value") not in (None, "", []):
-                                merged[entity][question].append(item)
-                        elif item not in (None, "", []):
-                            merged[entity][question].append({"value": item, "quote": None})
-                elif raw not in (None, "", []):
-                    merged[entity][question].append({"value": raw, "quote": None})
+                for item in normalise_items(raw):
+                    merge_item(merged[entity][question], item)
 
     result: dict[str, Any] = {}
     for entity, questions in merged.items():

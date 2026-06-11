@@ -83,6 +83,12 @@ def _report_path(input_path: Path, reports_dir: Path) -> Path:
     return reports_dir / f"{input_path.stem}_acquire_report.xlsx"
 
 
+def _tail(text: str, max_lines: int = 30, max_chars: int = 6000) -> str:
+    lines = [line for line in (text or "").splitlines() if line.strip()]
+    tail = "\n".join(lines[-max_lines:])
+    return tail[-max_chars:]
+
+
 def _run_acquire_report(
     input_path: Path,
     output_path: Path,
@@ -92,10 +98,13 @@ def _run_acquire_report(
     no_extract_cache: bool,
     skip_existing: bool,
 ) -> dict:
+    log_path = output_path.with_suffix(".log")
     if skip_existing and output_path.exists():
         return {
             "input": str(input_path),
             "report": str(output_path),
+            "log": str(log_path),
+            "command": "",
             "status": "reused",
             "returncode": 0,
             "error": "",
@@ -126,12 +135,20 @@ def _run_acquire_report(
         text=True,
         capture_output=True,
     )
+    combined = "\n".join(
+        part for part in (proc.stdout, proc.stderr) if part
+    )
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(combined, encoding="utf-8")
+    error_tail = _tail(combined) if proc.returncode else ""
     return {
         "input": str(input_path),
         "report": str(output_path),
+        "log": str(log_path),
+        "command": " ".join(cmd),
         "status": "ok" if proc.returncode == 0 else "failed",
         "returncode": proc.returncode,
-        "error": (proc.stderr or proc.stdout)[-2000:] if proc.returncode else "",
+        "error": error_tail,
     }
 
 
@@ -293,7 +310,13 @@ def main() -> int:
         )
         run_rows.append(run_row)
         if run_row["status"] == "failed":
-            print(f"  failed: {run_row['error'][:300]}")
+            print(f"  failed with return code {run_row['returncode']}")
+            if run_row.get("log"):
+                print(f"  log: {run_row['log']}")
+            if run_row.get("error"):
+                print("  traceback tail:")
+                for line in run_row["error"].splitlines()[-12:]:
+                    print(f"    {line}")
             continue
 
         summary = _workbook_summary(input_path, report_path, run_row["status"])

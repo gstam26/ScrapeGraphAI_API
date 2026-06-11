@@ -94,7 +94,6 @@ def score_page_columns(text: str, columns: list[ColumnSpec]) -> dict[str, float]
     all_names = [col.name for col in columns]
     cache_key = tuple(all_names)
     chunks = _chunk_text(text)
-    print(f"    [DEBUG score_page_columns] len(text)={len(text)}, chunks={len(chunks)}")
     chunk_texts = [OLLAMA_DOC_PREFIX + c for c in chunks]
 
     if cache_key not in _question_emb_cache:

@@ -253,6 +253,22 @@ def _extract_with_llmapi(
         return {}, make_timing()
 
 
+def _normalise_quote(quote: Any) -> list[str | None]:
+    """Return quote(s) as a flat list suitable for SourceQuote construction.
+
+    - str or None  → [quote]          (single item, existing behaviour)
+    - list         → one str per item  (LLM sometimes returns multiple quotes)
+    - other type   → []               (warn and produce no evidence for this field)
+    """
+    if quote is None or isinstance(quote, str):
+        return [quote]
+    if isinstance(quote, list):
+        strings = [q for q in quote if isinstance(q, str) and q]
+        return strings if strings else [None]
+    print(f"      ! Unexpected quote type {type(quote).__name__!r} — dropping quote")
+    return []
+
+
 def _parse_field_value(raw: Any) -> tuple[Any, list[SourceQuote]]:
     evidence = []
 
@@ -263,7 +279,8 @@ def _parse_field_value(raw: Any) -> tuple[Any, list[SourceQuote]]:
         value = raw.get("value")
         quote = raw.get("quote")
         if value not in (None, "", []):
-            evidence.append(SourceQuote(value=value, quote=quote))
+            for q in _normalise_quote(quote):
+                evidence.append(SourceQuote(value=value, quote=q))
         return value, evidence
 
     if isinstance(raw, list):
@@ -274,7 +291,8 @@ def _parse_field_value(raw: Any) -> tuple[Any, list[SourceQuote]]:
                 quote = item.get("quote")
                 if value not in (None, "", []):
                     values.append(value)
-                    evidence.append(SourceQuote(value=value, quote=quote))
+                    for q in _normalise_quote(quote):
+                        evidence.append(SourceQuote(value=value, quote=q))
             else:
                 if item not in (None, "", []):
                     values.append(item)
@@ -432,7 +450,11 @@ def extract_cells(
 
         for col in columns:
             raw = _get_case_insensitive(payload, col.name)
-            value, evidence = _parse_field_value(raw)
+            try:
+                value, evidence = _parse_field_value(raw)
+            except Exception as exc:
+                print(f"      ! Parse error {entity}/{col.name}: {exc} — skipping field")
+                continue
 
             cell = ExtractedCell(
                 entity=entity,

@@ -261,7 +261,7 @@ def test_main_only_two_terminal_prompts():
     print("OK test_main_only_two_terminal_prompts passed")
 
 
-def test_crawl_terms_include_questions_instructions_and_entities_only():
+def test_crawl_terms_include_questions_and_instructions_only():
     columns = [
         ColumnSpec(
             name="What is the warranty policy?",
@@ -274,12 +274,14 @@ def test_crawl_terms_include_questions_instructions_and_entities_only():
     assert "warranty" in terms
     assert "policy" in terms
     assert "period" in terms
-    assert "acme" in terms
-    assert "tools" in terms
+    assert "coverage" in terms
+    assert "limits" in terms
+    assert "acme" not in terms
+    assert "tools" not in terms
     assert "company" not in terms
     assert "overview" not in terms
     assert "products" not in terms
-    print("OK test_crawl_terms_include_questions_instructions_and_entities_only passed")
+    print("OK test_crawl_terms_include_questions_and_instructions_only passed")
 
 
 def test_link_scorer_has_no_domain_specific_keyword_boosts():
@@ -317,7 +319,7 @@ if __name__ == "__main__":
     test_extract_cells_only_returns_requested_entities()
     test_backward_compatibility_without_entities_sheet()
     test_main_only_two_terminal_prompts()
-    test_crawl_terms_include_questions_instructions_and_entities_only()
+    test_crawl_terms_include_questions_and_instructions_only()
     test_link_scorer_has_no_domain_specific_keyword_boosts()
 
     print("\nAll smoke tests passed!")

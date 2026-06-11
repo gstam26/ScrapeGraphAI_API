@@ -22,22 +22,20 @@ def _make_candidate(url: str, anchor: str, score: float = 0.0) -> LinkCandidate:
 
 # ── Test 1: query includes all three tiers ─────────────────────────────────────
 
-def test_build_crawl_query_includes_all_tiers():
+def test_build_crawl_query_excludes_entity_terms():
     cols = [ColumnSpec(name="carbon footprint", instruction="report year")]
     query = build_crawl_query(cols, entities=["Oatly"])
 
     assert "carbon" in query, "question term missing"
-    assert "oatly" in query, "entity term missing"
+    assert "footprint" in query, "question term missing"
     assert "report" in query, "instruction term missing"
+    assert "year" in query, "instruction term missing"
+    assert "oatly" not in query, "entity terms are handled by link hygiene, not relevance scoring"
 
     # question weight > instruction weight
     assert query["carbon"] > query["report"], "question terms must outweigh instruction terms"
-    # entity weight > instruction weight
-    assert query["oatly"] > query["report"], "entity terms must outweigh instruction terms"
-    # question weight >= entity weight
-    assert query["carbon"] >= query["oatly"], "question terms must outweigh entity terms"
 
-    print("OK test_build_crawl_query_includes_all_tiers passed")
+    print("OK test_build_crawl_query_excludes_entity_terms passed")
 
 
 # ── Test 2: no hardcoded sustainability / generic boosts ──────────────────────
@@ -106,7 +104,7 @@ def test_normal_threshold_takes_precedence_over_fallback():
 
 
 if __name__ == "__main__":
-    test_build_crawl_query_includes_all_tiers()
+    test_build_crawl_query_excludes_entity_terms()
     test_no_hardcoded_terms_in_unrelated_query()
     test_score_links_no_hardcoded_boost()
     test_fallback_follows_top_k_when_nothing_passes_threshold()

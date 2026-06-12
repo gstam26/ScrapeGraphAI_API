@@ -10,6 +10,7 @@ from config import (
     CRAWL_MAX_PAGES,
     CRAWL_MIN_SCORE,
     CRAWL_MIN_SCORE_EMBED,
+    CRAWL_SCORER,
     DEFAULT_DEPTH,
     EXTRACT_TOOL,
     EXTRACT_PAGE_WORKERS,
@@ -35,6 +36,7 @@ def _build_config(overrides: dict[str, Any] | None = None) -> Config:
         crawl_min_score=CRAWL_MIN_SCORE,
         crawl_min_score_embed=CRAWL_MIN_SCORE_EMBED,
         crawl_max_pages=CRAWL_MAX_PAGES,
+        crawl_scorer=CRAWL_SCORER,
     )
 
     override_map = {
@@ -43,6 +45,7 @@ def _build_config(overrides: dict[str, Any] | None = None) -> Config:
         "CRAWL_MIN_SCORE": "crawl_min_score",
         "CRAWL_MIN_SCORE_EMBED": "crawl_min_score_embed",
         "CRAWL_MAX_PAGES": "crawl_max_pages",
+        "CRAWL_SCORER": "crawl_scorer",
         "DEFAULT_DEPTH": "default_depth",
     }
     for key, value in (overrides or {}).items():

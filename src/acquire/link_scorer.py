@@ -1,6 +1,7 @@
 import math
 import re
 from urllib.parse import urlparse
+from typing import Any
 
 from src.acquire.acquire_models import LinkCandidate
 
@@ -155,5 +156,166 @@ def score_links_embed(
         trans_score = _cosine(dv, transactional_ref_emb)
         type_score = info_score - trans_score
         candidate.score = topic_score * (1 + PAGE_TYPE_ALPHA * type_score)
+
+    return sorted(candidates, key=lambda c: c.score, reverse=True)
+
+
+_MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]+\)")
+_MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+_PUNCT_RE = re.compile(r"[^a-z0-9/\s-]+")
+
+
+def _clean_scoring_text(text: str, boilerplate_terms: set[str]) -> str:
+    text = _MARKDOWN_IMAGE_RE.sub(" ", text or "")
+    text = _MARKDOWN_LINK_RE.sub(r" \1 ", text)
+    text = text.replace("_", " ").replace("|", " ")
+    text = _PUNCT_RE.sub(" ", text.lower())
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text or not boilerplate_terms:
+        return text
+    tokens = [token for token in text.split() if token not in boilerplate_terms]
+    return " ".join(tokens)
+
+
+def _candidate_title(candidate: LinkCandidate, boilerplate_terms: set[str]) -> str:
+    anchor = _clean_scoring_text(candidate.anchor_text or "", boilerplate_terms)
+    if anchor and len(anchor.split()) <= 14:
+        return anchor
+    path_parts = [
+        part.replace("-", " ").replace("_", " ")
+        for part in urlparse(candidate.url).path.split("/")
+        if part
+    ]
+    return _clean_scoring_text(" ".join(path_parts[-2:]), boilerplate_terms)
+
+
+def _structural_penalty(
+    candidate: LinkCandidate,
+    cleaned_text: str,
+    navigation_terms: set[str],
+) -> float:
+    raw_text = f"{candidate.anchor_text} {candidate.context} {urlparse(candidate.url).path}".lower()
+    penalty = 0.0
+
+    anchor_words = _tokenize(candidate.anchor_text or "")
+    context_words = _tokenize(candidate.context or "")
+    path = urlparse(candidate.url).path.lower()
+
+    if not anchor_words:
+        penalty += 0.25
+    elif len(anchor_words) <= 2 and len(context_words) <= 6:
+        penalty += 0.15
+
+    if raw_text.count("![") or "base64-image-removed" in raw_text:
+        penalty += 0.30
+
+    if any(term in cleaned_text.split() for term in navigation_terms):
+        penalty += 0.25
+
+    path_segments = [seg for seg in path.split("/") if seg]
+    if len(path_segments) >= 4:
+        penalty += 0.10
+    if any(seg in navigation_terms for seg in path_segments):
+        penalty += 0.20
+    if any(char.isdigit() for char in path_segments[-1:]):
+        penalty += 0.05
+
+    return min(penalty, 1.0)
+
+
+def _question_texts(columns: list[Any]) -> tuple[list[str], list[str]]:
+    questions = [getattr(col, "name", "") for col in columns if getattr(col, "name", "")]
+    instructions = [
+        getattr(col, "instruction", "") or ""
+        for col in columns
+        if getattr(col, "instruction", None)
+    ]
+    return questions, instructions
+
+
+def score_links_embed_experimental(
+    candidates: list[LinkCandidate],
+    columns: list[Any],
+) -> list[LinkCandidate]:
+    """
+    Experimental opt-in semantic scorer for crawl diagnostics.
+
+    It keeps the same Ollama embedding backend as the baseline embed scorer but
+    cleans markdown/image/accessibility boilerplate, scores against actual
+    questions and instructions separately, and applies generic structural
+    penalties for navigation/list-like candidates.
+    """
+    from config import (
+        OLLAMA_QUERY_PREFIX,
+        OLLAMA_DOC_PREFIX,
+        EXPERIMENTAL_TITLE_WEIGHT,
+        EXPERIMENTAL_QUESTION_WEIGHT,
+        EXPERIMENTAL_INSTRUCTION_WEIGHT,
+        EXPERIMENTAL_STRUCTURAL_PENALTY_WEIGHT,
+        EXPERIMENTAL_MIN_SCORE_FLOOR,
+        EXPERIMENTAL_BOILERPLATE_TERMS,
+        EXPERIMENTAL_NAVIGATION_TERMS,
+    )
+    from src.embed import embed_batch
+
+    if not candidates or not columns:
+        return candidates
+
+    boilerplate_terms = set(EXPERIMENTAL_BOILERPLATE_TERMS)
+    navigation_terms = set(EXPERIMENTAL_NAVIGATION_TERMS)
+    questions, instructions = _question_texts(columns)
+    if not questions:
+        return candidates
+
+    query_texts = [OLLAMA_QUERY_PREFIX + q for q in questions]
+    instruction_texts = [OLLAMA_QUERY_PREFIX + text for text in instructions]
+
+    cleaned_docs: list[str] = []
+    title_docs: list[str] = []
+    penalties: list[float] = []
+    for candidate in candidates:
+        title = _candidate_title(candidate, boilerplate_terms)
+        path_text = urlparse(candidate.url).path.replace("/", " ")
+        cleaned = _clean_scoring_text(
+            f"{title} {candidate.anchor_text} {candidate.context} {path_text}",
+            boilerplate_terms,
+        )
+        cleaned_docs.append(OLLAMA_DOC_PREFIX + cleaned)
+        title_docs.append(OLLAMA_DOC_PREFIX + title)
+        penalties.append(_structural_penalty(candidate, cleaned, navigation_terms))
+
+    all_texts = query_texts + instruction_texts + cleaned_docs + title_docs
+    embs = embed_batch(all_texts)
+
+    def _cosine(a: list[float], b: list[float]) -> float:
+        dot = sum(x * y for x, y in zip(a, b))
+        na = math.sqrt(sum(x * x for x in a))
+        nb = math.sqrt(sum(x * x for x in b))
+        return dot / (na * nb) if na and nb else 0.0
+
+    q_count = len(query_texts)
+    instr_count = len(instruction_texts)
+    q_vecs = embs[:q_count]
+    instr_vecs = embs[q_count:q_count + instr_count]
+    doc_vecs = embs[q_count + instr_count:q_count + instr_count + len(candidates)]
+    title_vecs = embs[q_count + instr_count + len(candidates):]
+
+    for candidate, doc_v, title_v, penalty in zip(candidates, doc_vecs, title_vecs, penalties):
+        question_score = max((_cosine(qv, doc_v) for qv in q_vecs), default=0.0)
+        instruction_score = max((_cosine(iv, doc_v) for iv in instr_vecs), default=0.0)
+        title_score = max((_cosine(qv, title_v) for qv in q_vecs), default=0.0)
+        active_instruction_weight = EXPERIMENTAL_INSTRUCTION_WEIGHT if instr_vecs else 0.0
+        total_weight = (
+            EXPERIMENTAL_QUESTION_WEIGHT
+            + active_instruction_weight
+            + EXPERIMENTAL_TITLE_WEIGHT
+        ) or 1.0
+        raw = (
+            EXPERIMENTAL_QUESTION_WEIGHT * question_score
+            + active_instruction_weight * instruction_score
+            + EXPERIMENTAL_TITLE_WEIGHT * title_score
+        ) / total_weight
+        adjusted = raw * (1 - EXPERIMENTAL_STRUCTURAL_PENALTY_WEIGHT * penalty)
+        candidate.score = max(EXPERIMENTAL_MIN_SCORE_FLOOR, adjusted)
 
     return sorted(candidates, key=lambda c: c.score, reverse=True)

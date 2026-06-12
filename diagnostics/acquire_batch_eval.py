@@ -93,6 +93,7 @@ def _run_acquire_report(
     input_path: Path,
     output_path: Path,
     backend: str,
+    scorer: str,
     max_pages: int,
     no_crawl: bool,
     no_extract_cache: bool,
@@ -119,6 +120,8 @@ def _run_acquire_report(
     ]
     if backend:
         cmd.extend(["--backend", backend])
+    if scorer:
+        cmd.extend(["--scorer", scorer])
     if max_pages:
         cmd.extend(["--max-pages", str(max_pages)])
     if no_crawl:
@@ -282,6 +285,12 @@ def main() -> int:
     parser.add_argument("--output", default="outputs/acquire_batch_eval.xlsx", help="Summary workbook path")
     parser.add_argument("--reports-dir", default="outputs/acquire_batch_reports", help="Per-workbook report directory")
     parser.add_argument("--backend", default="", help="Forwarded acquire backend override")
+    parser.add_argument(
+        "--scorer",
+        choices=["baseline", "experimental"],
+        default="",
+        help="Forwarded crawl scoring mode override",
+    )
     parser.add_argument("--max-pages", type=int, default=0, help="Forwarded CRAWL_MAX_PAGES override")
     parser.add_argument("--no-crawl", action="store_true", help="Forward --no-crawl to acquire_report.py")
     parser.add_argument("--no-extract-cache", action="store_true", help="Forward --no-extract-cache")
@@ -312,6 +321,7 @@ def main() -> int:
             input_path,
             report_path,
             args.backend,
+            args.scorer,
             args.max_pages,
             args.no_crawl,
             args.no_extract_cache,

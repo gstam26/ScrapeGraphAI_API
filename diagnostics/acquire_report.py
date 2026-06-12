@@ -39,6 +39,7 @@ from config import (
     CRAWL_MAX_PAGES,
     CRAWL_MIN_SCORE,
     CRAWL_MIN_SCORE_EMBED,
+    CRAWL_SCORER,
     DEFAULT_DEPTH,
     EXTRACT_PAGE_WORKERS,
     EXTRACT_TOOL,
@@ -609,6 +610,12 @@ def main() -> None:
     parser.add_argument("input", help="Path to the input Excel file")
     parser.add_argument("--output", default="", help="Path to save the report Excel (optional)")
     parser.add_argument("--backend", default="", help="Override ACQUIRE_TOOL (local/firecrawl/playwright/requests)")
+    parser.add_argument(
+        "--scorer",
+        choices=["baseline", "experimental"],
+        default="",
+        help=f"Crawl scoring mode override (default: workbook CRAWL_SCORER or {CRAWL_SCORER})",
+    )
     parser.add_argument("--max-pages", type=int, default=0, help="Override CRAWL_MAX_PAGES")
     parser.add_argument("--no-crawl", action="store_true", help="Force depth=0 for all URLs (no crawling)")
     parser.add_argument(
@@ -620,6 +627,10 @@ def main() -> None:
     args = parser.parse_args()
 
     pipeline_input = read_input(args.input)
+    crawl_scorer = (
+        args.scorer
+        or str(pipeline_input.config_overrides.get("CRAWL_SCORER", CRAWL_SCORER)).strip().lower()
+    )
 
     cfg = Config(
         acquire_tool=args.backend or ACQUIRE_TOOL,
@@ -630,12 +641,14 @@ def main() -> None:
         crawl_min_score=CRAWL_MIN_SCORE,
         crawl_min_score_embed=CRAWL_MIN_SCORE_EMBED,
         crawl_max_pages=args.max_pages or CRAWL_MAX_PAGES,
+        crawl_scorer=crawl_scorer,
     )
 
     print(f"\n{'='*72}")
     print(f"  ACQUIRE DIAGNOSTIC")
     print(f"  input    : {args.input}")
     print(f"  backend  : {cfg.acquire_tool}")
+    print(f"  scorer   : {cfg.crawl_scorer}")
     print(f"  entities : {', '.join(pipeline_input.entities)}")
     print(f"  urls     : {len(pipeline_input.urls)}")
     print(f"  max pages: {cfg.crawl_max_pages}")
@@ -676,6 +689,7 @@ def main() -> None:
         rows.append({
             "status": p.status,
             "backend": p.backend,
+            "crawl_scorer": cfg.crawl_scorer,
             "depth": p.depth,
             "crawl_score": round(p.crawl_score, 3),
             "chars": chars,
@@ -820,7 +834,10 @@ def main() -> None:
 
     crawl_rows = diag.get("crawl_candidates", [])
     df_crawl = pd.DataFrame(crawl_rows) if crawl_rows else pd.DataFrame(
-        columns=["parent_url", "candidate_url", "anchor_text", "crawl_score", "threshold", "followed", "skip_reason"]
+        columns=[
+            "parent_url", "candidate_url", "anchor_text", "url_path",
+            "crawl_score", "crawl_scorer", "threshold", "followed", "skip_reason",
+        ]
     )
 
     df_filter = pd.DataFrame(filter_rows) if filter_rows else pd.DataFrame(

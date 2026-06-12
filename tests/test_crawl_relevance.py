@@ -10,7 +10,11 @@ from src.acquire.crawler import (
     _select_links_to_follow,
     build_crawl_query,
 )
-from src.acquire.link_scorer import score_links
+from src.acquire.link_scorer import (
+    score_links,
+    _clean_scoring_text,
+    _structural_penalty,
+)
 from src.acquire.acquire_models import LinkCandidate
 
 
@@ -71,6 +75,45 @@ def test_score_links_no_hardcoded_boost():
     print("OK test_score_links_no_hardcoded_boost passed")
 
 
+def test_experimental_cleaning_removes_generic_boilerplate():
+    text = "![Logo](logo.png) Skip links Accessibility menu Warranty details"
+    cleaned = _clean_scoring_text(
+        text,
+        {"skip", "links", "accessibility", "menu", "logo", "image"},
+    )
+
+    assert "warranty" in cleaned
+    assert "details" in cleaned
+    assert "skip" not in cleaned
+    assert "accessibility" not in cleaned
+    assert "logo" not in cleaned
+
+    print("OK test_experimental_cleaning_removes_generic_boilerplate passed")
+
+
+def test_experimental_penalty_uses_generic_structure_only():
+    informational = LinkCandidate(
+        url="https://example.com/reports/warranty",
+        anchor_text="Warranty report",
+        depth=1,
+        context="Detailed warranty evidence and policy information",
+    )
+    navigational = LinkCandidate(
+        url="https://example.com/products/category/list",
+        anchor_text="Shop",
+        depth=1,
+        context="Browse products sort filter collection",
+    )
+    nav_terms = {"shop", "products", "category", "collection", "browse", "filter", "sort"}
+
+    info_penalty = _structural_penalty(informational, "warranty report evidence", nav_terms)
+    nav_penalty = _structural_penalty(navigational, "shop products category filter", nav_terms)
+
+    assert nav_penalty > info_penalty
+
+    print("OK test_experimental_penalty_uses_generic_structure_only passed")
+
+
 # ── Test 3: bounded fallback ──────────────────────────────────────────────────
 
 def test_fallback_follows_top_k_when_nothing_passes_threshold():
@@ -107,6 +150,8 @@ if __name__ == "__main__":
     test_build_crawl_query_excludes_entity_terms()
     test_no_hardcoded_terms_in_unrelated_query()
     test_score_links_no_hardcoded_boost()
+    test_experimental_cleaning_removes_generic_boilerplate()
+    test_experimental_penalty_uses_generic_structure_only()
     test_fallback_follows_top_k_when_nothing_passes_threshold()
     test_fallback_disabled_beyond_max_depth()
     test_normal_threshold_takes_precedence_over_fallback()

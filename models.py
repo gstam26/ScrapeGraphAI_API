@@ -56,6 +56,7 @@ class Config(BaseModel):
     crawl_min_score: float = 0.12        # BM25 relative threshold
     crawl_min_score_embed: float = 0.50  # Ollama absolute cosine threshold
     crawl_max_pages: int = 2
+    crawl_scorer: str = "baseline"       # "baseline" | "experimental"
 
 
 class SourceQuote(BaseModel):

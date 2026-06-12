@@ -32,6 +32,7 @@ _SUPPORTED_CONFIG_KEYS = {
     "EXTRACT_TOOL",
     "CRAWL_MIN_SCORE",
     "CRAWL_MIN_SCORE_EMBED",
+    "CRAWL_SCORER",
     "CRAWL_MAX_PAGES",
     "DEFAULT_DEPTH",
 }
@@ -146,7 +147,7 @@ def _coerce_config_value(key: str, value: Any) -> Any:
     if value is None or pd.isna(value):
         return None
 
-    if key in {"ACQUIRE_TOOL", "EXTRACT_TOOL"}:
+    if key in {"ACQUIRE_TOOL", "EXTRACT_TOOL", "CRAWL_SCORER"}:
         return str(value).strip()
 
     if key in {"CRAWL_MAX_PAGES", "DEFAULT_DEPTH"}:
@@ -524,22 +525,22 @@ def write_output_excel(
 
     acq_col_keys = [
         "entities", "seed_url", "page_url", "parent_url", "depth", "crawl_score",
-        "above_threshold", "fetch_tool", "page_length", "fetch_time_ms",
+        "above_threshold", "fetch_tool", "crawl_scorer", "page_length", "fetch_time_ms",
         "from_cache", "status", "skip_reason",
     ]
     acq_col_names = [
         "Entities", "Seed URL", "Page URL", "Parent URL", "Depth", "Crawl Score",
-        "Above Threshold", "Fetch Tool", "Page Length (chars)", "Fetch Time (ms)",
+        "Above Threshold", "Fetch Tool", "Crawl Scorer", "Page Length (chars)", "Fetch Time (ms)",
         "From Cache", "Status", "Skip Reason",
     ]
 
     cand_col_keys = [
         "seed_url", "entities", "parent_url", "candidate_url", "anchor_text",
-        "url_path", "crawl_score", "threshold", "followed", "skip_reason",
+        "url_path", "crawl_score", "crawl_scorer", "threshold", "followed", "skip_reason",
     ]
     cand_col_names = [
         "Seed URL", "Entities", "Parent URL", "Candidate URL", "Anchor Text",
-        "URL Path", "Crawl Score", "Threshold", "Followed", "Skip Reason",
+        "URL Path", "Crawl Score", "Crawl Scorer", "Threshold", "Followed", "Skip Reason",
     ]
 
     ext_col_keys = [

@@ -87,9 +87,31 @@ CRAWL_MAX_LINKS_PER_PAGE = 30
 
 # --- Relevance scorer ---
 
+# Baseline preserves the current production scorer. Experimental is opt-in for
+# diagnostics/evaluation and should not be promoted without evidence.
+CRAWL_SCORER = "baseline"  # "baseline" | "experimental"
+
 # Which scorer backend to use behind the _SCORERS dispatch.
 # NOTE: confirm this name matches the key your _SCORERS dispatch reads.
 SCORER_TOOL = "ollama"   # or "openai" if embeddings move off-network later
+
+# Experimental crawl scorer weights. These are generic structural penalties,
+# not brand/product/domain-specific rules.
+EXPERIMENTAL_TITLE_WEIGHT = 0.25
+EXPERIMENTAL_QUESTION_WEIGHT = 1.0
+EXPERIMENTAL_INSTRUCTION_WEIGHT = 0.45
+EXPERIMENTAL_STRUCTURAL_PENALTY_WEIGHT = 0.35
+EXPERIMENTAL_MIN_SCORE_FLOOR = 0.0
+EXPERIMENTAL_BOILERPLATE_TERMS = {
+    "skip", "navigation", "menu", "search", "account", "login", "sign",
+    "subscribe", "newsletter", "cookie", "privacy", "terms", "accessibility",
+    "image", "logo", "icon", "button", "share", "close", "open",
+}
+EXPERIMENTAL_NAVIGATION_TERMS = {
+    "shop", "cart", "checkout", "store", "locator", "recipe", "recipes",
+    "collection", "collections", "category", "categories", "product",
+    "products", "browse", "filter", "sort",
+}
 
 # Ollama embedding endpoint (internal server — only resolves on Sagentia network/VPN)
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://10.99.96.1:11434")

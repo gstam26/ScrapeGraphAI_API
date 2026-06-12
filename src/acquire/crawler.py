@@ -15,7 +15,12 @@ from config import (
 from models import ColumnSpec, Config, PageDoc
 from src.acquire.cache import read_cache, write_cache
 from src.acquire.fetcher import fetch_page_with_provenance
-from src.acquire.link_scorer import _tokenize, score_links, score_links_embed
+from src.acquire.link_scorer import (
+    _tokenize,
+    score_links,
+    score_links_embed,
+    score_links_embed_experimental,
+)
 from src.acquire.acquire_models import EntityDoc, LinkCandidate
 
 
@@ -240,6 +245,9 @@ def crawl_entity(
         cfg.crawl_min_score_embed if SCORER_TOOL == "ollama"
         else cfg.crawl_min_score
     )
+    crawl_scorer = (cfg.crawl_scorer or "baseline").strip().lower()
+    if crawl_scorer not in {"baseline", "experimental"}:
+        raise ValueError("crawl_scorer must be 'baseline' or 'experimental'")
     crawl_query = build_crawl_query(columns, entities=entities)
 
     visited: set[str] = set()
@@ -291,6 +299,7 @@ def crawl_entity(
                     "crawl_score": round(current.score, 3),
                     "above_threshold": current.depth == 0 or current.score >= _min_score,
                     "fetch_tool": cfg.acquire_tool,
+                    "crawl_scorer": crawl_scorer,
                     "page_length": len(page.text),
                     "fetch_time_ms": fetch_time_ms,
                     "from_cache": page.from_cache,
@@ -313,6 +322,7 @@ def crawl_entity(
                     "crawl_score": round(current.score, 3),
                     "above_threshold": True,
                     "fetch_tool": cfg.acquire_tool,
+                    "crawl_scorer": crawl_scorer,
                     "page_length": 0,
                     "fetch_time_ms": 0,
                     "from_cache": False,
@@ -339,7 +349,23 @@ def crawl_entity(
 
         unvisited = [c for c in child_links if c.url not in visited]
 
-        if SCORER_TOOL == "ollama":
+        if crawl_scorer == "experimental":
+            try:
+                scored_children = score_links_embed_experimental(unvisited, columns)
+            except Exception as exc:
+                print(f"    ! Experimental scorer failed ({exc}); falling back to baseline")
+                if SCORER_TOOL == "ollama":
+                    try:
+                        questions = [col.name for col in columns]
+                        scored_children = score_links_embed(unvisited, questions)
+                    except Exception as embed_exc:
+                        print(f"    ! Ollama scorer failed ({embed_exc}); falling back to BM25")
+                        scored_children = score_links(unvisited, crawl_query)
+                        scored_children.sort(key=lambda c: c.score, reverse=True)
+                else:
+                    scored_children = score_links(unvisited, crawl_query)
+                    scored_children.sort(key=lambda c: c.score, reverse=True)
+        elif SCORER_TOOL == "ollama":
             try:
                 questions = [col.name for col in columns]
                 scored_children = score_links_embed(unvisited, questions)
@@ -362,6 +388,7 @@ def crawl_entity(
                     "anchor_text": child.anchor_text,
                     "url_path": urlparse(child.url).path,
                     "crawl_score": round(child.score, 3),
+                    "crawl_scorer": crawl_scorer,
                     "threshold": _min_score,
                     "followed": followed,
                     "skip_reason": "" if followed else "below_threshold",

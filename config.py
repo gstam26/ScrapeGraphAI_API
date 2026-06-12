@@ -15,7 +15,7 @@ API_KEY = os.getenv("SGAI_API_KEY")
 
 # Dev default.  Change to "firecrawl" (or "sgai"/"playwright"/"requests") for
 # deployment — Firecrawl is the deployment-default candidate.
-FETCH_BACKEND = "local"
+FETCH_BACKEND = "firecrawl"
 
 ACQUIRE_TOOL = FETCH_BACKEND
 EXTRACT_TOOL = "llmapi"
@@ -137,7 +137,7 @@ PAGE_TYPE_ALPHA = 0.4
 # Minimum cosine similarity between page text and a question for that column
 # to be included in extraction. 0.35 keeps clearly irrelevant pages out while
 # being lenient enough not to drop borderline-relevant content.
-FILTER_THRESHOLD = 0.35
+FILTER_THRESHOLD = 0.55
 
 # Page text is split into ~this many characters per chunk (on paragraph
 # boundaries where possible) before embedding; a column's page score is the

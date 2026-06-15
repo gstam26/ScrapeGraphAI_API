@@ -145,6 +145,7 @@ def run_pipeline(
         "summary": [],
         "acquire_log": [],
         "crawl_candidates": [],
+        "filter_log": [],
         "extract_log": [],
         "verify_log": [],
     }
@@ -199,8 +200,8 @@ def run_pipeline(
             url_cells = []
 
             def process_page(index: int, page: PageDoc) -> dict[str, Any]:
-                local_diag: dict = {"extract_log": [], "verify_log": []}
-                routed = filter_page(page, request.columns)
+                local_diag: dict = {"filter_log": [], "extract_log": [], "verify_log": []}
+                routed = filter_page(page, request.columns, diag=local_diag)
                 relevant_cols = [c for c in request.columns if c.name in routed.relevant_columns]
                 cells = extract_cells(
                     routed.page,
@@ -231,7 +232,7 @@ def run_pipeline(
                         page_results[index] = {
                             "index": index,
                             "cells": [],
-                            "diag": {"extract_log": [], "verify_log": []},
+                            "diag": {"filter_log": [], "extract_log": [], "verify_log": []},
                             "error": exc,
                         }
 
@@ -242,6 +243,7 @@ def run_pipeline(
                     print(f"    X Page failed: {result['error']}")
                     continue
                 local_diag = result["diag"]
+                diag["filter_log"].extend(local_diag.get("filter_log", []))
                 diag["extract_log"].extend(local_diag.get("extract_log", []))
                 diag["verify_log"].extend(local_diag.get("verify_log", []))
                 cells = result["cells"]

@@ -111,7 +111,11 @@ def score_page_columns(text: str, columns: list[ColumnSpec]) -> dict[str, float]
     }
 
 
-def filter_page(page: PageDoc, columns: list[ColumnSpec] | None = None) -> RoutedPage:
+def filter_page(
+    page: PageDoc,
+    columns: list[ColumnSpec] | None = None,
+    diag: dict | None = None,
+) -> RoutedPage:
     """
     Route a page to extraction with cell relevance markers.
 
@@ -135,17 +139,50 @@ def filter_page(page: PageDoc, columns: list[ColumnSpec] | None = None) -> Route
         page_text_lower = page.text.lower()
 
         relevant_columns = set()
+        col_info: dict[str, tuple[float, bool]] = {}
         for name, max_score in scores.items():
+            kw_gate = any(kw in page_text_lower for kw in _keywords(name))
+            col_info[name] = (max_score, kw_gate)
             if max_score >= FILTER_THRESHOLD:
                 relevant_columns.add(name)
-            elif any(kw in page_text_lower for kw in _keywords(name)):
+            elif kw_gate:
                 relevant_columns.add(name)
 
-        if not relevant_columns:
+        fallback = not relevant_columns
+        if fallback:
             relevant_columns = full_set
+
+        if diag is not None:
+            for name, (emb_score, kw_gate) in col_info.items():
+                if fallback:
+                    reason = "fallback_all"
+                elif emb_score >= FILTER_THRESHOLD:
+                    reason = "embedding_threshold"
+                elif kw_gate:
+                    reason = "keyword_gate"
+                else:
+                    reason = "below_threshold"
+                diag.setdefault("filter_log", []).append({
+                    "url": page.url,
+                    "column": name,
+                    "embedding_score": round(emb_score, 4),
+                    "keyword_gate": kw_gate,
+                    "included": name in relevant_columns,
+                    "reason": reason,
+                })
 
     except Exception as exc:
         print(f"    [filter] embedding failed ({exc}); routing all columns")
         relevant_columns = full_set
+        if diag is not None:
+            for col in all_columns:
+                diag.setdefault("filter_log", []).append({
+                    "url": page.url,
+                    "column": col.name,
+                    "embedding_score": None,
+                    "keyword_gate": False,
+                    "included": True,
+                    "reason": "fallback_all",
+                })
 
     return RoutedPage(page=page, relevant_columns=relevant_columns)

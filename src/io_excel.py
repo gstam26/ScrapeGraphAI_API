@@ -23,6 +23,7 @@ _TAB_COLORS = {
     "Provenance": "009688",
     "Acquire Log": "FF9800",
     "Crawl Candidates": "FF9800",
+    "Filter Log": "2196F3",
     "Extract Log": "F44336",
     "Verify Log": "9C27B0",
 }
@@ -543,6 +544,13 @@ def write_output_excel(
         "URL Path", "Crawl Score", "Crawl Scorer", "Threshold", "Followed", "Skip Reason",
     ]
 
+    flt_col_keys = [
+        "url", "column", "embedding_score", "keyword_gate", "included", "reason",
+    ]
+    flt_col_names = [
+        "URL", "Column", "Embedding Score", "Keyword Gate", "Included", "Reason",
+    ]
+
     ext_col_keys = [
         "entity", "source_url", "question", "extract_tool", "items_extracted",
         "extraction_time_ms", "timed_out", "retry_count", "page_length_input",
@@ -573,6 +581,7 @@ def write_output_excel(
         sheets += [
             ("Acquire Log", _make_df(diag.get("acquire_log", []), acq_col_keys, acq_col_names)),
             ("Crawl Candidates", _make_df(diag.get("crawl_candidates", []), cand_col_keys, cand_col_names)),
+            ("Filter Log", _make_df(diag.get("filter_log", []), flt_col_keys, flt_col_names)),
             ("Extract Log", _make_df(diag.get("extract_log", []), ext_col_keys, ext_col_names)),
             ("Verify Log", _make_df(diag.get("verify_log", []), ver_col_keys, ver_col_names)),
         ]

@@ -74,7 +74,7 @@ def check_extraction() -> bool:
         html=None,
         from_cache=False,
         depth=0,
-        crawl_score=None,
+        crawl_score=0.0,
         fetch_time_ms=0,
         backend="test",
         render_fallback=False,

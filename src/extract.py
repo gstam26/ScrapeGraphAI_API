@@ -273,10 +273,6 @@ def _extract_with_azure(
 
     if not AZURE_API_KEY:
         raise RuntimeError("Missing AZURE_API_KEY in .env")
-    if not AZURE_ENDPOINT:
-        raise RuntimeError("Missing AZURE_ENDPOINT in .env")
-    if not AZURE_DEPLOYMENT:
-        raise RuntimeError("Missing AZURE_DEPLOYMENT in .env")
 
     page_text = page.text if getattr(page, "text", None) else None
     prompt = _build_prompt(columns, entities, page_text)

@@ -13,6 +13,9 @@ except ImportError:
 
 from config import (
     API_KEY,
+    AZURE_API_KEY,
+    AZURE_DEPLOYMENT,
+    AZURE_ENDPOINT,
     EXTRACT_CHUNK_OVERLAP,
     EXTRACT_CHUNK_SIZE,
     EXTRACT_CACHE_DIR,
@@ -260,6 +263,77 @@ def _extract_with_llmapi(
         return {}, make_timing()
 
 
+def _extract_with_azure(
+    page: PageDoc,
+    columns: list[ColumnSpec],
+    entities: list[str],
+) -> tuple[dict[str, Any], dict]:
+    """Extract fields using Azure OpenAI via the OpenAI Python SDK."""
+    from openai import OpenAI
+
+    if not AZURE_API_KEY:
+        raise RuntimeError("Missing AZURE_API_KEY in .env")
+    if not AZURE_ENDPOINT:
+        raise RuntimeError("Missing AZURE_ENDPOINT in .env")
+    if not AZURE_DEPLOYMENT:
+        raise RuntimeError("Missing AZURE_DEPLOYMENT in .env")
+
+    page_text = page.text if getattr(page, "text", None) else None
+    prompt = _build_prompt(columns, entities, page_text)
+
+    print(f"      -> Azure extracting: {page.url}")
+    t0 = time.time()
+    timed_out = False
+
+    def make_timing():
+        return {
+            "extraction_time_ms": int((time.time() - t0) * 1000),
+            "timed_out": timed_out,
+            "retry_count": 0,
+        }
+
+    try:
+        client = OpenAI(base_url=AZURE_ENDPOINT, api_key=AZURE_API_KEY)
+        try:
+            completion = client.chat.completions.create(
+                model=AZURE_DEPLOYMENT,
+                messages=[{"role": "user", "content": prompt}],
+                timeout=EXTRACT_TIMEOUT,
+            )
+        except Exception as e:
+            if "timeout" in str(e).lower() or "timed out" in str(e).lower():
+                timed_out = True
+                duration = time.time() - t0
+                print(f"      ! Azure timed out after {duration:.2f}s")
+                return {}, make_timing()
+            duration = time.time() - t0
+            print(f"      X Azure call error after {duration:.2f}s: {e}")
+            return {}, make_timing()
+
+        duration = time.time() - t0
+        print(f"      -> Azure call completed in {duration:.2f}s")
+
+        raw = completion.choices[0].message.content or ""
+        text = raw.strip()
+        if text.startswith("```"):
+            text = text.split("```", 2)[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.rsplit("```", 1)[0].strip()
+
+        json_data = json.loads(text)
+        if not isinstance(json_data, dict):
+            print(f"      ! Azure response is not a dict: {type(json_data)}")
+            return {}, make_timing()
+
+        return json_data, make_timing()
+
+    except Exception as e:
+        duration = time.time() - t0
+        print(f"      X Azure extraction error after {duration:.2f}s: {e}")
+        return {}, make_timing()
+
+
 def _normalise_quote(quote: Any) -> list[str | None]:
     """Return quote(s) as a flat list suitable for SourceQuote construction.
 
@@ -497,6 +571,8 @@ def extract_cells(
             chunk_data, timing = _extract_with_sgai(chunk_page, columns, entities)
         elif runtime_cfg.extract_tool == "llmapi":
             chunk_data, timing = _extract_with_llmapi(chunk_page, columns, entities)
+        elif runtime_cfg.extract_tool == "azure":
+            chunk_data, timing = _extract_with_azure(chunk_page, columns, entities)
         else:
             print(f"      X Unknown EXTRACT_TOOL: {runtime_cfg.extract_tool}")
             return {}, {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
@@ -504,7 +580,7 @@ def extract_cells(
             _write_extract_cache(cache_key, chunk_data)
         return chunk_data, timing
 
-    if runtime_cfg.extract_tool not in {"sgai", "llmapi"}:
+    if runtime_cfg.extract_tool not in {"sgai", "llmapi", "azure"}:
         print(f"      X Unknown EXTRACT_TOOL: {runtime_cfg.extract_tool}")
         return cells
 

@@ -10,3 +10,4 @@ trafilatura
 playwright
 scrapegraph-py
 firecrawl-py
+openai

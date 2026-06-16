@@ -9,6 +9,10 @@ load_dotenv()
 
 API_KEY = os.getenv("SGAI_API_KEY")
 
+AZURE_API_KEY = os.getenv("AZURE_API_KEY")
+AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT", "https://thebeastgpu.openai.azure.com/openai/v1")
+AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT", "gpt-4.1-mini")
+
 # ============================================================
 # TOOLS
 # ============================================================
@@ -18,7 +22,7 @@ API_KEY = os.getenv("SGAI_API_KEY")
 FETCH_BACKEND = "firecrawl"
 
 ACQUIRE_TOOL = FETCH_BACKEND
-EXTRACT_TOOL = "llmapi"
+EXTRACT_TOOL = "azure"
 VERIFY_TOOL = "rapidfuzz"
 
 # ============================================================

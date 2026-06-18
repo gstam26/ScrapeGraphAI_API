@@ -54,7 +54,8 @@ For each entity key, return an object with exactly these question keys:
 For each question key, return an object with this structure:
 {{
   "value": the extracted answer, or null if not found,
-  "quote": a short exact quote from the page supporting the answer, or null if not found
+  "quote": one single verbatim sentence (or shortest contiguous span) copied
+           character-for-character from the page text, or null if not found
 }}
 
 Rules:
@@ -64,7 +65,16 @@ Rules:
 - Only use information present in the content provided.
 - If the answer is not found, use null for both value and quote.
 - If multiple answers exist, return a JSON array of objects, one per answer.
-- Each quote must be copied exactly from the page content where possible.
+  Each object must have exactly one value and exactly one quote.
+- Quote rules (all must hold):
+    * Copy the quote character-for-character from the page — no changes, no ellipses,
+      no joining fragments with newlines or punctuation.
+    * Use the single shortest sentence or span that directly supports the value.
+      Never combine multiple sentences or clauses into one quote string.
+    * Never return a list or array as the quote — quote must always be a string or null.
+    * If a claim is supported by multiple separate sentences, create a separate
+      {{"value": ..., "quote": ...}} entry for each sentence — do not bundle them
+      under one shared quote.
 - Return only JSON, no other text.
 """
     if page_text:

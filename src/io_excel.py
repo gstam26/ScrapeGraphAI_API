@@ -300,7 +300,7 @@ def _make_summary_df(diag: dict | None, result: PipelineResult) -> pd.DataFrame:
 
     rows = []
     for row in result.rows:
-        src = row.all_cells if row.all_cells else row.cells
+        src = row.all_cells  # always raw — never read aggregated cells here
         all_ev = [e for c in src for e in c.evidence]
         rows.append({
             "entity": row.entity,
@@ -343,30 +343,41 @@ def _make_matrix_df(
 
     for row_data_idx, row in enumerate(result.rows):
         excel_row = row_data_idx + 2  # 1-indexed + header
-        src = row.all_cells if row.all_cells else row.cells
+        src = row.cells if row.cells else row.all_cells  # prefer aggregated/deduplicated
         matrix_row: dict = {"Entity": row.entity}
 
         for col_excel_idx, col in enumerate(columns, start=2):
-            verified_vals: list[str] = []
-            unverified_vals: list[str] = []
-            seen: set[str] = set()
+            # Aggregated src has at most one cell per (entity, column).
+            agg_cell = next((c for c in src if c.column == col.name), None)
 
-            for cell in src:
-                if cell.column != col.name:
+            if agg_cell is None or not agg_cell.evidence:
+                text = "No data found"
+                fills[(excel_row, col_excel_idx)] = _RED_FILL
+                matrix_row[col.name] = text
+                continue
+
+            # Evidence is ranked best-first (exact > fuzzy > none, then semantic_score
+            # descending). Take the best evidence item per distinct value.
+            best_by_value: dict[str, bool] = {}  # val_str → verified
+            for ev in agg_cell.evidence:
+                val_str = str(ev.value).strip() if ev.value is not None else ""
+                if not val_str or val_str in best_by_value:
                     continue
-                for ev in cell.evidence:
-                    val_str = str(ev.value).strip() if ev.value is not None else ""
-                    if not val_str or val_str in seen:
-                        continue
-                    seen.add(val_str)
-                    if ev.verified:
-                        verified_vals.append(val_str)
-                    else:
-                        unverified_vals.append(val_str)
+                best_by_value[val_str] = ev.verified
+
+            verified_vals = [v for v, ok in best_by_value.items() if ok]
+            unverified_vals = [v for v, ok in best_by_value.items() if not ok]
 
             if not verified_vals and not unverified_vals:
                 text = "No data found"
                 fills[(excel_row, col_excel_idx)] = _RED_FILL
+            elif agg_cell.has_conflict:
+                lines = ["- " + v for v in verified_vals]
+                if verified_vals and unverified_vals:
+                    lines += ["-- Unverified --"]
+                lines += ["- " + v for v in unverified_vals]
+                text = "(sources conflict)\n" + "\n".join(lines)
+                fills[(excel_row, col_excel_idx)] = _ORANGE_FILL
             elif not verified_vals:
                 lines = ["- " + v for v in unverified_vals] + ["(unverified)"]
                 text = "\n".join(lines)
@@ -405,7 +416,7 @@ def _make_provenance_df(
 
     rows = []
     for entity_row in result.rows:
-        src = entity_row.all_cells if entity_row.all_cells else entity_row.cells
+        src = entity_row.all_cells  # always granular — never read aggregated cells here
         for cell in src:
             for ev in cell.evidence:
                 if ev.value is None:

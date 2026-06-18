@@ -215,23 +215,24 @@ def test_aggregator_dedupes_by_value_quote_and_source_url():
 def test_excel_output_uses_entity_rows_and_provenance_entity():
     columns = [ColumnSpec(name="test_col")]
 
+    raw_cell = ExtractedCell(
+        entity="Oatly",
+        source_url="http://example.com/page1",
+        column="test_col",
+        value=["item 1", "item 2"],
+        evidence=[
+            SourceQuote(value="item 1", quote="quote 1"),
+            SourceQuote(value="item 2", quote="quote 2"),
+        ],
+        verified=True,
+    )
+
     result = PipelineResult(
         rows=[
             ExtractedRow(
                 entity="Oatly",
-                cells=[
-                    ExtractedCell(
-                        entity="Oatly",
-                        source_url="http://example.com/page1",
-                        column="test_col",
-                        value=["item 1", "item 2"],
-                        evidence=[
-                            SourceQuote(value="item 1", quote="quote 1"),
-                            SourceQuote(value="item 2", quote="quote 2"),
-                        ],
-                        verified=True,
-                    ),
-                ],
+                cells=[raw_cell],       # aggregated — Matrix reads this
+                all_cells=[raw_cell],   # granular  — Provenance reads this
             ),
         ]
     )
@@ -253,6 +254,106 @@ def test_excel_output_uses_entity_rows_and_provenance_entity():
         assert provenance_df.iloc[0]["Verbatim Quote"] == "quote 1"
 
     print("OK test_excel_output_uses_entity_rows_and_provenance_entity passed")
+
+
+def test_matrix_reads_cells_not_all_cells():
+    """Matrix must show data from row.cells (aggregated); row.all_cells is irrelevant to it."""
+    columns = [ColumnSpec(name="Q")]
+
+    agg_cell = ExtractedCell(
+        entity="E",
+        source_url="http://x.com",
+        column="Q",
+        value=["agg value"],
+        evidence=[SourceQuote(value="agg value", quote="q", verified=True, match_type="exact")],
+    )
+    raw_cell = ExtractedCell(
+        entity="E",
+        source_url="http://x.com",
+        column="Q",
+        value=["raw value"],
+        evidence=[SourceQuote(value="raw value", quote="q2")],
+    )
+
+    result = PipelineResult(
+        rows=[ExtractedRow(entity="E", cells=[agg_cell], all_cells=[raw_cell])]
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_path = os.path.join(tmpdir, "out.xlsx")
+        write_output_excel(result, columns, output_path)
+        matrix_df = pd.read_excel(output_path, sheet_name="Matrix")
+
+    cell_text = str(matrix_df.iloc[0]["Q"])
+    assert "agg value" in cell_text, f"Matrix should show aggregated value, got: {cell_text!r}"
+    assert "raw value" not in cell_text, f"Matrix must not show raw value, got: {cell_text!r}"
+    print("OK test_matrix_reads_cells_not_all_cells passed")
+
+
+def test_provenance_reads_all_cells_not_cells():
+    """Provenance must stay granular on row.all_cells; row.cells is irrelevant to it."""
+    columns = [ColumnSpec(name="Q")]
+
+    agg_cell = ExtractedCell(
+        entity="E",
+        source_url="http://x.com",
+        column="Q",
+        value=["agg value"],
+        evidence=[SourceQuote(value="agg value", quote="agg quote")],
+    )
+    raw_cell = ExtractedCell(
+        entity="E",
+        source_url="http://x.com",
+        column="Q",
+        value=["raw value"],
+        evidence=[SourceQuote(value="raw value", quote="raw quote")],
+    )
+
+    result = PipelineResult(
+        rows=[ExtractedRow(entity="E", cells=[agg_cell], all_cells=[raw_cell])]
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_path = os.path.join(tmpdir, "out.xlsx")
+        write_output_excel(result, columns, output_path)
+        prov_df = pd.read_excel(output_path, sheet_name="Provenance")
+
+    assert len(prov_df) == 1
+    assert prov_df.iloc[0]["Claim"] == "raw value"
+    assert prov_df.iloc[0]["Verbatim Quote"] == "raw quote"
+    print("OK test_provenance_reads_all_cells_not_cells passed")
+
+
+def test_matrix_conflict_label():
+    """When has_conflict is True the Matrix cell text starts with '(sources conflict)'."""
+    columns = [ColumnSpec(name="Q")]
+
+    conflict_cell = ExtractedCell(
+        entity="E",
+        source_url="http://a.com; http://b.com",
+        column="Q",
+        value=["value A", "value B"],
+        evidence=[
+            SourceQuote(value="value A", quote="qa", verified=True, match_type="exact"),
+            SourceQuote(value="value B", quote="qb", verified=False, match_type="none"),
+        ],
+        has_conflict=True,
+    )
+
+    result = PipelineResult(
+        rows=[ExtractedRow(entity="E", cells=[conflict_cell], all_cells=[])]
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_path = os.path.join(tmpdir, "out.xlsx")
+        write_output_excel(result, columns, output_path)
+        matrix_df = pd.read_excel(output_path, sheet_name="Matrix")
+
+    cell_text = str(matrix_df.iloc[0]["Q"])
+    assert cell_text.startswith("(sources conflict)"), f"Expected conflict prefix, got: {cell_text!r}"
+    assert "value A" in cell_text
+    assert "value B" in cell_text
+    print("OK test_matrix_conflict_label passed")
 
 
 def test_sample_input_populates_entities_urls_questions_and_config():
@@ -429,6 +530,9 @@ if __name__ == "__main__":
     test_rank_evidence_orders_exact_over_fuzzy_over_none()
     test_aggregate_cells_source_urls_is_sorted_list()
     test_excel_output_uses_entity_rows_and_provenance_entity()
+    test_matrix_reads_cells_not_all_cells()
+    test_provenance_reads_all_cells_not_cells()
+    test_matrix_conflict_label()
     test_sample_input_populates_entities_urls_questions_and_config()
     test_blank_entities_url_gets_all_entities_and_specific_url_stays_scoped()
     test_extract_cells_only_returns_requested_entities()

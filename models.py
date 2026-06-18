@@ -99,6 +99,8 @@ class ExtractedCell(BaseModel):
     has_conflict: bool = False
     num_sources: int = 0
     num_unique_values: int = 0
+    # Structured list of distinct source URLs (aggregated cells only).
+    source_urls: list[str] = Field(default_factory=list)
 
 
 class CellContribution(ExtractedCell):

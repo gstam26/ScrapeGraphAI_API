@@ -53,6 +53,18 @@ def _evidence_from_cell_value(cell: ExtractedCell) -> list[SourceQuote]:
     ]
 
 
+def _rank_evidence(evidence: list[SourceQuote]) -> list[SourceQuote]:
+    """Sort evidence best-first: exact > fuzzy > none, then semantic_score descending."""
+    _match_rank = {"exact": 0, "fuzzy": 1}
+
+    def _key(ev: SourceQuote) -> tuple:
+        rank = _match_rank.get(ev.match_type, 2)
+        sem = ev.semantic_score if ev.semantic_score is not None else -1.0
+        return (rank, -sem)
+
+    return sorted(evidence, key=_key)
+
+
 def aggregate_cells(cells: list[ExtractedCell]) -> list[ExtractedCell]:
     """
     Group cells by entity and column, then collect all contributions.
@@ -96,18 +108,21 @@ def aggregate_cells(cells: list[ExtractedCell]) -> list[ExtractedCell]:
                     seen_values.add(value_key)
                     unique_values.append(copied.value)
 
+        ranked_evidence = _rank_evidence(deduped_evidence)
         scores = [
-            evidence.verification_score
-            for evidence in deduped_evidence
-            if evidence.verification_score is not None
+            ev.verification_score
+            for ev in ranked_evidence
+            if ev.verification_score is not None
         ]
+        sorted_urls = sorted(source_urls)
         aggregated.append(ExtractedCell(
             entity=entity,
-            source_url="; ".join(sorted(source_urls)),
+            source_url="; ".join(sorted_urls),
+            source_urls=sorted_urls,
             column=column,
             value=unique_values,
-            evidence=deduped_evidence,
-            verified=bool(deduped_evidence) and all(ev.verified for ev in deduped_evidence),
+            evidence=ranked_evidence,
+            verified=bool(ranked_evidence) and all(ev.verified for ev in ranked_evidence),
             verification_score=sum(scores) / len(scores) if scores else None,
             has_conflict=len(unique_values) > 1,
             num_sources=len(source_urls),

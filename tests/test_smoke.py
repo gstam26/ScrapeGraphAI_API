@@ -324,6 +324,46 @@ def test_backward_compatibility_without_entities_sheet():
     print("OK test_backward_compatibility_without_entities_sheet passed")
 
 
+def test_rank_evidence_orders_exact_over_fuzzy_over_none():
+    from src.aggregate import _rank_evidence
+    evidence = [
+        SourceQuote(value="v1", quote="q1", match_type="none"),
+        SourceQuote(value="v2", quote="q2", match_type="exact", verification_score=100.0),
+        SourceQuote(value="v3", quote="q3", match_type="fuzzy", verification_score=80.0, semantic_score=0.9),
+        SourceQuote(value="v4", quote="q4", match_type="fuzzy", verification_score=75.0, semantic_score=0.7),
+    ]
+    ranked = _rank_evidence(evidence)
+    assert ranked[0].match_type == "exact"
+    assert ranked[1].match_type == "fuzzy"
+    assert ranked[1].semantic_score == 0.9   # higher semantic score sorts first within fuzzy
+    assert ranked[2].match_type == "fuzzy"
+    assert ranked[3].match_type == "none"
+    print("OK test_rank_evidence_orders_exact_over_fuzzy_over_none passed")
+
+
+def test_aggregate_cells_source_urls_is_sorted_list():
+    cells = [
+        ExtractedCell(
+            entity="Oatly",
+            source_url="http://b.com",
+            column="Q",
+            value="v1",
+            evidence=[SourceQuote(value="v1", quote="q1")],
+        ),
+        ExtractedCell(
+            entity="Oatly",
+            source_url="http://a.com",
+            column="Q",
+            value="v2",
+            evidence=[SourceQuote(value="v2", quote="q2")],
+        ),
+    ]
+    aggregated = aggregate_cells(cells)
+    assert aggregated[0].source_urls == ["http://a.com", "http://b.com"]
+    assert isinstance(aggregated[0].source_urls, list)
+    print("OK test_aggregate_cells_source_urls_is_sorted_list passed")
+
+
 def test_main_only_two_terminal_prompts():
     main_text = Path("main.py").read_text(encoding="utf-8")
 
@@ -386,6 +426,8 @@ if __name__ == "__main__":
     test_aggregator_groups_by_entity_and_question()
     test_aggregator_merges_contributions_without_winner_selection()
     test_aggregator_dedupes_by_value_quote_and_source_url()
+    test_rank_evidence_orders_exact_over_fuzzy_over_none()
+    test_aggregate_cells_source_urls_is_sorted_list()
     test_excel_output_uses_entity_rows_and_provenance_entity()
     test_sample_input_populates_entities_urls_questions_and_config()
     test_blank_entities_url_gets_all_entities_and_specific_url_stays_scoped()

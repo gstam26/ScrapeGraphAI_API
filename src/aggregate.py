@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from models import ExtractedCell, SourceQuote
@@ -53,7 +54,7 @@ def _evidence_from_cell_value(cell: ExtractedCell) -> list[SourceQuote]:
     ]
 
 
-_LIST_KEYWORDS = frozenset({"comma-separated", "deduplicated", "list"})
+_LIST_KEYWORDS = frozenset({"comma-separated", "deduplicated", "list", "for each"})
 
 
 def _is_list_column(instruction: str | None) -> bool:
@@ -63,7 +64,7 @@ def _is_list_column(instruction: str | None) -> bool:
     text = instruction.lower()
     if any(kw in text for kw in _LIST_KEYWORDS):
         return True
-    return "each" in text and "product" in text
+    return bool(re.search(r"\bone\b.{1,30}\bper\b", text))
 
 
 def _rank_evidence(evidence: list[SourceQuote]) -> list[SourceQuote]:

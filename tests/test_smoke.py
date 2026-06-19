@@ -497,15 +497,25 @@ def test_crawl_terms_include_questions_and_instructions_only():
 
 
 def test_is_list_column_predicate():
-    assert _is_list_column("return as a list, one claim per item") is True
-    assert _is_list_column("comma-separated values only") is True
-    assert _is_list_column("deduplicated entries") is True
-    assert _is_list_column("list each product type found") is True   # "each" + "product"
+    assert _is_list_column("return as a list, one claim per item") is True    # "list"
+    assert _is_list_column("comma-separated values only") is True              # "comma-separated"
+    assert _is_list_column("deduplicated entries") is True                     # "deduplicated"
+    assert _is_list_column("list each product type found") is True             # "list"
+    assert _is_list_column("For each claim return one concise sentence") is True  # "for each"
+    assert _is_list_column("return one entry per item") is True                # one…per regex
     assert _is_list_column("Name the parent company only") is False
     assert _is_list_column("include specific numbers and units where stated") is False
     assert _is_list_column(None) is False
     assert _is_list_column("") is False
     print("OK test_is_list_column_predicate passed")
+
+
+def test_is_list_column_production_instructions():
+    """Three exact production instruction strings — only Parent company must be single-answer."""
+    assert _is_list_column("For each claim return one concise sentence") is True   # Sustainability claims
+    assert _is_list_column("comma-separated, deduplicated") is True                # Plant milk types
+    assert _is_list_column("Name the parent company only") is False                # Parent company
+    print("OK test_is_list_column_production_instructions passed")
 
 
 def test_aggregate_list_column_no_conflict():
@@ -662,6 +672,7 @@ if __name__ == "__main__":
     test_crawl_terms_include_questions_and_instructions_only()
     test_link_scorer_has_no_domain_specific_keyword_boosts()
     test_is_list_column_predicate()
+    test_is_list_column_production_instructions()
     test_aggregate_list_column_no_conflict()
     test_aggregate_single_answer_column_conflict()
     test_thin_content_gate_below_and_above_threshold()

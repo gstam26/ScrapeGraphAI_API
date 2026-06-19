@@ -553,6 +553,70 @@ def test_aggregate_single_answer_column_conflict():
     print("OK test_aggregate_single_answer_column_conflict passed")
 
 
+def test_thin_content_gate_below_and_above_threshold():
+    from src.acquire.fetcher import _thin_content_gate
+    passed, reason = _thin_content_gate("x" * 199)
+    assert passed is False
+    assert "thin_content_199_chars" in reason
+
+    passed, reason = _thin_content_gate("x" * 200)
+    assert passed is True
+    assert reason == ""
+    print("OK test_thin_content_gate_below_and_above_threshold passed")
+
+
+def test_firecrawl_good_content_no_fallback(monkeypatch):
+    from src.acquire import fetcher as f
+    monkeypatch.setattr(f, "_fetch_firecrawl", lambda url, cfg: "x" * 300)
+    playwright_called = []
+    monkeypatch.setattr(f, "_fetch_playwright", lambda url, cfg: playwright_called.append(1) or "")
+    text, _, prov = f._fetch_firecrawl_with_fallback("http://x.com", Config())
+    assert prov["gate_passed"] is True
+    assert prov["render_fallback"] is False
+    assert not playwright_called
+    print("OK test_firecrawl_good_content_no_fallback passed")
+
+
+def test_firecrawl_thin_triggers_playwright_fallback(monkeypatch):
+    from src.acquire import fetcher as f
+    monkeypatch.setattr(f, "THIN_CONTENT_FALLBACK", True)
+    monkeypatch.setattr(f, "_fetch_firecrawl", lambda url, cfg: "short")
+    monkeypatch.setattr(f, "_fetch_playwright", lambda url, cfg: "x" * 400)
+    text, _, prov = f._fetch_firecrawl_with_fallback("http://x.com", Config())
+    assert text == "x" * 400
+    assert prov["render_fallback"] is True
+    assert prov["gate_passed"] is True
+    assert "thin_content_" in prov["gate_reason"]
+    assert "playwright_fallback" in prov["gate_reason"]
+    print("OK test_firecrawl_thin_triggers_playwright_fallback passed")
+
+
+def test_firecrawl_both_thin_keeps_longer(monkeypatch):
+    from src.acquire import fetcher as f
+    monkeypatch.setattr(f, "THIN_CONTENT_FALLBACK", True)
+    monkeypatch.setattr(f, "_fetch_firecrawl", lambda url, cfg: "fc" * 50)   # 100 chars
+    monkeypatch.setattr(f, "_fetch_playwright", lambda url, cfg: "pw" * 30)  # 60 chars
+    text, _, prov = f._fetch_firecrawl_with_fallback("http://x.com", Config())
+    assert text == "fc" * 50        # firecrawl result is longer → kept
+    assert prov["render_fallback"] is True
+    assert prov["gate_passed"] is False
+    assert "playwright_also_thin_60_chars" in prov["gate_reason"]
+    print("OK test_firecrawl_both_thin_keeps_longer passed")
+
+
+def test_firecrawl_thin_fallback_disabled(monkeypatch):
+    from src.acquire import fetcher as f
+    monkeypatch.setattr(f, "THIN_CONTENT_FALLBACK", False)
+    monkeypatch.setattr(f, "_fetch_firecrawl", lambda url, cfg: "short")
+    playwright_called = []
+    monkeypatch.setattr(f, "_fetch_playwright", lambda url, cfg: playwright_called.append(1) or "")
+    text, _, prov = f._fetch_firecrawl_with_fallback("http://x.com", Config())
+    assert prov["gate_passed"] is False
+    assert prov["render_fallback"] is False
+    assert not playwright_called
+    print("OK test_firecrawl_thin_fallback_disabled passed")
+
+
 def test_link_scorer_has_no_domain_specific_keyword_boosts():
     candidates = [
         LinkCandidate(
@@ -600,5 +664,10 @@ if __name__ == "__main__":
     test_is_list_column_predicate()
     test_aggregate_list_column_no_conflict()
     test_aggregate_single_answer_column_conflict()
+    test_thin_content_gate_below_and_above_threshold()
+    test_firecrawl_good_content_no_fallback(None)
+    test_firecrawl_thin_triggers_playwright_fallback(None)
+    test_firecrawl_both_thin_keeps_longer(None)
+    test_firecrawl_thin_fallback_disabled(None)
 
     print("\nAll smoke tests passed!")

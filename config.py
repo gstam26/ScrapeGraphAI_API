@@ -14,7 +14,7 @@ AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT", "https://thebeastgpu.openai.azure.c
 AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT", "gpt-4.1-mini")
 
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-3-5-haiku-latest")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 
 # ============================================================
 # TOOLS

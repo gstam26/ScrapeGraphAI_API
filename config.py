@@ -39,6 +39,11 @@ OUTPUT_DIR = "outputs"
 
 FETCH_WAIT_MS = 3000
 
+# When True, a thin-content response from Firecrawl triggers one Playwright
+# re-render attempt. Set to False for backend-comparison runs where you want
+# each backend to stand alone without borrowing another.
+THIN_CONTENT_FALLBACK = True
+
 # ============================================================
 # LOCAL-FETCH QUALITY GATE
 # Explicit pass/fail rule applied after httpx + Trafilatura extraction.

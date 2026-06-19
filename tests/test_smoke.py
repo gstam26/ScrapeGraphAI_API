@@ -20,7 +20,7 @@ from pathlib import Path
 import pandas as pd
 
 import src.extract as extract
-from src.aggregate import aggregate_cells
+from src.aggregate import aggregate_cells, _is_list_column
 from src.extract import _merge_chunk_data, _parse_field_value
 from src.io_excel import read_input, write_output_excel
 from models import ColumnSpec, Config, ExtractedCell, ExtractedRow, PageDoc, PipelineResult, SourceQuote
@@ -496,6 +496,63 @@ def test_crawl_terms_include_questions_and_instructions_only():
     print("OK test_crawl_terms_include_questions_and_instructions_only passed")
 
 
+def test_is_list_column_predicate():
+    assert _is_list_column("return as a list, one claim per item") is True
+    assert _is_list_column("comma-separated values only") is True
+    assert _is_list_column("deduplicated entries") is True
+    assert _is_list_column("list each product type found") is True   # "each" + "product"
+    assert _is_list_column("Name the parent company only") is False
+    assert _is_list_column("include specific numbers and units where stated") is False
+    assert _is_list_column(None) is False
+    assert _is_list_column("") is False
+    print("OK test_is_list_column_predicate passed")
+
+
+def test_aggregate_list_column_no_conflict():
+    """A list-type column with 5 distinct values must NOT set has_conflict."""
+    list_cols = {"Sustainability claims"}
+    cells = [
+        ExtractedCell(
+            entity="Oatly",
+            source_url=f"http://example.com/{i}",
+            column="Sustainability claims",
+            value=f"claim {i}",
+            evidence=[SourceQuote(value=f"claim {i}", quote=f"quote {i}")],
+        )
+        for i in range(5)
+    ]
+    aggregated = aggregate_cells(cells, list_columns=list_cols)
+    assert len(aggregated) == 1
+    assert aggregated[0].num_unique_values == 5
+    assert aggregated[0].has_conflict is False
+    print("OK test_aggregate_list_column_no_conflict passed")
+
+
+def test_aggregate_single_answer_column_conflict():
+    """A single-answer column with 2 distinct values MUST set has_conflict."""
+    cells = [
+        ExtractedCell(
+            entity="Oatly",
+            source_url="http://a.com",
+            column="Parent company",
+            value="Danone",
+            evidence=[SourceQuote(value="Danone", quote="owned by Danone", verified=True)],
+        ),
+        ExtractedCell(
+            entity="Oatly",
+            source_url="http://b.com",
+            column="Parent company",
+            value="None (not disclosed)",
+            evidence=[SourceQuote(value="None (not disclosed)", quote="no parent listed")],
+        ),
+    ]
+    aggregated = aggregate_cells(cells)   # no list_columns → single-answer default
+    assert len(aggregated) == 1
+    assert aggregated[0].num_unique_values == 2
+    assert aggregated[0].has_conflict is True
+    print("OK test_aggregate_single_answer_column_conflict passed")
+
+
 def test_link_scorer_has_no_domain_specific_keyword_boosts():
     candidates = [
         LinkCandidate(
@@ -540,5 +597,8 @@ if __name__ == "__main__":
     test_main_only_two_terminal_prompts()
     test_crawl_terms_include_questions_and_instructions_only()
     test_link_scorer_has_no_domain_specific_keyword_boosts()
+    test_is_list_column_predicate()
+    test_aggregate_list_column_no_conflict()
+    test_aggregate_single_answer_column_conflict()
 
     print("\nAll smoke tests passed!")

@@ -53,6 +53,19 @@ def _evidence_from_cell_value(cell: ExtractedCell) -> list[SourceQuote]:
     ]
 
 
+_LIST_KEYWORDS = frozenset({"comma-separated", "deduplicated", "list"})
+
+
+def _is_list_column(instruction: str | None) -> bool:
+    """Return True if the instruction signals a list-type (multi-value) answer."""
+    if not instruction:
+        return False
+    text = instruction.lower()
+    if any(kw in text for kw in _LIST_KEYWORDS):
+        return True
+    return "each" in text and "product" in text
+
+
 def _rank_evidence(evidence: list[SourceQuote]) -> list[SourceQuote]:
     """Sort evidence best-first: exact > fuzzy > none, then semantic_score descending."""
     _match_rank = {"exact": 0, "fuzzy": 1}
@@ -65,13 +78,21 @@ def _rank_evidence(evidence: list[SourceQuote]) -> list[SourceQuote]:
     return sorted(evidence, key=_key)
 
 
-def aggregate_cells(cells: list[ExtractedCell]) -> list[ExtractedCell]:
+def aggregate_cells(
+    cells: list[ExtractedCell],
+    list_columns: set[str] | None = None,
+) -> list[ExtractedCell]:
     """
     Group cells by entity and column, then collect all contributions.
 
     This first-pass aggregation does not choose a winner or synthesize a final
     answer. It deduplicates evidence by normalized value, quote, and source URL,
     keeps conflicting values, and stores cell.value as a list of unique values.
+
+    list_columns: names of columns whose instructions signal a list-type answer.
+    For list columns, multiple distinct values are expected and has_conflict is
+    always False. Pass None to treat all columns as single-answer (conservative
+    default, preserves old behaviour for callers without column metadata).
     """
     grouped: dict[tuple[str, str], list[ExtractedCell]] = {}
     for cell in cells:
@@ -79,6 +100,7 @@ def aggregate_cells(cells: list[ExtractedCell]) -> list[ExtractedCell]:
             continue
         grouped.setdefault((cell.entity, cell.column), []).append(cell)
 
+    _list_cols = list_columns or set()
     aggregated: list[ExtractedCell] = []
     for (entity, column), group in grouped.items():
         deduped_evidence: list[SourceQuote] = []
@@ -124,7 +146,7 @@ def aggregate_cells(cells: list[ExtractedCell]) -> list[ExtractedCell]:
             evidence=ranked_evidence,
             verified=bool(ranked_evidence) and all(ev.verified for ev in ranked_evidence),
             verification_score=sum(scores) / len(scores) if scores else None,
-            has_conflict=len(unique_values) > 1,
+            has_conflict=(column not in _list_cols) and len(unique_values) > 1,
             num_sources=len(source_urls),
             num_unique_values=len(unique_values),
         ))

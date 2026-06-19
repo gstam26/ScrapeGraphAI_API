@@ -17,7 +17,7 @@ from config import (
     FETCH_BACKEND,
     REQUEST_HEADERS,
 )
-from src.aggregate import aggregate_cells
+from src.aggregate import aggregate_cells, _is_list_column
 from src.extract import extract_cells
 from src.filter import filter_page
 from models import ColumnSpec, Config, ExtractedRow, PageDoc, PipelineInput, PipelineResult, UrlSpec
@@ -263,10 +263,12 @@ def run_pipeline(
             import traceback
             traceback.print_exc()
 
+    list_columns = {c.name for c in request.columns if _is_list_column(c.instruction)}
+
     rows = []
     for entity in all_entities:
         all_cells = cells_by_entity.get(entity, [])
-        final_cells = aggregate_cells(all_cells)
+        final_cells = aggregate_cells(all_cells, list_columns=list_columns)
 
         all_evidence = [e for c in all_cells for e in c.evidence]
         total_claims = len(all_evidence)

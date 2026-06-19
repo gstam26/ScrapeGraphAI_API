@@ -10,6 +10,7 @@ from config import (
     QUALITY_MIN_CHARS,
     QUALITY_MAX_LINK_DENSITY,
     QUALITY_MIN_CONTENT_RATIO,
+    THIN_CONTENT_FALLBACK,
 )
 from models import Config
 
@@ -94,6 +95,14 @@ def content_quality_gate(text: str, html: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _thin_content_gate(text: str) -> tuple[bool, str]:
+    """Minimum-character check for non-local backends (no HTML available for full gate)."""
+    content_chars = len(text.strip())
+    if content_chars < QUALITY_MIN_CHARS:
+        return False, f"thin_content_{content_chars}_chars"
+    return True, ""
+
+
 def _fetch_requests(url: str, cfg: Config) -> str:
     response = requests.get(url, timeout=cfg.request_timeout, headers=cfg.request_headers)
     response.raise_for_status()
@@ -118,6 +127,41 @@ def _fetch_firecrawl(url: str, cfg: Config) -> str:
     app = FirecrawlApp(api_key=cfg.firecrawl_api_key)
     result = app.scrape_url(url, formats=["markdown"])
     return result.markdown or ""
+
+
+def _fetch_firecrawl_with_fallback(url: str, cfg: Config) -> tuple[str, None, FetchProvenance]:
+    """Fetch via Firecrawl; if thin, attempt one Playwright re-render (when enabled)."""
+    text = _fetch_firecrawl(url, cfg)
+    gate_passed, gate_reason = _thin_content_gate(text)
+
+    if gate_passed:
+        return text, None, FetchProvenance(
+            backend="firecrawl", render_fallback=False, gate_passed=True, gate_reason="",
+        )
+
+    if not THIN_CONTENT_FALLBACK:
+        return text, None, FetchProvenance(
+            backend="firecrawl", render_fallback=False, gate_passed=False, gate_reason=gate_reason,
+        )
+
+    print(f"    [thin-content] {gate_reason} — re-rendering with Playwright")
+    try:
+        pw_text = _fetch_playwright(url, cfg)
+        if len(pw_text.strip()) >= len(text.strip()):
+            pw_passed, pw_reason = _thin_content_gate(pw_text)
+            combined = f"{gate_reason}; playwright_fallback: {pw_reason or 'ok'}"
+            return pw_text, None, FetchProvenance(
+                backend="firecrawl", render_fallback=True, gate_passed=pw_passed, gate_reason=combined,
+            )
+        combined = f"{gate_reason}; playwright_also_thin_{len(pw_text.strip())}_chars"
+        return text, None, FetchProvenance(
+            backend="firecrawl", render_fallback=True, gate_passed=False, gate_reason=combined,
+        )
+    except Exception as e:
+        return text, None, FetchProvenance(
+            backend="firecrawl", render_fallback=False, gate_passed=False,
+            gate_reason=f"{gate_reason}; playwright_error={e}",
+        )
 
 
 def _render_page_html(url: str, cfg: Config) -> str:
@@ -211,8 +255,9 @@ def fetch_page_with_provenance(url: str, cfg: Config) -> tuple[str, str | None, 
     """
     Unified fetch entry point returning (text, html_or_None, provenance).
 
-    The 'local' backend runs the quality gate and Playwright fallback.
-    All other backends return trivial provenance (gate_passed=None).
+    The 'local' backend runs the full three-rule quality gate and Playwright fallback.
+    All other backends run a minimum-character thin-content check; Firecrawl also
+    falls back to Playwright on thin content when THIN_CONTENT_FALLBACK is enabled.
     """
     if cfg.acquire_tool == "local":
         return _fetch_local(url, cfg)
@@ -221,8 +266,11 @@ def fetch_page_with_provenance(url: str, cfg: Config) -> tuple[str, str | None, 
         response = requests.get(url, timeout=cfg.request_timeout, headers=cfg.request_headers)
         response.raise_for_status()
         html = response.text
-        return _html_to_text(html), html, FetchProvenance(
-            backend="requests", render_fallback=False, gate_passed=None, gate_reason="",
+        text = _html_to_text(html)
+        gate_passed, gate_reason = _thin_content_gate(text)
+        return text, html, FetchProvenance(
+            backend="requests", render_fallback=False,
+            gate_passed=gate_passed, gate_reason=gate_reason,
         )
 
     if cfg.acquire_tool not in _FETCHERS:
@@ -231,7 +279,12 @@ def fetch_page_with_provenance(url: str, cfg: Config) -> tuple[str, str | None, 
             f"Choose from: {sorted(_VALID_BACKENDS)}"
         )
 
+    if cfg.acquire_tool == "firecrawl":
+        return _fetch_firecrawl_with_fallback(url, cfg)
+
     text = _FETCHERS[cfg.acquire_tool](url, cfg)
+    gate_passed, gate_reason = _thin_content_gate(text)
     return text, None, FetchProvenance(
-        backend=cfg.acquire_tool, render_fallback=False, gate_passed=None, gate_reason="",
+        backend=cfg.acquire_tool, render_fallback=False,
+        gate_passed=gate_passed, gate_reason=gate_reason,
     )

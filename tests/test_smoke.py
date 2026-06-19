@@ -539,7 +539,7 @@ def test_aggregate_list_column_no_conflict():
 
 
 def test_aggregate_single_answer_column_conflict():
-    """A single-answer column with 2 distinct values MUST set has_conflict."""
+    """Two genuinely different real parents MUST set has_conflict."""
     cells = [
         ExtractedCell(
             entity="Oatly",
@@ -552,15 +552,94 @@ def test_aggregate_single_answer_column_conflict():
             entity="Oatly",
             source_url="http://b.com",
             column="Parent company",
-            value="None (not disclosed)",
-            evidence=[SourceQuote(value="None (not disclosed)", quote="no parent listed")],
+            value="Nestlé",
+            evidence=[SourceQuote(value="Nestlé", quote="subsidiary of Nestlé")],
         ),
     ]
-    aggregated = aggregate_cells(cells)   # no list_columns → single-answer default
+    aggregated = aggregate_cells(cells)
     assert len(aggregated) == 1
     assert aggregated[0].num_unique_values == 2
     assert aggregated[0].has_conflict is True
     print("OK test_aggregate_single_answer_column_conflict passed")
+
+
+def test_sentinel_suppressed_when_real_value_exists():
+    """Real value + sentinel → show only real value, no conflict."""
+    cells = [
+        ExtractedCell(
+            entity="Silk",
+            source_url="http://a.com",
+            column="Parent company",
+            value="Danone",
+            evidence=[SourceQuote(value="Danone", quote="owned by Danone", verified=True)],
+        ),
+        ExtractedCell(
+            entity="Silk",
+            source_url="http://b.com",
+            column="Parent company",
+            value="None (not disclosed on site)",
+            evidence=[SourceQuote(value="None (not disclosed on site)", quote="no parent found")],
+        ),
+    ]
+    aggregated = aggregate_cells(cells)
+    assert len(aggregated) == 1
+    agg = aggregated[0]
+    assert agg.has_conflict is False
+    assert agg.num_unique_values == 1          # only "Danone" counts
+    assert agg.value == ["Danone"]             # sentinel excluded from display
+    assert any(ev.value == "Danone" for ev in agg.evidence)
+    print("OK test_sentinel_suppressed_when_real_value_exists passed")
+
+
+def test_genuine_conflict_two_real_parents():
+    """Two distinct real parents → conflict flagged, sentinel irrelevant."""
+    cells = [
+        ExtractedCell(
+            entity="Silk",
+            source_url="http://a.com",
+            column="Parent company",
+            value="Danone",
+            evidence=[SourceQuote(value="Danone", quote="owned by Danone", verified=True)],
+        ),
+        ExtractedCell(
+            entity="Silk",
+            source_url="http://b.com",
+            column="Parent company",
+            value="Nestlé",
+            evidence=[SourceQuote(value="Nestlé", quote="Nestlé subsidiary")],
+        ),
+    ]
+    aggregated = aggregate_cells(cells)
+    assert aggregated[0].has_conflict is True
+    assert aggregated[0].num_unique_values == 2
+    print("OK test_genuine_conflict_two_real_parents passed")
+
+
+def test_sentinel_only_shows_sentinel_no_conflict():
+    """All pages return sentinel → display sentinel, no conflict."""
+    cells = [
+        ExtractedCell(
+            entity="Califia",
+            source_url="http://a.com",
+            column="Parent company",
+            value="None (not disclosed on site)",
+            evidence=[SourceQuote(value="None (not disclosed on site)", quote="no parent")],
+        ),
+        ExtractedCell(
+            entity="Califia",
+            source_url="http://b.com",
+            column="Parent company",
+            value="None (not disclosed on site)",
+            evidence=[SourceQuote(value="None (not disclosed on site)", quote="not found")],
+        ),
+    ]
+    aggregated = aggregate_cells(cells)
+    assert len(aggregated) == 1
+    agg = aggregated[0]
+    assert agg.has_conflict is False
+    assert agg.num_unique_values == 0          # no real values
+    assert agg.value == ["None (not disclosed on site)"]
+    print("OK test_sentinel_only_shows_sentinel_no_conflict passed")
 
 
 def test_thin_content_gate_below_and_above_threshold():
@@ -675,6 +754,9 @@ if __name__ == "__main__":
     test_is_list_column_production_instructions()
     test_aggregate_list_column_no_conflict()
     test_aggregate_single_answer_column_conflict()
+    test_sentinel_suppressed_when_real_value_exists()
+    test_genuine_conflict_two_real_parents()
+    test_sentinel_only_shows_sentinel_no_conflict()
     test_thin_content_gate_below_and_above_threshold()
     test_firecrawl_good_content_no_fallback(None)
     test_firecrawl_thin_triggers_playwright_fallback(None)

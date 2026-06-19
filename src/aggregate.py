@@ -56,6 +56,13 @@ def _evidence_from_cell_value(cell: ExtractedCell) -> list[SourceQuote]:
 
 _LIST_KEYWORDS = frozenset({"comma-separated", "deduplicated", "list", "for each"})
 
+_NULL_SENTINEL_PREFIX = "none (not disclosed"
+
+
+def _is_null_sentinel(normalised: str) -> bool:
+    """True for 'None (not disclosed…)' values — explicit no-data markers, not competing answers."""
+    return normalised.startswith(_NULL_SENTINEL_PREFIX)
+
 
 def _is_list_column(instruction: str | None) -> bool:
     """Return True if the instruction signals a list-type (multi-value) answer."""
@@ -104,9 +111,10 @@ def aggregate_cells(
     _list_cols = list_columns or set()
     aggregated: list[ExtractedCell] = []
     for (entity, column), group in grouped.items():
-        deduped_evidence: list[SourceQuote] = []
+        real_deduped: list[SourceQuote] = []      # genuine values
+        sentinel_deduped: list[SourceQuote] = []  # "None (not disclosed…)" markers
         seen_evidence: set[tuple[str, str, str]] = set()
-        unique_values: list[Any] = []
+        unique_values: list[Any] = []   # real values only — used for conflict detection
         seen_values: set[str] = set()
         source_urls: set[str] = set()
 
@@ -125,11 +133,25 @@ def aggregate_cells(
                 if evidence_key in seen_evidence:
                     continue
                 seen_evidence.add(evidence_key)
-                deduped_evidence.append(copied)
 
-                if value_key not in seen_values:
-                    seen_values.add(value_key)
-                    unique_values.append(copied.value)
+                if _is_null_sentinel(value_key):
+                    # Sentinel: remember for fallback display but never count toward conflict.
+                    sentinel_deduped.append(copied)
+                else:
+                    real_deduped.append(copied)
+                    if value_key not in seen_values:
+                        seen_values.add(value_key)
+                        unique_values.append(copied.value)
+
+        # When real values exist, suppress sentinels from evidence and display so the
+        # Matrix shows only the real answer. When only sentinels exist, preserve them
+        # so the cell shows "None (not disclosed on site)" rather than "No data found".
+        if real_deduped:
+            deduped_evidence = real_deduped
+            display_values = unique_values
+        else:
+            deduped_evidence = sentinel_deduped
+            display_values = [sentinel_deduped[0].value] if sentinel_deduped else []
 
         ranked_evidence = _rank_evidence(deduped_evidence)
         scores = [
@@ -143,7 +165,7 @@ def aggregate_cells(
             source_url="; ".join(sorted_urls),
             source_urls=sorted_urls,
             column=column,
-            value=unique_values,
+            value=display_values,
             evidence=ranked_evidence,
             verified=bool(ranked_evidence) and all(ev.verified for ev in ranked_evidence),
             verification_score=sum(scores) / len(scores) if scores else None,

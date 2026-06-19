@@ -3,6 +3,7 @@ import re
 
 from config import (
     FILTER_CHUNK_SIZE,
+    FILTER_MODE,
     FILTER_THRESHOLD,
     OLLAMA_DOC_PREFIX,
     OLLAMA_QUERY_PREFIX,
@@ -138,23 +139,30 @@ def filter_page(
         scores = score_page_columns(page.text, all_columns)
         page_text_lower = page.text.lower()
 
-        relevant_columns = set()
+        # Step 1: compute scores and keyword gate for every column.
         col_info: dict[str, tuple[float, bool]] = {}
         for name, max_score in scores.items():
             kw_gate = any(kw in page_text_lower for kw in _keywords(name))
             col_info[name] = (max_score, kw_gate)
-            if max_score >= FILTER_THRESHOLD:
-                relevant_columns.add(name)
-            elif kw_gate:
-                relevant_columns.add(name)
 
-        fallback = not relevant_columns
-        if fallback:
+        # Step 2: decide which columns are relevant based on mode.
+        if FILTER_MODE == "passthrough":
             relevant_columns = full_set
+            fallback = False
+        else:
+            relevant_columns = set()
+            for name, (max_score, kw_gate) in col_info.items():
+                if max_score >= FILTER_THRESHOLD or kw_gate:
+                    relevant_columns.add(name)
+            fallback = not relevant_columns
+            if fallback:
+                relevant_columns = full_set
 
         if diag is not None:
             for name, (emb_score, kw_gate) in col_info.items():
-                if fallback:
+                if FILTER_MODE == "passthrough":
+                    reason = "passthrough"
+                elif fallback:
                     reason = "fallback_all"
                 elif emb_score >= FILTER_THRESHOLD:
                     reason = "embedding_threshold"

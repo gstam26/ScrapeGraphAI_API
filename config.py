@@ -143,6 +143,14 @@ PAGE_TYPE_ALPHA = 0.4
 # FILTER
 # ============================================================
 
+# "threshold" (default): embedding cosine + keyword gate as normal.
+# "passthrough": every question is routed to every page regardless of score.
+#   Scores are still computed and written to the Filter Log so the data
+#   remains available for analysis — the mode only suppresses the routing
+#   decision. Use this for extraction evaluations over hand-picked GT URLs
+#   where every page is known-relevant and filtering can only lose recall.
+FILTER_MODE = "threshold"
+
 # Minimum cosine similarity between page text and a question for that column
 # to be included in extraction. 0.35 keeps clearly irrelevant pages out while
 # being lenient enough not to drop borderline-relevant content.

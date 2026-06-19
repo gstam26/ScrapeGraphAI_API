@@ -56,9 +56,14 @@ Create a `.env` file in the project root:
 
 ```env
 SGAI_API_KEY=your_scrapegraphai_api_key
+CLAUDE_API_KEY=your_claude_api_key
+EXTRACT_TOOL=claude
 ```
 
-The full extraction run requires `SGAI_API_KEY` because `EXTRACT_TOOL` defaults to `sgai`.
+Set `EXTRACT_TOOL` to the backend you want to use. Supported extraction backends are
+`sgai`, `llmapi`, `azure`, and `claude`. Claude uses `CLAUDE_API_KEY` and defaults to
+`CLAUDE_MODEL=claude-3-5-haiku-latest`. It calls Anthropic's HTTPS API directly with
+the existing `httpx` dependency, so the Anthropic Python SDK is not required.
 
 ## Usage
 
@@ -197,7 +202,7 @@ Default runtime settings live in `config.py`.
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `ACQUIRE_TOOL` | `"firecrawl"` | Fetcher backend: `requests`, `sgai`, `firecrawl`, or `playwright`. |
-| `EXTRACT_TOOL` | `"sgai"` | Extractor backend. |
+| `EXTRACT_TOOL` | `"azure"` | Extractor backend: `sgai`, `llmapi`, `azure`, or `claude`. Can be set from `.env`. |
 | `VERIFY_TOOL` | `"rapidfuzz"` | Quote verification backend. |
 | `CACHE_DIR` | `"cache"` | Directory for cached page text. |
 | `OUTPUT_DIR` | `"outputs"` | Directory for generated Excel output. |

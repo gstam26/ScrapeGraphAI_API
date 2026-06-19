@@ -13,6 +13,9 @@ AZURE_API_KEY = os.getenv("AZURE_API_KEY")
 AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT", "https://thebeastgpu.openai.azure.com/openai/v1")
 AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT", "gpt-4.1-mini")
 
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-3-5-haiku-latest")
+
 # ============================================================
 # TOOLS
 # ============================================================
@@ -22,7 +25,7 @@ AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT", "gpt-4.1-mini")
 FETCH_BACKEND = "firecrawl"
 
 ACQUIRE_TOOL = FETCH_BACKEND
-EXTRACT_TOOL = "azure"
+EXTRACT_TOOL = os.getenv("EXTRACT_TOOL", "azure")
 VERIFY_TOOL = "rapidfuzz"
 
 # ============================================================

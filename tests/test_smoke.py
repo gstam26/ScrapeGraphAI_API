@@ -405,6 +405,34 @@ def test_extract_cells_only_returns_requested_entities():
     print("OK test_extract_cells_only_returns_requested_entities passed")
 
 
+def test_extract_cells_supports_claude_backend():
+    columns = [ColumnSpec(name="Question")]
+    page = PageDoc(url="http://example.com", text="Oatly claim.")
+    original = extract._extract_with_claude
+
+    def fake_extract(page, columns, entities):
+        return {
+            "Oatly": {"Question": {"value": "Oatly claim", "quote": "Oatly claim"}},
+        }, {"extraction_time_ms": 1, "timed_out": False, "retry_count": 0}
+
+    try:
+        extract._extract_with_claude = fake_extract
+        cells = extract.extract_cells(
+            page,
+            columns,
+            entities=["Oatly"],
+            cfg=Config(extract_tool="claude"),
+            use_cache=False,
+        )
+    finally:
+        extract._extract_with_claude = original
+
+    assert len(cells) == 1
+    assert cells[0].entity == "Oatly"
+    assert cells[0].value == "Oatly claim"
+    print("OK test_extract_cells_supports_claude_backend passed")
+
+
 def test_backward_compatibility_without_entities_sheet():
     with tempfile.TemporaryDirectory() as tmpdir:
         path = os.path.join(tmpdir, "legacy.xlsx")
@@ -746,6 +774,7 @@ if __name__ == "__main__":
     test_sample_input_populates_entities_urls_questions_and_config()
     test_blank_entities_url_gets_all_entities_and_specific_url_stays_scoped()
     test_extract_cells_only_returns_requested_entities()
+    test_extract_cells_supports_claude_backend()
     test_backward_compatibility_without_entities_sheet()
     test_main_only_two_terminal_prompts()
     test_crawl_terms_include_questions_and_instructions_only()

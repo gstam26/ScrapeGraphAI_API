@@ -1,5 +1,6 @@
 from typing import Any
 import hashlib
+import httpx
 import json
 import os
 import time
@@ -16,6 +17,8 @@ from config import (
     AZURE_API_KEY,
     AZURE_DEPLOYMENT,
     AZURE_ENDPOINT,
+    CLAUDE_API_KEY,
+    CLAUDE_MODEL,
     EXTRACT_CHUNK_OVERLAP,
     EXTRACT_CHUNK_SIZE,
     EXTRACT_CACHE_DIR,
@@ -80,6 +83,16 @@ Rules:
     if page_text:
         return base + "\nPage content:\n'''\n" + page_text + "\n'''\n"
     return base
+
+
+def _strip_json_fence(raw: str) -> str:
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.split("```", 2)[1]
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.rsplit("```", 1)[0].strip()
+    return text
 
 
 def _extract_with_sgai(
@@ -253,12 +266,7 @@ def _extract_with_llmapi(
         duration = time.time() - t0
         print(f"      -> LLMAPI call completed in {duration:.2f}s")
 
-        text = raw.strip()
-        if text.startswith("```"):
-            text = text.split("```", 2)[1]
-            if text.startswith("json"):
-                text = text[4:]
-            text = text.rsplit("```", 1)[0].strip()
+        text = _strip_json_fence(raw)
 
         json_data = json.loads(text)
         if not isinstance(json_data, dict):
@@ -320,12 +328,7 @@ def _extract_with_azure(
         print(f"      -> Azure call completed in {duration:.2f}s")
 
         raw = completion.choices[0].message.content or ""
-        text = raw.strip()
-        if text.startswith("```"):
-            text = text.split("```", 2)[1]
-            if text.startswith("json"):
-                text = text[4:]
-            text = text.rsplit("```", 1)[0].strip()
+        text = _strip_json_fence(raw)
 
         json_data = json.loads(text)
         if not isinstance(json_data, dict):
@@ -337,6 +340,81 @@ def _extract_with_azure(
     except Exception as e:
         duration = time.time() - t0
         print(f"      X Azure extraction error after {duration:.2f}s: {e}")
+        return {}, make_timing()
+
+
+def _extract_with_claude(
+    page: PageDoc,
+    columns: list[ColumnSpec],
+    entities: list[str],
+) -> tuple[dict[str, Any], dict]:
+    """Extract fields using Anthropic Claude via the Messages HTTP API."""
+    if not CLAUDE_API_KEY:
+        raise RuntimeError("Missing CLAUDE_API_KEY in .env")
+
+    page_text = page.text if getattr(page, "text", None) else None
+    prompt = _build_prompt(columns, entities, page_text)
+
+    print(f"      -> Claude extracting: {page.url}")
+    t0 = time.time()
+    timed_out = False
+
+    def make_timing():
+        return {
+            "extraction_time_ms": int((time.time() - t0) * 1000),
+            "timed_out": timed_out,
+            "retry_count": 0,
+        }
+
+    try:
+        payload = {
+            "model": CLAUDE_MODEL,
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        headers = {
+            "x-api-key": CLAUDE_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        try:
+            response = httpx.post(
+                "https://api.anthropic.com/v1/messages",
+                headers=headers,
+                json=payload,
+                timeout=EXTRACT_TIMEOUT,
+            )
+            response.raise_for_status()
+        except Exception as e:
+            if "timeout" in str(e).lower() or "timed out" in str(e).lower():
+                timed_out = True
+                duration = time.time() - t0
+                print(f"      ! Claude timed out after {duration:.2f}s")
+                return {}, make_timing()
+            duration = time.time() - t0
+            print(f"      X Claude call error after {duration:.2f}s: {e}")
+            return {}, make_timing()
+
+        duration = time.time() - t0
+        print(f"      -> Claude call completed in {duration:.2f}s")
+
+        response_data = response.json()
+        raw = "".join(
+            block.get("text", "")
+            for block in response_data.get("content", [])
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+        text = _strip_json_fence(raw)
+        json_data = json.loads(text)
+        if not isinstance(json_data, dict):
+            print(f"      ! Claude response is not a dict: {type(json_data)}")
+            return {}, make_timing()
+
+        return json_data, make_timing()
+
+    except Exception as e:
+        duration = time.time() - t0
+        print(f"      X Claude extraction error after {duration:.2f}s: {e}")
         return {}, make_timing()
 
 
@@ -579,6 +657,8 @@ def extract_cells(
             chunk_data, timing = _extract_with_llmapi(chunk_page, columns, entities)
         elif runtime_cfg.extract_tool == "azure":
             chunk_data, timing = _extract_with_azure(chunk_page, columns, entities)
+        elif runtime_cfg.extract_tool == "claude":
+            chunk_data, timing = _extract_with_claude(chunk_page, columns, entities)
         else:
             print(f"      X Unknown EXTRACT_TOOL: {runtime_cfg.extract_tool}")
             return {}, {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
@@ -586,7 +666,7 @@ def extract_cells(
             _write_extract_cache(cache_key, chunk_data)
         return chunk_data, timing
 
-    if runtime_cfg.extract_tool not in {"sgai", "llmapi", "azure"}:
+    if runtime_cfg.extract_tool not in {"sgai", "llmapi", "azure", "claude"}:
         print(f"      X Unknown EXTRACT_TOOL: {runtime_cfg.extract_tool}")
         return cells
 

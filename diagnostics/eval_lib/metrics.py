@@ -42,6 +42,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 
 # --- repo-root bootstrap -----------------------------------------------------
@@ -275,7 +276,7 @@ def _cluster_reason(
     if excl_cat == "inclusion_bar":
         return (
             "out_of_scope_fp",
-            "excluded/neutral",
+            "excluded/out_of_scope_fp",
             "matches Excluded category inclusion_bar; counted as out-of-scope false positive",
             None,
         )
@@ -299,7 +300,7 @@ def _cluster_reason(
     if has_matched_real_answer and all(_is_null_like_ai(c) for c in cluster):
         return (
             "dynamic_neutral",
-            "excluded/neutral",
+            "excluded/null_neutral",
             "unmatched null-like AI answer ignored because a real answer is already matched in this cell",
             best,
         )
@@ -596,10 +597,25 @@ def _selfcheck(gt_path: str, pipe_path: str) -> None:
             print(f"      quote={row.quote[:180]!r}")
         print(f"      reason={row.reason}")
 
-    tot_gap = sum(1 for row in audit_rows if row.category == "possible_gt_gap (needs review)")
-    tot_h = sum(1 for row in audit_rows if row.category == "hallucination")
-    print(f"\n  AI-ONLY TRIAGE: {tot_gap} possible_gt_gap (needs review) vs "
-          f"{tot_h} unsupported hallucination candidate(s).")
+    official_ai_only = {
+        "possible_gt_gap (needs review)": sum(c.possible_gt_gap for c in report.cells),
+        "hallucination": sum(c.hallucinations for c in report.cells),
+        "redundant": sum(c.redundant_restatements for c in report.cells),
+        "excluded/out_of_scope_fp": sum(c.out_of_scope_fp for c in report.cells),
+        "excluded/neutral": sum(c.dynamic_neutral for c in report.cells),
+    }
+    displayed_rows = Counter(row.category for row in audit_rows)
+    print("\n  AI-ONLY TRIAGE SUMMARY")
+    print("  Official metric counts are deduped AI-only clusters; displayed audit rows are "
+          "raw claim/provenance rows and may be larger.")
+    print("  Official clusters used in metrics:")
+    for label, count in official_ai_only.items():
+        print(f"    - {label}: {count}")
+    print("  Displayed audit rows:")
+    for label, count in sorted(displayed_rows.items()):
+        print(f"    - {label}: {count}")
+    print("  excluded/neutral rows are not counted as hallucinations; "
+          "excluded/out_of_scope_fp rows remain false positives.")
     print("  NOTE: sub-page localisation (char_span) omitted - absent from Excel Provenance.")
 
 

@@ -114,5 +114,5 @@ def test_ai_only_audit_reports_null_sentinel_as_neutral_hypothesis():
     )
 
     assert len(rows) == 1
-    assert rows[0].category == "excluded/neutral"
+    assert rows[0].category == "excluded/null_neutral"
     assert "null-like AI answer" in rows[0].reason

@@ -18,6 +18,9 @@ diagnostics/fetch_eval/
 *.xlsx
 *.csv
 
+# Eval fixtures — committed real data for reproducible scoring
+!diagnostics/eval_lib/fixtures/*.xlsx
+
 # OS
 .DS_Store
 Thumbs.db

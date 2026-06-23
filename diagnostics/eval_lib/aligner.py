@@ -45,6 +45,7 @@ Run directly to review alignment on real data:
 from __future__ import annotations
 
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 
@@ -87,6 +88,18 @@ MIN_TOKENS_FOR_COSINE = 10    # GT claims shorter than this use token_sort_ratio
 # name) back onto the GT canonical question key.
 QUESTION_TO_GT_SHEET = {v: k for k, v in GT_SHEET_TO_QUESTION.items()}
 
+# Single-answer name containment (Parent company). Strip ONLY unambiguous legal
+# forms — deliberately NOT geographic qualifiers ("usa", "north america") nor
+# "group"/"holdings"/"the", which can distinguish genuinely different entities
+# (e.g. "Hain Celestial Group"). Token-subset containment then matches a name to a
+# more/less specific form of itself ("Danone North America" vs "Danone") while
+# never collapsing different regions ("Danone USA" vs "Danone Canada").
+_LEGAL_PHRASES = ("public benefit corporation",)        # multi-word, removed first
+_LEGAL_TOKENS = frozenset({
+    "inc", "incorporated", "corp", "corporation", "co", "company",
+    "llc", "ltd", "limited", "plc", "pbc",
+})
+
 
 # --- result model ------------------------------------------------------------
 @dataclass
@@ -94,7 +107,7 @@ class PairScore:
     claim_cosine: float          # Signal A (cosine, or token_sort_ratio/100 for short claims)
     quote_overlap: float         # Signal B (token-set F1)
     combined_score: float        # weighted sum, clamped to [0, 1]
-    method: str                  # "cosine" | "fuzz" | "fuzz(fallback)"
+    method: str                  # cosine | fuzz | fuzz(fallback) | *+noquote | containment
 
 
 @dataclass
@@ -195,6 +208,64 @@ def _pair_score(gt: GTClaim, ai: AIClaim, emb: dict[str, list[float]]) -> PairSc
                      combined_score=round(_clamp01(combined), 4), method=method)
 
 
+# --- Problem 1: list-of-short-items splitting (e.g. MilkTypes) ----------------
+def _is_short_list_cell(gt_real: list[GTClaim]) -> bool:
+    """Milk-types-style cell: a list question whose GT items are predominantly
+    short (single words). Distinguishes MilkTypes from Sustainability, whose GT
+    items are full sentences and stay on the cosine path untouched."""
+    if not gt_real:
+        return False
+    short = sum(1 for g in gt_real if _is_short(g.claim))
+    return short > len(gt_real) / 2
+
+
+def _split_short_list_ai(ai_real: list[AIClaim]) -> list[AIClaim]:
+    """Split comma-joined AI values into individual items, each a synthetic AIClaim
+    inheriting its parent's provenance. Deduplicate items across all the cell's AI
+    claims by normalised string, keeping the best provenance (verified, then
+    exact > fuzzy > none) so repeated lists don't inflate the precision denominator."""
+    rank = {"exact": 2, "fuzzy": 1, "none": 0}
+    best: dict[str, AIClaim] = {}
+    for a in ai_real:
+        for raw in str(a.value).split(","):
+            item = raw.strip()
+            if not item:
+                continue
+            key = item.lower()
+            syn = AIClaim(
+                entity=a.entity, entity_norm=a.entity_norm, question=a.question,
+                value=item, quote=a.quote, source_url=a.source_url,
+                verified=a.verified, match_type=a.match_type,
+                verification_score=a.verification_score, semantic_score=a.semantic_score,
+                confidence_score=a.confidence_score, source_depth=a.source_depth,
+                is_null=False, char_span=a.char_span,
+            )
+            cur = best.get(key)
+            if cur is None or (syn.verified, rank.get(syn.match_type, 0)) > (
+                    cur.verified, rank.get(cur.match_type, 0)):
+                best[key] = syn
+    return list(best.values())
+
+
+# --- Problem 2: single-answer name containment (e.g. Parent company) ----------
+def _core_tokens(value: str) -> set[str]:
+    """Significant name tokens: lowercased, punctuation-stripped, legal forms removed."""
+    s = re.sub(r"[^\w\s]", " ", str(value).lower())
+    for phrase in _LEGAL_PHRASES:
+        s = s.replace(phrase, " ")
+    return {t for t in s.split() if len(t) > 1 and t not in _LEGAL_TOKENS}
+
+
+def _name_contained(a: str, b: str) -> bool:
+    """True when one name's core tokens are a full subset of the other's — a name
+    matched to a more/less specific form of itself, without collapsing different
+    regions (different geographic tokens break the subset relation)."""
+    ta, tb = _core_tokens(a), _core_tokens(b)
+    if not ta or not tb:
+        return False
+    return ta <= tb or tb <= ta
+
+
 # --- cell assembly -----------------------------------------------------------
 def _assemble_cells(
     gt: GroundTruth,
@@ -255,7 +326,11 @@ def _gather_embeddings(cells: dict[tuple[str, str], dict]) -> dict[str, list[flo
 
 
 # --- core matching -----------------------------------------------------------
-def _match_cell(slot: dict, emb: dict[str, list[float]]) -> tuple[list[GTAlignment], list[AIOnly]]:
+def _match_cell(
+    slot: dict,
+    emb: dict[str, list[float]],
+    is_list: bool,
+) -> tuple[list[GTAlignment], list[AIOnly]]:
     gts: list[GTClaim] = slot["gt"]
     ais: list[AIClaim] = slot["ai"]
 
@@ -268,9 +343,21 @@ def _match_cell(slot: dict, emb: dict[str, list[float]]) -> tuple[list[GTAlignme
     alignments: list[GTAlignment] = []
     used_ai_real: set[int] = set()
 
+    # Problem 1: in milk-types-style cells, split comma-joined AI values into items.
+    if is_list and _is_short_list_cell(gt_real):
+        ai_real = _split_short_list_ai(ai_real)
+
     # ---- real-claim greedy group matching ----
-    # Pairwise scores S[i][j] for gt_real[i] x ai_real[j].
-    S = [[_pair_score(g, a, emb) for a in ai_real] for g in gt_real]
+    # Pairwise scores S[i][j] for gt_real[i] x ai_real[j]. Problem 2: for
+    # single-answer cells, a token-subset name containment is an automatic match.
+    def _score(g: GTClaim, a: AIClaim) -> PairScore:
+        if not is_list and _name_contained(g.claim, str(a.value)):
+            return PairScore(claim_cosine=1.0,
+                             quote_overlap=round(_token_f1(g.verbatim_quote, a.quote), 4),
+                             combined_score=1.0, method="containment")
+        return _pair_score(g, a, emb)
+
+    S = [[_score(g, a) for a in ai_real] for g in gt_real]
 
     # GT groups: claims sharing a non-empty quote_id merge; others are singletons.
     groups: list[list[int]] = []
@@ -381,8 +468,8 @@ def align(gt: GroundTruth, pipe: PipelineOutput) -> AlignmentResult:
 
     results: list[CellAlignment] = []
     for (entity_norm, q), slot in cells.items():
-        alignments, ai_only = _match_cell(slot, emb)
         is_list = any(g.is_list for g in slot["gt"]) or (q in {"Sustainability", "MilkTypes"})
+        alignments, ai_only = _match_cell(slot, emb, is_list)
         results.append(CellAlignment(
             entity=slot["label"],
             entity_norm=entity_norm,

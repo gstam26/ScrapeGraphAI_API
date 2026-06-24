@@ -12,8 +12,8 @@
 **Options considered:**
 
 1. Add agentic LLM keep/reject filter in Verify
-1. Sharpen the extraction prompt’s inclusion criteria (already done)
-1. Leave as-is and let the deterministic rapidfuzz baseline stand
+2. Sharpen the extraction prompt’s inclusion criteria (already done)
+3. Leave as-is and let the deterministic rapidfuzz baseline stand
 
 **Decision:** Rejected option 1. Do not build now.
 
@@ -30,8 +30,8 @@
 **Options considered:**
 
 1. Strict only: every unmatched AI claim = false positive (penalises pipeline for repeating true facts)
-1. Distinct only: drop redundant restatements from denominator (hides redundancy)
-1. Report both: strict precision AND distinct precision, with the gap quantifying pipeline redundancy
+2. Distinct only: drop redundant restatements from denominator (hides redundancy)
+3. Report both: strict precision AND distinct precision, with the gap quantifying pipeline redundancy
 
 **Decision:** Report both.
 
@@ -46,8 +46,8 @@
 **Options considered:**
 
 1. Keep the existing logic, accept the noise
-1. Require ≥2 VERIFIED values for a conflict (Claude Code’s Option V)
-1. Gate conflict detection on question type: list questions never conflict, single-answer questions can
+2. Require ≥2 VERIFIED values for a conflict (Claude Code’s Option V)
+3. Gate conflict detection on question type: list questions never conflict, single-answer questions can
 
 **Decision:** Option 3.
 
@@ -62,8 +62,8 @@
 **Options considered:**
 
 1. Strip the sentinel at aggregation time only
-1. Strip it at evaluation time only
-1. Define it as a null sentinel once, enforce everywhere (aggregate.py, aligner.py, metrics.py)
+2. Strip it at evaluation time only
+3. Define it as a null sentinel once, enforce everywhere (aggregate.py, aligner.py, metrics.py)
 
 **Decision:** Option 3 — `_is_null_sentinel()` as a shared function, applied consistently.
 
@@ -78,8 +78,8 @@
 **Options considered:**
 
 1. Hungarian bipartite matching (strict 1:1, optimal assignment)
-1. Unrestricted GT-centric matching (each GT claim independently picks its best AI candidate — one AI claim can credit N GT claims)
-1. Greedy 1:1 with a specific exception for GT rows sharing a quote_id
+2. Unrestricted GT-centric matching (each GT claim independently picks its best AI candidate — one AI claim can credit N GT claims)
+3. Greedy 1:1 with a specific exception for GT rows sharing a quote_id
 
 **Decision:** Option 3.
 
@@ -94,8 +94,8 @@
 **Options considered:**
 
 1. Lower FILTER_THRESHOLD to ~0.45 to recover the suppressed pages
-1. Add a passthrough mode that bypasses filtering entirely for the evaluation
-1. Accept the losses as legitimate filter decisions and score around them
+2. Add a passthrough mode that bypasses filtering entirely for the evaluation
+3. Accept the losses as legitimate filter decisions and score around them
 
 **Decision:** Option 2 — `FILTER_MODE = "passthrough"` for the extraction evaluation.
 
@@ -110,8 +110,8 @@
 **Options considered:**
 
 1. Leave as-is (aggregate stays dead, Matrix built from raw cells)
-1. Switch all sheets to aggregated cells
-1. Split by purpose: Matrix reads aggregated, Provenance stays granular on raw cells
+2. Switch all sheets to aggregated cells
+3. Split by purpose: Matrix reads aggregated, Provenance stays granular on raw cells
 
 **Decision:** Option 3.
 
@@ -126,8 +126,8 @@
 **Options considered:**
 
 1. Fix at parse time: split list-quotes into separate SourceQuotes, detect and truncate blobs
-1. Fix at prompt level: explicitly forbid list-quotes and multi-sentence strings
-1. Fix at the model level: switch from Azure gpt-4.1-mini (which ignores instructions) to GPT-5.5
+2. Fix at prompt level: explicitly forbid list-quotes and multi-sentence strings
+3. Fix at the model level: switch from Azure gpt-4.1-mini (which ignores instructions) to GPT-5.5
 
 **Decision:** Option 2 as the immediate fix, Option 3 as the durable fix.
 
@@ -142,8 +142,8 @@
 **Options considered:**
 
 1. Raise the truncation limit (e.g. to 30,000 chars, the model’s context limit)
-1. Chunk the page and extract from each chunk independently, then merge
-1. Use a summarisation pre-pass to compress the page before extraction
+2. Chunk the page and extract from each chunk independently, then merge
+3. Use a summarisation pre-pass to compress the page before extraction
 
 **Decision:** Option 2 — EXTRACT_CHUNK_SIZE=8000, EXTRACT_CHUNK_OVERLAP=200.
 
@@ -158,8 +158,8 @@
 **Options considered:**
 
 1. Keep 0.35 as a safety net (accept that filtering does almost nothing for broad questions)
-1. Raise to 0.55 to create real separation, accept some filtering risk
-1. Use per-column thresholds
+2. Raise to 0.55 to create real separation, accept some filtering risk
+3. Use per-column thresholds
 
 **Decision:** 0.55, with the passthrough mode as a safety valve for evaluation runs.
 
@@ -174,8 +174,8 @@
 **Options considered:**
 
 1. Keep page-level embedding, raise threshold more aggressively
-1. Embed full page (no truncation)
-1. Chunk the page (~1000 chars), embed all chunks, take max cosine per question
+2. Embed full page (no truncation)
+3. Chunk the page (~1000 chars), embed all chunks, take max cosine per question
 
 **Decision:** Option 3 — FILTER_CHUNK_SIZE=1000, capped at 100 chunks per page.
 
@@ -190,8 +190,8 @@
 **Options considered:**
 
 1. Rely on embedding alone, accept imperfect separation
-1. Add a keyword gate: if question keywords appear in page text, route regardless of embedding score
-1. Replace embedding with keyword matching entirely
+2. Add a keyword gate: if question keywords appear in page text, route regardless of embedding score
+3. Replace embedding with keyword matching entirely
 
 **Decision:** Option 2 — OR logic: relevant if (max_chunk_score ≥ threshold) OR (question keywords in page text).
 
@@ -226,8 +226,8 @@
 **Options considered:**
 
 1. Flat swap to domcontentloaded
-1. Timeout fallback: try networkidle with short timeout, on timeout retry with domcontentloaded
-1. Different wait strategy: `load` event (intermediate between the two)
+2. Timeout fallback: try networkidle with short timeout, on timeout retry with domcontentloaded
+3. Different wait strategy: `load` event (intermediate between the two)
 
 **Decision:** Option 1 — flat swap to domcontentloaded + `page.wait_for_timeout(2000)` fixed delay, timeout reduced from 30s to 15s.
 
@@ -242,8 +242,8 @@
 **Options considered:**
 
 1. Keep blended query, lower threshold
-1. Per-question embedding, take max cosine as final score (remove entities)
-1. Per-question embedding, take max cosine (keep entities)
+2. Per-question embedding, take max cosine as final score (remove entities)
+3. Per-question embedding, take max cosine (keep entities)
 
 **Decision:** Option 2 — strip entities entirely, embed each question separately, take max cosine.
 
@@ -260,9 +260,9 @@
 **Options considered:**
 
 1. URL pattern blocklist (TRANSACTIONAL path segments → penalty)
-1. LLM-as-router (one Claude call per entry page to classify all links)
-1. Embedding-based page-type signal using reference descriptions
-1. Path depth penalty heuristic
+2. LLM-as-router (one Claude call per entry page to classify all links)
+3. Embedding-based page-type signal using reference descriptions
+4. Path depth penalty heuristic
 
 **Decision:** Option 3 — `type_score = info_score - trans_score`, applied as `final_score = topic_score * (1 + PAGE_TYPE_ALPHA * type_score)`.
 
@@ -285,8 +285,8 @@
 **Options considered:**
 
 1. Change Trafilatura to `include_links=True` to preserve markdown links
-1. Walk up the DOM tree to find a better block-level parent than the immediate parent
-1. Re-fetch HTML separately just for context extraction
+2. Walk up the DOM tree to find a better block-level parent than the immediate parent
+3. Re-fetch HTML separately just for context extraction
 
 **Decision:** Option 1 — single flag change.
 
@@ -311,8 +311,8 @@
 **Options considered:**
 
 1. Keep SGAI combined call as the primary pipeline
-1. Save SGAI’s raw content before extraction (if available)
-1. Separate fetch and extract into distinct layers with different tools
+2. Save SGAI’s raw content before extraction (if available)
+3. Separate fetch and extract into distinct layers with different tools
 
 **Decision:** Option 3 — full layer separation with cached markdown between Acquire and Extract.
 
@@ -327,8 +327,8 @@
 **Options considered:**
 
 1. Filter can exclude pages (set relevant_columns = empty → page skipped entirely)
-1. Filter only routes: if nothing clears threshold, fall back to all columns
-1. Filter is a pure passthrough (mark everything relevant)
+2. Filter only routes: if nothing clears threshold, fall back to all columns
+3. Filter is a pure passthrough (mark everything relevant)
 
 **Decision:** Option 2 — Filter routes but never excludes. If no question clears either the embedding gate or keyword gate, all questions are marked relevant.
 
@@ -343,8 +343,8 @@
 **Options considered:**
 
 1. Request IT exception to allow HuggingFace downloads
-1. Bundle the sentence-transformer model files in the repo
-1. Use the already-running internal Ollama server
+2. Bundle the sentence-transformer model files in the repo
+3. Use the already-running internal Ollama server
 
 **Decision:** Option 3 — nomic-embed-text via Ollama at `http://10.99.96.1:11434` (768-dim vectors).
 

@@ -395,18 +395,31 @@ def _match_cell(
             ai = ai_real[j]
             rep_i = max(members, key=lambda i: S[i][j].combined_score)
             rep_score = S[rep_i][j].combined_score
-            verdict = _band(rep_score)
             for i in members:
+                own_score = S[i][j].combined_score
+                # Each member's verdict derives from its OWN score only — same
+                # logic as non-group claims. The group shares the AI claim, not
+                # the score. A score below AUTO_MISS_THRESHOLD is a transparent,
+                # evidence-based miss, not a silent promotion.
+                member_verdict = _band(own_score)
+                if is_merged:
+                    base_note = (f"merged group via quote_id={gt_real[i].quote_id} "
+                                 f"(representative {gt_real[rep_i].claim_id}, score {rep_score})")
+                    if member_verdict == "manual" and i != rep_i:
+                        member_note = (base_note + f"; passenger own score {own_score} "
+                                       f"below auto_match threshold")
+                    else:
+                        member_note = base_note
+                else:
+                    member_note = ""
                 alignments.append(GTAlignment(
                     gt_claim=gt_real[i],
-                    verdict=verdict,
+                    verdict=member_verdict,
                     ai_claim=ai,
                     score=S[i][j],
                     via_quote_id=gt_real[i].quote_id if is_merged else None,
                     group_representative_id=(gt_real[rep_i].claim_id if is_merged else None),
-                    note=(f"merged group via quote_id={gt_real[i].quote_id} "
-                          f"(representative {gt_real[rep_i].claim_id}, score {rep_score})"
-                          if is_merged else ""),
+                    note=member_note,
                 ))
         else:
             # Unmatched group. Show the strongest candidate as a diagnostic.

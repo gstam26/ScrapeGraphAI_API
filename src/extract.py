@@ -69,6 +69,10 @@ Rules:
 - If the answer is not found, use null for both value and quote.
 - If multiple answers exist, return a JSON array of objects, one per answer.
   Each object must have exactly one value and exactly one quote.
+- Treat each distinct programme, metric, certification, partnership, or commitment
+  as its own separate array entry, even when multiple distinct claims appear in
+  the same sentence or paragraph. Do not merge related but distinct claims into
+  one entry.
 - Quote rules (all must hold):
     * Copy the quote character-for-character from the page — no changes, no ellipses,
       no joining fragments with newlines or punctuation.

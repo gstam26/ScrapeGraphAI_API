@@ -1,7 +1,13 @@
 import re
 from typing import Any
 
+from rapidfuzz import fuzz
+
 from models import ExtractedCell, SourceQuote
+
+# token_sort_ratio threshold for near-duplicate value suppression in display output.
+# Mirrors AI_DEDUP_RATIO in diagnostics/eval_lib/metrics.py so both layers agree.
+_DEDUP_RATIO = 95
 
 
 def _has_value(cell: ExtractedCell) -> bool:
@@ -115,7 +121,7 @@ def aggregate_cells(
         sentinel_deduped: list[SourceQuote] = []  # "None (not disclosed…)" markers
         seen_evidence: set[tuple[str, str, str]] = set()
         unique_values: list[Any] = []   # real values only — used for conflict detection
-        seen_values: set[str] = set()
+        seen_value_norms: list[str] = []  # normalised strings for fuzzy dedup
         source_urls: set[str] = set()
 
         for cell in group:
@@ -139,8 +145,15 @@ def aggregate_cells(
                     sentinel_deduped.append(copied)
                 else:
                     real_deduped.append(copied)
-                    if value_key not in seen_values:
-                        seen_values.add(value_key)
+                    # Fuzzy dedup: suppress near-identical values (e.g. the same fact
+                    # phrased slightly differently across multiple crawled pages) from
+                    # the display list and conflict detector. Evidence is still kept for
+                    # provenance. Uses the same threshold as the eval's AI_DEDUP_RATIO.
+                    if not any(
+                        fuzz.token_sort_ratio(value_key, s) >= _DEDUP_RATIO
+                        for s in seen_value_norms
+                    ):
+                        seen_value_norms.append(value_key)
                         unique_values.append(copied.value)
 
         # When real values exist, suppress sentinels from evidence and display so the

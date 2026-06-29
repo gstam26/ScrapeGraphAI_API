@@ -169,6 +169,8 @@ FILTER_CHUNK_SIZE = 1000
 # ============================================================
 
 VERIFY_THRESHOLD = 70
+VERIFY_THRESHOLD_SOFT = 68
+VERIFY_LONG_QUOTE_MIN = 100
 
 # ============================================================
 # FUTURE EVALUATION SETTINGS

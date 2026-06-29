@@ -1,7 +1,15 @@
+import re
+
 from rapidfuzz import fuzz
 
-from config import VERIFY_THRESHOLD, VERIFY_TOOL
+from config import VERIFY_LONG_QUOTE_MIN, VERIFY_THRESHOLD, VERIFY_THRESHOLD_SOFT, VERIFY_TOOL
 from models import ExtractedCell, PageDoc
+
+_NORM_RE = re.compile(r"[|#*()/\\]+")
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", " ", _NORM_RE.sub(" ", text)).strip()
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -22,10 +30,19 @@ def _verify_quote(quote: str | None, page_text: str) -> tuple[bool, float | None
         end = start + len(quote)
         return True, 100.0, (start, end), "exact"
 
-    score = fuzz.partial_ratio(quote.lower(), page_text.lower())
-    verified = score >= VERIFY_THRESHOLD
-    match_type = "fuzzy" if verified else "none"
-    return verified, float(score), None, match_type
+    # Option A: normalise away markdown/whitespace noise before fuzzy comparison.
+    # Exact substring check above is intentionally left untouched.
+    score = fuzz.partial_ratio(_norm(quote).lower(), _norm(page_text).lower())
+    if score >= VERIFY_THRESHOLD:
+        return True, float(score), None, "fuzzy"
+
+    # Option C: soft threshold for long quotes whose anchors both appear literally.
+    if len(quote) >= VERIFY_LONG_QUOTE_MIN:
+        if quote[:20] in page_text and quote[-20:] in page_text:
+            if score >= VERIFY_THRESHOLD_SOFT:
+                return True, float(score), None, "fuzzy_soft"
+
+    return False, float(score), None, "none"
 
 
 def verify_cell(

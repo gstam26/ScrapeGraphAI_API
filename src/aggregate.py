@@ -64,7 +64,10 @@ def _evidence_from_cell_value(cell: ExtractedCell) -> list[SourceQuote]:
 _LIST_KEYWORDS = frozenset({"comma-separated", "deduplicated", "list", "for each"})
 
 # Columns whose values are comma-separated item lists that should be unioned
-# across sources rather than kept as separate entries.
+# across sources rather than kept as separate entries. Add any column here where
+# multiple source URLs each contribute a partial list of the same item type —
+# e.g. certifications, product types, markets served — so the Matrix shows one
+# merged list instead of one bullet per source.
 _UNION_LIST_COLS = frozenset({"Plant milk types"})
 
 _NULL_SENTINEL_PREFIX = "none (not disclosed"

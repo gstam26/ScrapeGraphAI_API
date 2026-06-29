@@ -38,17 +38,17 @@
 
 **Report says:** Planned for Weeks 8–11. “Designed to run incrementally as the pipeline is refined, and reusable beyond the internship.”
 
-**Reality:** Substantially complete. Built five modules: `gt_reader.py`, `pipeline_reader.py`, `aligner.py`, `metrics.py`, `report_writer.py` (pending). Evaluated against 86-claim analyst-built ground truth (10 entities, 3 questions, plant milk domain).
+**Reality:** Substantially complete. Built five modules: `gt_reader.py`, `pipeline_reader.py`, `aligner.py`, `metrics.py`, `report_writer.py`. Evaluated against ground-truth v3 — 141 analyst-built claims (102 sustainability, 10 parent company, 29 milk types) across 10 entities, 3 questions, plant-milk domain.
 
-**Key results to incorporate:**
+**Key results to incorporate (eval report v5, pass 2 — final state of cycle):**
 
-- Overall recall: 0.89–0.93 (auto → full after manual review)
-- Sustainability recall: 0.66–0.80 (the hard extraction task)
-- MilkTypes + ParentCompany recall: ~1.00
-- Precision: 0.73 strict / 0.74 distinct (tiny gap — redundancy not the main issue)
-- Hallucination: 0 (after null-sentinel reclassification)
-- Matched-pair cosine: 0.94
+- Overall F1: 0.88 (R = 0.91, P = 0.88)
+- Hallucination: 0
+- Sustainability F1: 0.66 (the hard extraction task; carries down the headline F1)
+- MilkTypes + ParentCompany: near-perfect (the easier columns lift the headline F1)
 - Tag-slice finding: pipeline recovers achievements/targets at ~1.00, collapses on commitments (0.14), disclosures (0.00)
+
+**Superseded earlier figures (pre-fix, kept for the before/after narrative):** 86-claim GT, overall recall 0.89–0.93, precision 0.73 strict / 0.74 distinct. The precision rise to 0.88 is the measurable payoff of the cycle's fixes (null-sentinel reclassification, dedup at 85, Matrix set-union, verify Option A + C).
 
 **Dissertation action:** This is the core RQ3 contribution. Write up the framework design (7 sections: matching algorithm, metric definitions, null handling, list vs single-answer, output design, semi-automated boundary, edge cases), the methodological decisions (greedy 1:1 + quote_id exception, token_sort_ratio dedup, dual precision), and the results with the tag-slice analysis.
 

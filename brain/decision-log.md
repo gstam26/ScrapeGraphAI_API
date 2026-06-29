@@ -5,6 +5,28 @@
 
 -----
 
+## 2026-06-29 — Plant-milk evaluation cycle closed (tagged v1.0-plant-milk-eval)
+
+**Context:** End-of-cycle state summary for the plant-milk brand evaluation. This is not a new architectural decision — it records the final artefact versions, the fixes landed this cycle, and the headline metrics, so the next cycle starts from a known baseline. HEAD tagged `v1.0-plant-milk-eval`.
+
+**Final state of artefacts:**
+
+- **Ground truth v3** — 102 sustainability claims, 10 parent company, 29 milk types across the 10-brand set.
+- **Pipeline output v4** — verify-layer fix landed: Option A (markdown/whitespace normalisation before fuzzy compare, exact substring check untouched) + Option C (soft anchor threshold for long quotes: ≥100 chars, both 20-char anchors literal in page text, `partial_ratio` ≥ 68). Config: `VERIFY_THRESHOLD_SOFT = 68`, `VERIFY_LONG_QUOTE_MIN = 100`.
+- **Pipeline output v7** — aggregate/Matrix fixes landed: `_DEDUP_RATIO` lowered 95 → 85 to collapse Oatly near-paraphrase duplicates; Matrix renderer now reads `agg_cell.value` instead of `agg_cell.evidence` (so `_DEDUP_RATIO` actually takes effect in output); set-union for list columns (`_UNION_LIST_COLS`, currently `{"Plant milk types"}`) merges comma-separated item lists across sources into one canonical value; `_make_matrix_df` falls back to `agg_cell.verified` for synthesised union values absent from the evidence lookup.
+
+**Result — eval report v5, pass 2:** overall F1 = 0.88 (R = 0.91, P = 0.88), hallucination rate = 0. Sustainability column F1 = 0.66 (the hardest column; the headline F1 is carried by the easier parent-company and milk-type columns).
+
+**Known limitations carried forward (candidate next-cycle work):**
+
+1. **Oatly chunked-extraction redundancy** — the 8,000-char chunking over the long Oatly sustainability report still produces overlapping near-duplicate claims across chunk boundaries; `_DEDUP_RATIO = 85` collapses many but not all, and the union logic does not apply to free-text claim columns.
+2. **Merge-passenger aligner artefact** — the greedy 1:1 + quote_id one-to-many exception occasionally lets a low-value AI claim ride along on a shared quote_id group, slightly affecting precision attribution.
+3. **One verify false negative — Oatly GHG table-caption quote** — a quote drawn from a table caption fails verification because the cached markdown renders the caption text in a form the fuzzy/anchor checks don't recover. Single known case this cycle; not yet generalised into a fix.
+
+**Status:** Cycle closed and tagged. No code changes in this log entry — record only.
+
+-----
+
 ## 2026-06-24 — Agentic verification rejected as scope-creep
 
 **Context:** Considered adding an LLM-based keep/reject agent in the Verify layer to improve precision and reduce redundancy. The premise was that precision (0.73) was being hurt by “too many weak or duplicate claims.”

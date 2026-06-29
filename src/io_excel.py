@@ -356,17 +356,23 @@ def _make_matrix_df(
                 matrix_row[col.name] = text
                 continue
 
-            # Evidence is ranked best-first (exact > fuzzy > none, then semantic_score
-            # descending). Take the best evidence item per distinct value.
-            best_by_value: dict[str, bool] = {}  # val_str → verified
+            # Look up verified status from ranked evidence, but render only the
+            # fuzzy-deduped values from agg_cell.value so _DEDUP_RATIO takes effect.
+            ev_verified: dict[str, bool] = {}
             for ev in agg_cell.evidence:
                 val_str = str(ev.value).strip() if ev.value is not None else ""
-                if not val_str or val_str in best_by_value:
-                    continue
-                best_by_value[val_str] = ev.verified
+                if val_str and val_str not in ev_verified:
+                    ev_verified[val_str] = ev.verified
 
-            verified_vals = [v for v, ok in best_by_value.items() if ok]
-            unverified_vals = [v for v, ok in best_by_value.items() if not ok]
+            raw_val = agg_cell.value
+            if isinstance(raw_val, list):
+                display_vals = [str(v).strip() for v in raw_val if v not in (None, "", [])]
+            elif raw_val not in (None, "", []):
+                display_vals = [str(raw_val).strip()]
+            else:
+                display_vals = []
+            verified_vals = [v for v in display_vals if ev_verified.get(v, False)]
+            unverified_vals = [v for v in display_vals if not ev_verified.get(v, False)]
 
             if not verified_vals and not unverified_vals:
                 text = "No data found"

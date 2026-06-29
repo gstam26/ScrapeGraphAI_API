@@ -63,6 +63,10 @@ def _evidence_from_cell_value(cell: ExtractedCell) -> list[SourceQuote]:
 
 _LIST_KEYWORDS = frozenset({"comma-separated", "deduplicated", "list", "for each"})
 
+# Columns whose values are comma-separated item lists that should be unioned
+# across sources rather than kept as separate entries.
+_UNION_LIST_COLS = frozenset({"Plant milk types"})
+
 _NULL_SENTINEL_PREFIX = "none (not disclosed"
 
 
@@ -156,6 +160,22 @@ def aggregate_cells(
                     ):
                         seen_value_norms.append(value_key)
                         unique_values.append(copied.value)
+
+        # For union-list columns, split each surviving value on commas and merge
+        # all individual items into one canonical string. This catches subset strings
+        # that scored too low for token_sort_ratio to collapse (e.g. "almond, soy"
+        # vs "almond, oat, soy, coconut, cashew" scores ~50, well below _DEDUP_RATIO).
+        if column in _UNION_LIST_COLS and unique_values:
+            seen_lower: set[str] = set()
+            all_items: list[str] = []
+            for val in unique_values:
+                for item in str(val).split(","):
+                    item = item.strip()
+                    if item and item.lower() not in seen_lower:
+                        seen_lower.add(item.lower())
+                        all_items.append(item)
+            if all_items:
+                unique_values = [", ".join(all_items)]
 
         # When real values exist, suppress sentinels from evidence and display so the
         # Matrix shows only the real answer. When only sentinels exist, preserve them

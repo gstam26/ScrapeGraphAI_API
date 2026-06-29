@@ -371,8 +371,8 @@ def _make_matrix_df(
                 display_vals = [str(raw_val).strip()]
             else:
                 display_vals = []
-            verified_vals = [v for v in display_vals if ev_verified.get(v, False)]
-            unverified_vals = [v for v in display_vals if not ev_verified.get(v, False)]
+            verified_vals = [v for v in display_vals if ev_verified.get(v, agg_cell.verified)]
+            unverified_vals = [v for v in display_vals if not ev_verified.get(v, agg_cell.verified)]
 
             if not verified_vals and not unverified_vals:
                 text = "No data found"

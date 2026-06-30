@@ -5,6 +5,20 @@
 
 -----
 
+## 2026-06-30 — Company-URL resolver added, demoted to fallback
+
+**Context:** Need to resolve exhibitor company names to official URLs for the ADLM pipeline. Initial approach: standalone search resolver (`src/resolve/`) — Firecrawl search + offline rapidfuzz/keyword scoring, with confidence and `needs_review` flags.
+
+**Result on 182 companies:** 181 resolved, ~15% flagged `needs_review`. Makes confident errors on ambiguous/obscure names.
+
+**Safety fix landed:** removed all direct-internet search (a Bing-routed version surfaced unsafe results for ambiguous names); now Firecrawl-only. Unresolved companies are flagged rather than guessed.
+
+**Decision:** Demoted to fallback. Primary method is scraping the ADLM exhibitor directory (static HTML with company-declared official URLs — more accurate, free, no confidence risk). Resolver (`resolve_urls.py`) used only when a company's ADLM card has no URL. Default mode is search-only (~1 Firecrawl credit/company); homepage fetch is opt-in via `--fetch`.
+
+**Status:** In use as fallback.
+
+-----
+
 ## 2026-06-29 — Plant-milk evaluation cycle closed (tagged v1.0-plant-milk-eval)
 
 **Context:** End-of-cycle state summary for the plant-milk brand evaluation. This is not a new architectural decision — it records the final artefact versions, the fixes landed this cycle, and the headline metrics, so the next cycle starts from a known baseline. HEAD tagged `v1.0-plant-milk-eval`.

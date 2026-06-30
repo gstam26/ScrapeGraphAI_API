@@ -244,6 +244,20 @@ MATCH_OVERRIDES: dict[str, str] = {
     "Currier Plastics, Inc.": "/co/currier",
 }
 
+# Verified manual URL overrides: input company name -> official URL, applied in
+# Phase 3 ONLY when the exhibitor's detail page declared no website of its own.
+# Each has been confirmed by hand via web lookup (description matched the input
+# CSV). Baking them here lets a clean three-phase run reproduce all 182 URLs
+# with honest source attribution (these rows get source=manual_web_lookup).
+# These do NOT backfill adlm_exhibitors_full.csv, which reflects only what the
+# directory itself published.
+MANUAL_URL_OVERRIDES: dict[str, str] = {
+    # ADLM detail page lists no website; site confirmed via web lookup — the
+    # CSV description matches verbatim (BizLink Group subsidiary, custom
+    # medical/healthcare cables, Canada).
+    "BizLink Elocab Ltd": "https://elocab.bizlinktech.com/",
+}
+
 
 # ============================================================
 # Name matching (style mirrored from src/resolve/confidence.py)
@@ -474,24 +488,34 @@ def phase3(input_csv: Path | None = None) -> None:
         except Exception as e:        # noqa: BLE001 — log and continue
             official, linkedin = "", ""
             print(f"  [{i:>3}] ERROR {slug}: {e}")
-        slug_to_urls[slug] = (official, linkedin)
+        slug_to_urls[slug] = (official, linkedin)  # directory-declared only
+
+        # Fall back to a verified manual URL when the detail page declared none.
+        # This affects only the matched output + its source attribution, not the
+        # full directory CSV backfilled from slug_to_urls above.
+        out_official = official
+        source = "adlm_directory" if official else ""
+        if not out_official and row["input_company"] in MANUAL_URL_OVERRIDES:
+            out_official = MANUAL_URL_OVERRIDES[row["input_company"]]
+            source = "manual_web_lookup"
 
         score = float(row["match_score"])
-        no_url = official == ""
+        no_url = out_official == ""
         needs_review = (score < CONFIDENT_THRESHOLD) or no_url
         results.append({
             "company": row["input_company"],
-            "official_url": official,
+            "official_url": out_official,
             "linkedin_url": linkedin,
             "match_score": row["match_score"],
             "detail_page_slug": slug,
+            "source": source,
             "needs_review": "yes" if needs_review else "no",
             # Distinguish the two failure modes the operator asked to separate.
             "review_reason": _review_reason(score, no_url),
         })
         flag = "" if not needs_review else "  <-- review"
         print(f"  [{i:>3}] {row['input_company'][:38]:<38} "
-              f"{'URL' if official else 'NO-URL':>6}{flag}")
+              f"{'URL' if out_official else 'NO-URL':>6}{flag}")
         time.sleep(REQUEST_PAUSE)
 
     # Append the unmatched companies so the output is complete (182 rows).
@@ -503,6 +527,7 @@ def phase3(input_csv: Path | None = None) -> None:
                 "linkedin_url": "",
                 "match_score": row["match_score"],
                 "detail_page_slug": "",
+                "source": "",
                 "needs_review": "yes",
                 "review_reason": "not_found_in_directory",
             })
@@ -510,7 +535,7 @@ def phase3(input_csv: Path | None = None) -> None:
     with MATCHED_CSV.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=[
             "company", "official_url", "linkedin_url", "match_score",
-            "detail_page_slug", "needs_review", "review_reason"])
+            "detail_page_slug", "source", "needs_review", "review_reason"])
         w.writeheader()
         w.writerows(results)
 

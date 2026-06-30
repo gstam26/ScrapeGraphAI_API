@@ -5,6 +5,26 @@
 
 -----
 
+## 2026-06-30 — ADLM directory scraper: primary URL-acquisition path
+
+**Context:** The 182 filtered clinical-diagnostics input companies need official URLs. The ADLM 2026 exhibitor directory lists every exhibitor with its company-declared website, so scraping it is more accurate and free vs the Firecrawl resolver.
+
+**Approach:** Standalone `adlm_scraper.py` (plain `requests` + BeautifulSoup, no API/Firecrawl). Three phases: (1) paginate the directory and dump all exhibitors; (2) name↔name fuzzy-match the 182 inputs to directory rows; (3) fetch the matched detail pages and pull `official_url`/`linkedin_url`.
+
+**Pagination finding:** Not static — AJAX POST to `/index.php` (`paginationHandler`, `mId=2`, `limit/offset`), chaining rotating `tk`/`tm` CSRF tokens; JSON `data` holds the url-encoded HTML fragment. 716 exhibitors over 18 pages.
+
+**Two bugs caught by post-run audit (both would have silently corrupted output):**
+1. **False-100 matches** — reusing `confidence.py`'s legal-suffix stripping (built for name↔domain) turned `AB Medical`→`medical`, `SA Scientific`→`scientific`; those stubs then subset-matched longer names at `token_set_ratio`=100. Fixed: light normalisation (no suffix stripping) + full-string `ratio`/`token_sort_ratio`. First run falsely reported 182/182 at score 100.
+2. **Footer brand-bar leak** — the platform renders ADLM's own social links (class `social_link`, `…/myADLM`) on every detail page; "first external link = official" + a case-sensitivity hole grabbed `facebook.com/myADLM` as a company URL, faking 182/182. Fixed: skip `social_link` anchors + platform hosts, reuse `confidence.is_blocked`. Surfaced the one genuine no-URL exhibitor (BizLink Elocab).
+
+**Decision:** Directory scrape is the primary URL source; resolver is fallback for exhibitors whose ADLM page declares no URL. One verified manual override (`Currier Plastics, Inc.`→`/co/currier`, directory listed it as just "Currier").
+
+**Result:** 716 exhibitors scraped; 182/182 matched; **181/182 official URLs directory-sourced + 1 manual web lookup** (BizLink Elocab → `elocab.bizlinktech.com`, tagged `source=manual_web_lookup` in `matched_official_urls.csv`). 24 also got LinkedIn.
+
+**Status:** Done — URL acquisition complete.
+
+-----
+
 ## 2026-06-30 — Company-URL resolver added, demoted to fallback
 
 **Context:** Need to resolve exhibitor company names to official URLs for the ADLM pipeline. Initial approach: standalone search resolver (`src/resolve/`) — Firecrawl search + offline rapidfuzz/keyword scoring, with confidence and `needs_review` flags.

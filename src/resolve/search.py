@@ -15,7 +15,11 @@ reported as unresolved with needs_review=True; nothing is silently guessed.
 
 import os
 
+from dotenv import load_dotenv
+
 from src.resolve.models import Candidate
+
+load_dotenv()
 
 # Records which backend served the most recent search() call, for notes.
 last_search_backend: str = ""

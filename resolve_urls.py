@@ -3,7 +3,7 @@
 Usage:
     python resolve_urls.py input.csv
     python resolve_urls.py input.csv -o resolved_urls.csv
-    python resolve_urls.py input.csv --no-fetch        # skip homepage fetch
+    python resolve_urls.py input.csv --fetch           # opt-in homepage fetch
     python resolve_urls.py input.csv --limit 10 --embeddings
 
 Input CSV columns : company, booth, description, categories
@@ -47,7 +47,7 @@ def main() -> None:
         "--backend", default="", help="Override acquire fetch backend (firecrawl/local/requests/playwright)"
     )
     parser.add_argument(
-        "--no-fetch", action="store_true", help="Score on search metadata only (no homepage fetch)"
+        "--fetch", action="store_true", help="Fetch and score homepages (slower; search-only is the default)"
     )
     parser.add_argument(
         "--embeddings", action="store_true",
@@ -55,7 +55,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    cfg = None if args.no_fetch else _build_cfg(args.backend)
+    cfg = _build_cfg(args.backend) if args.fetch else None
 
     print(f"Resolving companies from {args.input} -> {args.output}")
     results = resolve_csv(
@@ -63,7 +63,7 @@ def main() -> None:
         args.output,
         cfg=cfg,
         limit=args.limit,
-        fetch_homepages=not args.no_fetch,
+        fetch_homepages=args.fetch,
         use_embeddings=args.embeddings,
     )
 

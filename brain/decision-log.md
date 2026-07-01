@@ -5,6 +5,22 @@
 
 -----
 
+## 2026-07-01 — Known secondary issue: crawl link cap truncates before scoring (recorded, not fixed)
+
+**Context:** The clean-homepage comparison run (6 ADLM diagnostics companies, depth 1, passthrough) was used to isolate whether Q1 (R&D location) starvation is seed-URL-driven or a weak link scorer. Investigating why Tosoh/Surmodics stayed Q1-blank surfaced a discovery-layer issue worth recording before it's forgotten.
+
+**The issue:** `CRAWL_MAX_LINKS_PER_PAGE = 30` is applied as a plain slice (`candidates[:30]`) at the END of both `_discover_links_from_markdown` and `_discover_links_from_html` — i.e. in DOM/markdown order, **before** the relevance scorer runs. So an About/Contact/locations link that sits past the 30th anchor on the page (common: footer nav, or a long product mega-menu ahead of the footer) is dropped before the scorer can ever rank it. The cap is a pre-scoring positional truncation, not a keep-the-top-30-by-score.
+
+**Why it matters for the 182:** Q1 and Q4 depend on reaching About/locations and Press pages. On link-heavy homepages those links are frequently in the footer, after 30+ product/nav anchors. This silently caps recall on exactly the pages Q1/Q4 need — and it's invisible in the Crawl Candidates log because dropped links never become candidates.
+
+**Decision:** Record as a known secondary issue; do NOT fix now. The gating fix is the primary discovery change (Firecrawl markdown flattens some nav links → route discovery through rendered HTML), which must be validated on the sample first. Bundling a cap change into that would confound the sample re-run's signal.
+
+**Candidate fix when addressed (not now):** either raise `CRAWL_MAX_LINKS_PER_PAGE`, or make the truncation score-aware (score all discovered candidates, then keep the top-N by score instead of the first-N by DOM order). The latter is the principled fix but needs its own before/after on the sample.
+
+**Status:** Recorded only. No code change. Related: the primary link-discovery fix (markdown → rendered-HTML) is proposed but unapplied, pending the work-laptop sample re-run.
+
+-----
+
 ## 2026-06-30 — ADLM directory scraper: primary URL-acquisition path
 
 **Context:** The 182 filtered clinical-diagnostics input companies need official URLs. The ADLM 2026 exhibitor directory lists every exhibitor with its company-declared website, so scraping it is more accurate and free vs the Firecrawl resolver.

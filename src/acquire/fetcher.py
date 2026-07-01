@@ -129,13 +129,30 @@ def _fetch_firecrawl(url: str, cfg: Config) -> str:
     return result.markdown or ""
 
 
-def _fetch_firecrawl_with_fallback(url: str, cfg: Config) -> tuple[str, None, FetchProvenance]:
+def _fetch_firecrawl_doc(url: str, cfg: Config) -> tuple[str, str | None]:
+    """Fetch markdown + raw rendered HTML in a single Firecrawl call.
+
+    HTML is used for link discovery only (crawler._discover_links). Firecrawl drops
+    some nav/footer links (About/Contact) from BOTH its markdown AND its cleaned `html`
+    output — verified on www.surmodics.com: /about-surmodics is absent from markdown
+    (11 KB) and result.html (2.0 MB) but present in result.raw_html (3.0 MB). So we
+    request the "rawHtml" format and read the snake_case attribute result.raw_html.
+    _fetch_firecrawl (markdown-only, str) is left intact for _FETCHERS / fetch_page_raw.
+    """
+    from firecrawl import FirecrawlApp  # type: ignore[import]
+
+    app = FirecrawlApp(api_key=cfg.firecrawl_api_key)
+    result = app.scrape_url(url, formats=["markdown", "rawHtml"])
+    return (result.markdown or ""), (getattr(result, "raw_html", None) or None)
+
+
+def _fetch_firecrawl_with_fallback(url: str, cfg: Config) -> tuple[str, str | None, FetchProvenance]:
     """Fetch via Firecrawl; if thin, attempt one Playwright re-render (when enabled)."""
-    text = _fetch_firecrawl(url, cfg)
+    text, html = _fetch_firecrawl_doc(url, cfg)
     gate_passed, gate_reason = _thin_content_gate(text)
 
     if gate_passed:
-        return text, None, FetchProvenance(
+        return text, html, FetchProvenance(
             backend="firecrawl", render_fallback=False, gate_passed=True, gate_reason="",
         )
 

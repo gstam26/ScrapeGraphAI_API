@@ -684,7 +684,7 @@ def test_thin_content_gate_below_and_above_threshold():
 
 def test_firecrawl_good_content_no_fallback(monkeypatch):
     from src.acquire import fetcher as f
-    monkeypatch.setattr(f, "_fetch_firecrawl", lambda url, cfg: "x" * 300)
+    monkeypatch.setattr(f, "_fetch_firecrawl_doc", lambda url, cfg: ("x" * 300, None))
     playwright_called = []
     monkeypatch.setattr(f, "_fetch_playwright", lambda url, cfg: playwright_called.append(1) or "")
     text, _, prov = f._fetch_firecrawl_with_fallback("http://x.com", Config())
@@ -697,7 +697,7 @@ def test_firecrawl_good_content_no_fallback(monkeypatch):
 def test_firecrawl_thin_triggers_playwright_fallback(monkeypatch):
     from src.acquire import fetcher as f
     monkeypatch.setattr(f, "THIN_CONTENT_FALLBACK", True)
-    monkeypatch.setattr(f, "_fetch_firecrawl", lambda url, cfg: "short")
+    monkeypatch.setattr(f, "_fetch_firecrawl_doc", lambda url, cfg: ("short", None))
     monkeypatch.setattr(f, "_fetch_playwright", lambda url, cfg: "x" * 400)
     text, _, prov = f._fetch_firecrawl_with_fallback("http://x.com", Config())
     assert text == "x" * 400
@@ -711,7 +711,7 @@ def test_firecrawl_thin_triggers_playwright_fallback(monkeypatch):
 def test_firecrawl_both_thin_keeps_longer(monkeypatch):
     from src.acquire import fetcher as f
     monkeypatch.setattr(f, "THIN_CONTENT_FALLBACK", True)
-    monkeypatch.setattr(f, "_fetch_firecrawl", lambda url, cfg: "fc" * 50)   # 100 chars
+    monkeypatch.setattr(f, "_fetch_firecrawl_doc", lambda url, cfg: ("fc" * 50, None))   # 100 chars
     monkeypatch.setattr(f, "_fetch_playwright", lambda url, cfg: "pw" * 30)  # 60 chars
     text, _, prov = f._fetch_firecrawl_with_fallback("http://x.com", Config())
     assert text == "fc" * 50        # firecrawl result is longer → kept
@@ -724,7 +724,7 @@ def test_firecrawl_both_thin_keeps_longer(monkeypatch):
 def test_firecrawl_thin_fallback_disabled(monkeypatch):
     from src.acquire import fetcher as f
     monkeypatch.setattr(f, "THIN_CONTENT_FALLBACK", False)
-    monkeypatch.setattr(f, "_fetch_firecrawl", lambda url, cfg: "short")
+    monkeypatch.setattr(f, "_fetch_firecrawl_doc", lambda url, cfg: ("short", None))
     playwright_called = []
     monkeypatch.setattr(f, "_fetch_playwright", lambda url, cfg: playwright_called.append(1) or "")
     text, _, prov = f._fetch_firecrawl_with_fallback("http://x.com", Config())

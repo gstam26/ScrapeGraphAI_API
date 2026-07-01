@@ -204,11 +204,19 @@ def _discover_links(
     page_text: str | None = None,
     cfg: Config | None = None,
 ) -> list[LinkCandidate]:
-    # Markdown path: produced by Firecrawl, includes context naturally.
+    # Firecrawl only: prefer rendered HTML. Firecrawl drops some nav/footer links
+    # (About/Contact) from both its markdown and cleaned html; only raw_html keeps
+    # them. This re-enables the parent-element ("nav-soup") context the 2026-06-16
+    # decision moved away from — but scoped to Firecrawl; the local backend keeps its
+    # markdown path (Trafilatura include_links=True) and its ±120-char prose context.
+    if html and cfg is not None and cfg.acquire_tool == "firecrawl":
+        return _discover_links_from_html(page_url, start_url, depth, html)
+
+    # Markdown path: Firecrawl cache hits / local backend — context comes naturally.
     if page_text and "](" in page_text:
         return _discover_links_from_markdown(page_url, start_url, depth, page_text)
 
-    # HTML path: use BeautifulSoup, context from parent element.
+    # No usable HTML or markdown links: fetch HTML ourselves (unchanged fallback).
     if html is None:
         timeout = cfg.request_timeout if cfg else 30
         headers = cfg.request_headers if cfg else {"User-Agent": "Mozilla/5.0 guided-entity-crawler"}

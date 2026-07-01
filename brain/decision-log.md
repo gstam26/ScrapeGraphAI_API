@@ -5,6 +5,25 @@
 
 -----
 
+## 2026-07-01 — Crawl link discovery reads Firecrawl raw HTML, not markdown (validated)
+
+**Context:** The clean-homepage comparison run left Tosoh/Surmodics Q1-blank (R&D location) despite clean www seeds. Root cause: Firecrawl's content pipeline drops some nav/footer links. Verified literally on `www.surmodics.com` — `/about-surmodics`, `/our-company`, `/contact-us` are ABSENT from both the cached Firecrawl markdown (11 KB, grep zero matches) and `result.html` (2.0 MB, cleaned), but PRESENT in `result.raw_html` (3.0 MB). Those links never entered the crawl candidate pool, so no scorer or allowlist could recover them.
+
+**Options considered:**
+1. URL-pattern allowlist (always follow about|contact|locations) — REJECTED: can't allowlist a link that was never discovered.
+2. Better markdown link parsing — REJECTED: the links aren't in the markdown at all.
+3. Discover links from Firecrawl's rendered HTML via the existing `_discover_links_from_html` path.
+
+**Decision:** Option 3, scoped to the Firecrawl backend. Added `_fetch_firecrawl_doc` (requests `formats=["markdown","rawHtml"]`, returns `result.raw_html`); `_discover_links` prefers HTML for `acquire_tool == "firecrawl"`. `_fetch_firecrawl` (markdown-only, str) left intact for `_FETCHERS`/`fetch_page_raw`; 4 firecrawl smoke tests repointed to `_fetch_firecrawl_doc`.
+
+**Why / trade-off (explicit):** This re-enables the parent-element "nav-soup" link context that the 2026-06-16 decision (`include_links=True`) moved away from in favour of ±120-char prose context. Accepted because (a) the affected links are otherwise missed entirely, and (b) the crawl/filter scorer measured ~AUC-0.5 on this task, so weaker context has little marginal cost. **Scoped to Firecrawl** — the local backend keeps its markdown path + prose context, unchanged. Note: `.html` (cleaned) drops the links too; only `rawHtml` preserves them — the fix required the raw format specifically.
+
+**Result (validated on the 6-company clean-homepage sample, Surmodics cache cleared so it re-fetched fresh; other 5 were cache hits and unchanged):** Surmodics crawl candidates went 5 → 19 discovered, 16 followed. `/our-company` (0.57), `/contact-us` (0.57), `/ireland-facility` (0.55), `/about-surmodics` (0.54), `/careers` (0.62) all discovered AND followed. Surmodics Q1 recovered from `No data found` → Minnesota HQ + Ireland facility (Eden Prairie, MN / Ballinasloe, Co. Galway). The 30-link DOM-order cap did NOT bite (19 < 30), so `/about-surmodics` survived — the score-aware-cap change remains a recorded-but-unneeded follow-up.
+
+**Status:** Applied (commit 322d0ec) and validated. All 182 companies fetch fresh in the full run, so all exercise the new discovery path.
+
+-----
+
 ## 2026-07-01 — Known issue: brittle fixture in test_aggregate_list_column_no_conflict (fix queued)
 
 **Context:** Running the full `tests/test_smoke.py` during the link-discovery fix validation surfaced one failure: `test_aggregate_list_column_no_conflict` asserts `num_unique_values == 5` but gets `1`. Confirmed unrelated to the Acquire diff — reproduces identically on both machines and `aggregate.py` was untouched.

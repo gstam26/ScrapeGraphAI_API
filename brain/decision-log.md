@@ -5,6 +5,18 @@
 
 -----
 
+## 2026-07-01 — Known issue: brittle fixture in test_aggregate_list_column_no_conflict (fix queued)
+
+**Context:** Running the full `tests/test_smoke.py` during the link-discovery fix validation surfaced one failure: `test_aggregate_list_column_no_conflict` asserts `num_unique_values == 5` but gets `1`. Confirmed unrelated to the Acquire diff — reproduces identically on both machines and `aggregate.py` was untouched.
+
+**Root cause:** The fixture builds five values `"claim 0".."claim 4"`. `fuzz.token_sort_ratio("claim 0", "claim 1") = 85.71`, which is `>= _DEDUP_RATIO (85)`, so aggregate's fuzzy near-duplicate dedup collapses all five into one. This is not a production bug — real distinct claims don't collide at 86% token_sort_ratio; the fixture just chose near-identical single-token strings. It broke on **2026-06-29** when `_DEDUP_RATIO` was lowered 95→85 (Oatly near-paraphrase collapse); at 95 the strings survived (85.7 < 95) and the test passed. Nobody updated the fixture then.
+
+**Decision:** Fix the fixture, not the product. Replace `"claim {i}"` with genuinely distinct-topic strings (e.g. "solar power", "wind energy", "recycled packaging", …) so the test exercises list-column non-conflict without tripping the fuzzy-dedup threshold.
+
+**Status:** Fix QUEUED for after the Surmodics link-discovery validation, as its own small test-fixture commit. Not a blocker for the discovery re-run.
+
+-----
+
 ## 2026-07-01 — Known secondary issue: crawl link cap truncates before scoring (recorded, not fixed)
 
 **Context:** The clean-homepage comparison run (6 ADLM diagnostics companies, depth 1, passthrough) was used to isolate whether Q1 (R&D location) starvation is seed-URL-driven or a weak link scorer. Investigating why Tosoh/Surmodics stayed Q1-blank surfaced a discovery-layer issue worth recording before it's forgotten.

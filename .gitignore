@@ -21,6 +21,10 @@ diagnostics/fetch_eval/
 # Eval fixtures — committed real data for reproducible scoring
 !diagnostics/eval_lib/fixtures/*.xlsx
 
+# ADLM diagnostics run inputs/outputs — tracked despite the *.xlsx blanket ignore
+!adlm-inputs/*.xlsx
+!adlm-outputs/*.xlsx
+
 # OS
 .DS_Store
 Thumbs.db

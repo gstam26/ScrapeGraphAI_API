@@ -36,4 +36,5 @@ Thumbs.db
 # Obsidian
 brain/.obsidian/
 
-n~$*.xlsx
+# Excel lock/owner temp files (~$Book.xlsx) — must not be committed
+~$*.xlsx

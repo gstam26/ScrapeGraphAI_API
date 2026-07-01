@@ -549,15 +549,26 @@ def test_is_list_column_production_instructions():
 def test_aggregate_list_column_no_conflict():
     """A list-type column with 5 distinct values must NOT set has_conflict."""
     list_cols = {"Sustainability claims"}
+    # Distinct-topic strings (max pairwise token_sort_ratio ~46) so the fuzzy
+    # near-duplicate dedup (_DEDUP_RATIO=85) keeps all 5. Earlier "claim {i}"
+    # values collided at 85.7 once _DEDUP_RATIO was lowered 95->85 (2026-06-29),
+    # collapsing to 1 — a fixture artefact, not a product bug.
+    claims = [
+        "solar powered manufacturing",
+        "wind energy sourcing",
+        "recycled packaging materials",
+        "zero landfill waste target",
+        "reduced water consumption",
+    ]
     cells = [
         ExtractedCell(
             entity="Oatly",
             source_url=f"http://example.com/{i}",
             column="Sustainability claims",
-            value=f"claim {i}",
-            evidence=[SourceQuote(value=f"claim {i}", quote=f"quote {i}")],
+            value=claim,
+            evidence=[SourceQuote(value=claim, quote=f"quote {i}")],
         )
-        for i in range(5)
+        for i, claim in enumerate(claims)
     ]
     aggregated = aggregate_cells(cells, list_columns=list_cols)
     assert len(aggregated) == 1

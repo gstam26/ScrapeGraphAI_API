@@ -32,7 +32,7 @@
 
 **Decision:** Fix the fixture, not the product. Replace `"claim {i}"` with genuinely distinct-topic strings (e.g. "solar power", "wind energy", "recycled packaging", …) so the test exercises list-column non-conflict without tripping the fuzzy-dedup threshold.
 
-**Status:** Fix QUEUED for after the Surmodics link-discovery validation, as its own small test-fixture commit. Not a blocker for the discovery re-run.
+**Status:** FIXED after Surmodics validation — fixture now uses distinct-topic strings (max pairwise token_sort_ratio ~46); test passes. Own commit, separate from the discovery fix.
 
 -----
 

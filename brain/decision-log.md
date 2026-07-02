@@ -5,6 +5,35 @@
 
 -----
 
+## 2026-07-02 — Entity-level parallelism + global LLM-call cap + LLMAPI 5xx retry
+
+**Context:** The 25-company validation run took 36m 44s; Acquire was ~75% of wall clock and doubly serial (pages within `crawl_entity`, entities within `run_pipeline`). 182 projection ≈ 4.5 h. Full analysis: `brain/proposals/runtime-depth1.md`.
+
+**Decision (3 coupled changes):**
+1. `run_pipeline` processes URL specs concurrently (`PIPELINE_ENTITY_WORKERS = 4`). Per-spec work moved to `_process_url_spec`, which accumulates into a **local** diag and returns it; the main thread merges results in original spec order, so diagnostic sheets stay deterministic and the old index-slice annotation race is designed out. One spec = one seed domain → per-domain request rate unchanged (politeness preserved by construction).
+2. Global semaphore on extractor LLM calls (`EXTRACT_MAX_CONCURRENT_CALLS = 16`, `src/extract.py`). Without it, worst case is 4 entity × 4 page × 8 chunk = 128 concurrent proxy calls; the proxy 502'd once under single-entity load already. Cache hits don't take a slot.
+3. `LLMAPI.call` retries once on 5xx (5 s wait). Previously a 502 silently blanked that chunk's cells. Timeouts keep the existing no-retry contract; 4xx not retried. Tests: `tests/test_llmapi_retry.py`.
+
+**Rejected:** within-entity concurrent fetching (raises per-domain rate — revisit only if entity parallelism is insufficient); retry-on-timeout (already handled deliberately).
+
+**Status:** Applied. Expected 182 wall clock ~50–70 min. Worker count ceiling = Firecrawl plan concurrency — confirm before raising above 4.
+
+-----
+
+## 2026-07-02 — Crawl link hygiene: locale-variant dedup (new) + score-aware link cap (fixes 2026-07-01 known issue)
+
+**Context:** Validation run showed the 15-page budget consumed by translated copies of the homepage (Bruker 9/15: /fr /ko /de /pl /es /pt /ru /zh /it; Metrohm ~10/15; QuidelOrtho ~12/15) — they score ~0.55–0.63 because they carry the same nav text. Costs both runtime and Q1/Q4 recall (they crowd out About/locations/news). Separately, the recorded 2026-07-01 issue: `CRAWL_MAX_LINKS_PER_PAGE=30` was a DOM-order slice applied inside the discovery functions, before scoring.
+
+**Decision:**
+1. **Locale dedup** (`CRAWL_LOCALE_DEDUP = True`): `_locale_key()` collapses pure locale path segments (`^[a-z]{2}([_-][a-z]{2})?$`, incl. `xx.html`/`xx_yy.html` filenames) to a placeholder; candidates whose key matches an already-fetched/queued page are dropped, and only one variant per discovery batch survives. Pattern-based, no site list. Query strings kept in the key (so `index.php?product=N` pages never collapse); sites nesting all content under one locale prefix (aladdinsci `/us_en/…`, sebia `/en-us/…`) keep distinct pages distinct. Known trade-off (documented in code): a genuine 2-letter content segment is treated as a locale — first variant wins.
+2. **Score-aware cap:** truncation removed from `_discover_links_from_markdown/_html`; `crawl_entity` now slices top-30 **after** scoring (every scorer path returns best-first). A footer About link past the 30th anchor now reaches the scorer.
+
+**Why now, together:** both change which links are followed, and the next sample run validates them jointly before the 182 (same discipline as the rawHtml fix). `CRAWL_LOCALE_DEDUP=False` gives the before/after control.
+
+**Status:** Applied; tests in `tests/test_crawl_relevance.py` (locale-key collapse/keep cases from the actual validation-run URLs; 41-link discovery no-truncation). **Requires re-validation on the 25-sample before the 182** — expect fewer wasted fetches and better Q1/Q4 page mix; Q1 starvation may need more than this (open).
+
+-----
+
 ## 2026-07-01 — Crawl link discovery reads Firecrawl raw HTML, not markdown (validated)
 
 **Context:** The clean-homepage comparison run left Tosoh/Surmodics Q1-blank (R&D location) despite clean www seeds. Root cause: Firecrawl's content pipeline drops some nav/footer links. Verified literally on `www.surmodics.com` — `/about-surmodics`, `/our-company`, `/contact-us` are ABSENT from both the cached Firecrawl markdown (11 KB, grep zero matches) and `result.html` (2.0 MB, cleaned), but PRESENT in `result.raw_html` (3.0 MB). Those links never entered the crawl candidate pool, so no scorer or allowlist could recover them.
@@ -48,7 +77,7 @@
 
 **Candidate fix when addressed (not now):** either raise `CRAWL_MAX_LINKS_PER_PAGE`, or make the truncation score-aware (score all discovered candidates, then keep the top-N by score instead of the first-N by DOM order). The latter is the principled fix but needs its own before/after on the sample.
 
-**Status:** Recorded only. No code change. Related: the primary link-discovery fix (markdown → rendered-HTML) is proposed but unapplied, pending the work-laptop sample re-run.
+**Status:** ~~Recorded only. No code change.~~ **FIXED 2026-07-02** — score-aware cap applied in `crawl_entity` after scoring (see 2026-07-02 link-hygiene entry). The rendered-HTML discovery fix landed separately (322d0ec) and was validated first, as planned.
 
 -----
 

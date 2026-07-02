@@ -7,6 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from config import (
+    CRAWL_LOCALE_DEDUP,
     CRAWL_MAX_DEPTH,
     CRAWL_MAX_LINKS_PER_PAGE,
     CRAWL_MIN_SCORE_EMBED,
@@ -97,6 +98,35 @@ def _is_junk_link(url: str) -> bool:
     return urlparse(url).path.lower().rstrip("/").endswith(_JUNK_EXTS)
 
 
+# Path segments that are pure locale/language codes: "fr", "en-us", "ko_kr".
+_LOCALE_SEG_RE = re.compile(r"^[a-z]{2}([_-][a-z]{2})?$")
+
+
+def _locale_key(url: str) -> str:
+    """Collapse locale path segments so language variants of one page share a key.
+
+    bruker.com/fr.html and /de.html -> same key (translated homepages);
+    quidelortho.com/de/de and /jp/ja -> same key;
+    aladdinsci.com/us_en/contact and /us_en/products -> DIFFERENT keys (the
+    locale segment is normalised, the content segments still distinguish them).
+    The query string is kept so ?id=... product pages are never collapsed.
+    Known trade-off: a genuine 2-letter content segment (e.g. /it/ meaning
+    "information technology") is treated as a locale — first variant is kept.
+    """
+    parsed = urlparse(url)
+    segments = []
+    for seg in parsed.path.split("/"):
+        stem = seg[:-5] if seg.endswith(".html") else seg
+        if seg and _LOCALE_SEG_RE.match(stem.lower()):
+            segments.append("{locale}.html" if seg.endswith(".html") else "{locale}")
+        else:
+            segments.append(seg)
+    key = f"{parsed.netloc.replace('www.', '')}{'/'.join(segments)}"
+    if parsed.query:
+        key += f"?{parsed.query}"
+    return key
+
+
 # ── Page fetcher ──────────────────────────────────────────────────────────────
 
 def _acquire_page_cfg(url: str, cfg: Config) -> PageDoc:
@@ -159,7 +189,9 @@ def _discover_links_from_markdown(
             LinkCandidate(url=absolute_url, anchor_text=anchor, depth=depth, context=ctx)
         )
 
-    return candidates[:CRAWL_MAX_LINKS_PER_PAGE]
+    # No truncation here: the CRAWL_MAX_LINKS_PER_PAGE cap is applied in
+    # crawl_entity AFTER scoring (top-N by score, not first-N in DOM order).
+    return candidates
 
 
 def _discover_links_from_html(
@@ -193,7 +225,9 @@ def _discover_links_from_html(
             LinkCandidate(url=absolute_url, anchor_text=anchor_text, depth=depth, context=ctx)
         )
 
-    return candidates[:CRAWL_MAX_LINKS_PER_PAGE]
+    # No truncation here: the CRAWL_MAX_LINKS_PER_PAGE cap is applied in
+    # crawl_entity AFTER scoring (top-N by score, not first-N in DOM order).
+    return candidates
 
 
 def _discover_links(
@@ -259,6 +293,11 @@ def crawl_entity(
     crawl_query = build_crawl_query(columns, entities=entities)
 
     visited: set[str] = set()
+    # Locale keys of pages already fetched (or queued for fetch): a candidate
+    # whose key matches is a translated copy of a page we already have.
+    visited_locale_keys: set[str] = set()
+    if CRAWL_LOCALE_DEDUP:
+        visited_locale_keys.add(_locale_key(_normalise_url(start_url)))
     selected_pages = []
 
     queue = deque([
@@ -355,7 +394,20 @@ def crawl_entity(
             cfg=cfg,
         )
 
-        unvisited = [c for c in child_links if c.url not in visited]
+        unvisited = []
+        batch_locale_keys: set[str] = set()
+        for c in child_links:
+            if c.url in visited:
+                continue
+            if CRAWL_LOCALE_DEDUP:
+                key = _locale_key(c.url)
+                # Drop translated copies of pages already fetched, and keep
+                # only one locale variant within this batch (first in DOM
+                # order — variants carry identical content either way).
+                if key in visited_locale_keys or key in batch_locale_keys:
+                    continue
+                batch_locale_keys.add(key)
+            unvisited.append(c)
 
         if crawl_scorer == "experimental":
             try:
@@ -385,6 +437,12 @@ def crawl_entity(
             scored_children = score_links(unvisited, crawl_query)
             scored_children.sort(key=lambda c: c.score, reverse=True)
 
+        # Score-aware cap: every scorer path returns candidates sorted
+        # best-first, so this keeps the top-N by relevance. Previously the cap
+        # was a DOM-order slice inside the discovery functions, which dropped
+        # footer About/locations links before the scorer ever saw them.
+        scored_children = scored_children[:CRAWL_MAX_LINKS_PER_PAGE]
+
         to_follow = set(id(c) for c in _select_links_to_follow(scored_children, _min_score, current.depth))
 
         for child in scored_children:
@@ -403,6 +461,10 @@ def crawl_entity(
                 })
             if followed:
                 child.parent_url = current.url
+                if CRAWL_LOCALE_DEDUP:
+                    # Claim the key at queue time so a variant discovered on a
+                    # later page can't also be queued before this one fetches.
+                    visited_locale_keys.add(_locale_key(child.url))
                 queue.append(child)
 
     return EntityDoc(start_url=start_url, pages=selected_pages)

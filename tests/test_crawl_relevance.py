@@ -7,6 +7,8 @@ from models import ColumnSpec
 from src.acquire.crawler import (
     _FALLBACK_TOP_K,
     _FALLBACK_MAX_DEPTH,
+    _discover_links_from_markdown,
+    _locale_key,
     _select_links_to_follow,
     build_crawl_query,
 )
@@ -146,6 +148,45 @@ def test_normal_threshold_takes_precedence_over_fallback():
     print("OK test_normal_threshold_takes_precedence_over_fallback passed")
 
 
+# ── Locale-variant dedup ───────────────────────────────────────────────────────
+
+def test_locale_key_collapses_language_homepages():
+    """Translated homepages (validation-run waste: Bruker, Metrohm, QuidelOrtho)
+    share one key; www prefix is ignored."""
+    assert _locale_key("https://www.bruker.com/fr.html") == _locale_key("https://www.bruker.com/de.html")
+    assert _locale_key("https://www.bruker.com/en.html") == _locale_key("https://bruker.com/ko.html")
+    assert _locale_key("https://www.metrohm.com/th_th.html") == _locale_key("https://www.metrohm.com/ko_kr.html")
+    assert _locale_key("https://www.quidelortho.com/de/de") == _locale_key("https://www.quidelortho.com/jp/ja")
+    print("OK test_locale_key_collapses_language_homepages passed")
+
+
+def test_locale_key_keeps_distinct_content_pages():
+    """Sites that nest ALL content under a locale prefix (aladdinsci /us_en/,
+    sebia /en-us/) must NOT have distinct pages collapsed; query strings that
+    address different content (horiba index.php?product=N) stay distinct."""
+    assert _locale_key("https://www.aladdinsci.com/us_en/contact") != \
+        _locale_key("https://www.aladdinsci.com/us_en/life-sciences.html")
+    assert _locale_key("https://www.sebia.com/en-us/resources") != \
+        _locale_key("https://www.sebia.com/en-us/technologies/gel-electrophoresis")
+    assert _locale_key("https://www.horiba.com/index.php?id=128&product=1938") != \
+        _locale_key("https://www.horiba.com/index.php?id=128&product=2001")
+    # 3-letter segments are not locales
+    assert _locale_key("https://www.horiba.com/usa/healthcare") != \
+        _locale_key("https://www.horiba.com/fra/healthcare")
+    print("OK test_locale_key_keeps_distinct_content_pages passed")
+
+
+def test_discovery_no_longer_truncates_before_scoring():
+    """The CRAWL_MAX_LINKS_PER_PAGE cap must not be applied at discovery time —
+    a footer About link past the 30th anchor has to reach the scorer."""
+    links = "\n".join(f"[product {i}](https://x.com/product-{i})" for i in range(40))
+    text = links + "\n[About us](https://x.com/about)"
+    candidates = _discover_links_from_markdown("https://x.com", "https://x.com", 1, text)
+    assert len(candidates) == 41, f"expected all 41 candidates, got {len(candidates)}"
+    assert any(c.url.endswith("/about") for c in candidates), "41st (footer) link must survive discovery"
+    print("OK test_discovery_no_longer_truncates_before_scoring passed")
+
+
 if __name__ == "__main__":
     test_build_crawl_query_excludes_entity_terms()
     test_no_hardcoded_terms_in_unrelated_query()
@@ -155,4 +196,7 @@ if __name__ == "__main__":
     test_fallback_follows_top_k_when_nothing_passes_threshold()
     test_fallback_disabled_beyond_max_depth()
     test_normal_threshold_takes_precedence_over_fallback()
+    test_locale_key_collapses_language_homepages()
+    test_locale_key_keeps_distinct_content_pages()
+    test_discovery_no_longer_truncates_before_scoring()
     print("\nAll crawl relevance tests passed!")

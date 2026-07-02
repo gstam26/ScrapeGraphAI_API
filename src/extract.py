@@ -3,6 +3,7 @@ import hashlib
 import httpx
 import json
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 
@@ -22,11 +23,18 @@ from config import (
     EXTRACT_CHUNK_OVERLAP,
     EXTRACT_CHUNK_SIZE,
     EXTRACT_CACHE_DIR,
+    EXTRACT_MAX_CONCURRENT_CALLS,
     EXTRACT_MAX_WORKERS,
     EXTRACT_TIMEOUT,
     EXTRACT_TOOL,
 )
 from models import ColumnSpec, Config, ExtractedCell, PageDoc, SourceQuote
+
+# Global cap on concurrent extractor LLM calls. With entity-level parallelism
+# in run_pipeline, worst-case concurrency is entity workers x page workers x
+# chunk workers — far more than the LLMAPI proxy tolerates (502s observed).
+# Cache hits do not take a slot.
+_LLM_CALL_SEMAPHORE = threading.BoundedSemaphore(EXTRACT_MAX_CONCURRENT_CALLS)
 
 
 def _build_prompt(
@@ -655,17 +663,18 @@ def extract_cells(
             backend=page.backend, render_fallback=page.render_fallback,
             gate_passed=page.gate_passed, gate_reason=page.gate_reason,
         )
-        if runtime_cfg.extract_tool == "sgai":
-            chunk_data, timing = _extract_with_sgai(chunk_page, columns, entities)
-        elif runtime_cfg.extract_tool == "llmapi":
-            chunk_data, timing = _extract_with_llmapi(chunk_page, columns, entities)
-        elif runtime_cfg.extract_tool == "azure":
-            chunk_data, timing = _extract_with_azure(chunk_page, columns, entities)
-        elif runtime_cfg.extract_tool == "claude":
-            chunk_data, timing = _extract_with_claude(chunk_page, columns, entities)
-        else:
-            print(f"      X Unknown EXTRACT_TOOL: {runtime_cfg.extract_tool}")
-            return {}, {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
+        with _LLM_CALL_SEMAPHORE:
+            if runtime_cfg.extract_tool == "sgai":
+                chunk_data, timing = _extract_with_sgai(chunk_page, columns, entities)
+            elif runtime_cfg.extract_tool == "llmapi":
+                chunk_data, timing = _extract_with_llmapi(chunk_page, columns, entities)
+            elif runtime_cfg.extract_tool == "azure":
+                chunk_data, timing = _extract_with_azure(chunk_page, columns, entities)
+            elif runtime_cfg.extract_tool == "claude":
+                chunk_data, timing = _extract_with_claude(chunk_page, columns, entities)
+            else:
+                print(f"      X Unknown EXTRACT_TOOL: {runtime_cfg.extract_tool}")
+                return {}, {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
         if use_cache and chunk_data and not timing["timed_out"]:
             _write_extract_cache(cache_key, chunk_data)
         return chunk_data, timing

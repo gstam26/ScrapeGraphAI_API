@@ -94,8 +94,16 @@ CRAWL_MAX_PAGES = 15
 CRAWL_MIN_SCORE = 0.12        # used by BM25 scorer
 CRAWL_MIN_SCORE_EMBED = 0.50  # used by Ollama embedding scorer
 
-# Maximum candidate links extracted from a page
+# Maximum candidate links kept per page. Applied AFTER relevance scoring
+# (top-N by score), not in DOM order — a footer About/locations link past the
+# 30th anchor is no longer silently dropped before the scorer sees it.
 CRAWL_MAX_LINKS_PER_PAGE = 30
+
+# Collapse locale/language variants of the same page during link discovery
+# (e.g. /fr.html, /de.html, /ko_kr.html, /de/de) so the crawl budget is not
+# spent re-fetching translated copies of pages already visited. Generic
+# pattern-based rule, no site list. Set False for before/after comparison runs.
+CRAWL_LOCALE_DEDUP = True
 
 # --- Relevance scorer ---
 
@@ -185,6 +193,23 @@ EXTRACT_CHUNK_SIZE = 8000
 EXTRACT_CHUNK_OVERLAP = 200
 EXTRACT_MAX_WORKERS = 8
 EXTRACT_PAGE_WORKERS = 4
+
+# ============================================================
+# PIPELINE CONCURRENCY
+# ============================================================
+
+# URL specs processed concurrently (one spec per entity in ADLM-style
+# workbooks, so each worker crawls a different domain — per-domain request
+# rate is unchanged and politeness is preserved by construction).
+# Ceilings to respect when raising: Firecrawl plan concurrency and the
+# Power Automate LLMAPI throughput.
+PIPELINE_ENTITY_WORKERS = 4
+
+# Global cap on concurrent extractor LLM calls across all entities, pages and
+# chunks. Without it, worst case is PIPELINE_ENTITY_WORKERS x
+# EXTRACT_PAGE_WORKERS x EXTRACT_MAX_WORKERS (4 x 4 x 8 = 128) simultaneous
+# calls — the LLMAPI proxy already returned a 502 under single-entity load.
+EXTRACT_MAX_CONCURRENT_CALLS = 16
 
 ENABLE_PROVENANCE = True
 

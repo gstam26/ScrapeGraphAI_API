@@ -1,5 +1,11 @@
 # Project Structure Audit
 
+> **STALE (2026-07-02):** this snapshot predates the restructure — the layer
+> modules now live under `src/`, tests under `tests/`, and `LLMAPI` in
+> `src/llmapi.py`. Its §2/§5 recommendations were largely executed. Kept as
+> the historical record; for current structure see `README.md`, and for the
+> next round of restructuring see `brain/proposals/code-restructure.md`.
+
 ## 1. Full directory tree
 
 ```

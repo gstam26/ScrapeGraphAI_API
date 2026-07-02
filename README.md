@@ -1,321 +1,143 @@
 # Entity Extraction Pipeline
 
-A modular pipeline for extracting structured information about named entities from websites and exporting the results to an Excel workbook with provenance and verification metadata.
+A five-layer pipeline that extracts structured, **source-verified** answers about named entities from their websites, and writes an Excel workbook with full provenance. Built as an MSc dissertation project with Sagentia Innovation; designed to be run by non-technical consultants on real engagements.
 
-## Pipeline Overview
+The core reliability claim: every extracted answer carries a verbatim quote, and the Verify layer independently checks that quote against the cached source page — the LLM is never trusted on its own word.
+
+## Architecture
 
 ```text
-Input workbook
-  entities + urls + questions + optional config
+Input workbook (entities + urls + questions + optional config)
         |
         v
-Acquire
-  Fetch seed URLs and optionally crawl relevant same-domain pages.
++----------------+   fetch seed URLs; guided same-domain crawl scores links
+|    ACQUIRE     |   against the questions (Ollama embeddings, BM25 fallback);
+|                |   pages cached to cache/ by sha256(url)
++----------------+
         |
         v
-Filter
-  Route acquired pages to the requested extraction questions.
++----------------+   routes each page to the questions it can answer
+|     FILTER     |   (max-chunk cosine >= threshold OR keyword gate);
+|                |   NEVER excludes a page — worst case routes all questions
++----------------+
         |
         v
-Extract
-  Ask ScrapeGraphAI for answers about the relevant entities on each page.
++----------------+   LLM extracts {value, verbatim quote} per entity x question;
+|    EXTRACT     |   8000-char chunking with overlap; per-chunk cache;
+|                |   global concurrency cap on LLM calls
++----------------+
         |
         v
-Verify
-  Check supporting quotes against acquired page text with RapidFuzz.
++----------------+   deterministic rapidfuzz check that each quote actually
+|     VERIFY     |   appears in the cached page (exact -> fuzzy -> soft anchors);
+|                |   + diagnostic semantic score (claim vs quote cosine)
++----------------+
         |
         v
-Aggregate
-  Group by entity and question, then select the best evidence.
++----------------+   dedupe & rank evidence per entity x question; conflicts
+|   AGGREGATE    |   flagged on single-answer questions only; null sentinels
+|                |   never compete with real answers
++----------------+
         |
         v
-Excel output
-  Matrix + Provenance + optional diagnostic sheets
+Excel output: Summary | Matrix | Provenance (+ 4 diagnostic sheets)
 ```
 
-## Features
+Layers are separable by design: tools are swapped via `config.py` / workbook config, and Filter/Verify/Aggregate never know which fetcher or LLM ran upstream. Deep-dive notes per layer: `brain/layers/`.
 
-- Entity-first extraction: output rows are real entity names, not URL strings.
-- URL scoping: each URL can apply to one entity, multiple entities, or all entities.
-- Per-question instructions: each question can include prompt instructions in the workbook.
-- Per-run config overrides: selected `config.py` settings can be overridden from the workbook.
-- Backward compatibility: workbooks without an `entities` sheet treat each URL as its own entity.
-- Pluggable acquisition tools: `requests`, ScrapeGraphAI, Firecrawl, or Playwright.
-- Persistent disk cache: pages are cached by `sha256(url)` to reduce repeat fetches.
-- Guided crawling: optional depth-based crawl that scores candidate links against the questions.
-- Quote-level provenance: every extracted claim can include a supporting source quote.
-- Automated verification: quote matches are scored before output.
+## Sagentia network constraints (read first)
+
+These are IT-policy constraints, not preferences — the pipeline is built around them:
+
+- **No HuggingFace** (model downloads blocked). Embeddings come **only** from the internal Ollama server (`nomic-embed-text` at `OLLAMA_HOST`, reachable on Science Group WiFi/VPN only). Off VPN, the pipeline degrades gracefully: BM25 crawl scoring, route-all filtering, no semantic scores.
+- **No direct external LLM APIs on-network.** Production extraction uses GPT-5.5 via an approved **Power Automate proxy** (`EXTRACT_TOOL=llmapi`, `LLM_API_URL` in `.env`). The direct Claude/Azure paths exist for off-network spot checks only.
+- **Polite crawling.** Firecrawl (the default fetcher) proxies requests through its own infrastructure. Do not point a self-hosted fetcher at external sites without rate limiting — see `brain/proposals/firecrawl-replacement.md`.
+- Corporate TLS interception can break the Firecrawl API call itself (`SSL: CERTIFICATE_VERIFY_FAILED`) — a known on-network failure mode.
 
 ## Installation
 
 ```bash
 pip install -r requirements.txt
+playwright install chromium   # only needed for the playwright/local backends
 ```
 
-Create a `.env` file in the project root:
+`.env` in the project root (only the keys for the backends you use):
 
 ```env
-AZURE_API_KEY=your_azure_api_key
+FIRECRAWL_API_KEY=...   # default fetch backend
+LLM_API_URL=...         # Power Automate flow (EXTRACT_TOOL=llmapi)
+AZURE_API_KEY=...       # optional: EXTRACT_TOOL=azure
+CLAUDE_API_KEY=...      # optional: EXTRACT_TOOL=claude (off-network only)
 ```
 
-Set `EXTRACT_TOOL` to the backend you want to use. Supported extraction backends are
-`sgai`, `llmapi`, `azure`, and `claude`; the project default is `azure`.
-
-Claude is available as an optional extractor for small runs or spot checks:
-
-```env
-CLAUDE_API_KEY=your_claude_api_key
-CLAUDE_MODEL=claude-haiku-4-5-20251001
-EXTRACT_TOOL=claude
-```
-
-It calls Anthropic's HTTPS API directly with the existing `httpx` dependency, so the
-Anthropic Python SDK is not required. Large extraction runs can hit Anthropic rate
-limits unless worker counts and chunking are tuned down.
-
-## Usage
-
-Prepare an input workbook using the format below, or start from:
-
-```text
-samples/test_smoke.xlsx
-```
-
-Run the pipeline:
+## Running
 
 ```bash
 python main.py
 ```
 
-The terminal prompts only ask for:
+Prompts for an input workbook path and an output filename; everything else comes from the workbook. Output lands in `outputs/`.
 
-1. Input Excel file path.
-2. Output Excel filename.
+### Input workbook (4 sheets)
 
-Everything else comes from the workbook. Results are written to `outputs/<filename>.xlsx`.
+| Sheet | Columns | Notes |
+|---|---|---|
+| `entities` | `entity` | Row labels of the output Matrix |
+| `urls` | `url`, `depth` (0–2), `entities` | Blank `entities` = applies to all; comma-separated otherwise |
+| `questions` | `question`, `instructions` | Instruction text is appended to the extraction prompt |
+| `config` (optional) | `setting`, `value` | Per-run overrides, see below |
 
-Example run:
+Workbook-overridable settings: `ACQUIRE_TOOL`, `EXTRACT_TOOL`, `CRAWL_MIN_SCORE`, `CRAWL_MIN_SCORE_EMBED`, `CRAWL_SCORER`, `CRAWL_MAX_PAGES`, `DEFAULT_DEPTH`. **`FILTER_MODE` is NOT workbook-overridable** — passthrough runs require editing `config.py`.
 
-```text
-Path to input Excel file: samples/test_smoke.xlsx
-Output Excel filename: test_output.xlsx
-```
+Sample: `samples/test_smoke.xlsx`. Builders for the ADLM engagement: `build_*_workbook.py`.
 
-## Input Workbook Format
+### Key config (`config.py`)
 
-The new input format uses four sheets: `entities`, `urls`, `questions`, and optional `config`.
+| Setting | Default | Meaning |
+|---|---|---|
+| `ACQUIRE_TOOL` | `firecrawl` | Fetcher: `firecrawl` / `local` / `playwright` / `requests` (`sgai` exists but is dropped) |
+| `EXTRACT_TOOL` | `azure` (env-overridable) | Extractor: use `llmapi` for production runs |
+| `FILTER_MODE` | `threshold` | `passthrough` routes everything (scores still logged) |
+| `FILTER_THRESHOLD` | `0.55` | Cosine gate for question routing |
+| `CRAWL_MAX_PAGES` | `15` | Page budget per entity |
+| `CRAWL_LOCALE_DEDUP` | `True` | Drop translated copies of already-fetched pages |
+| `PIPELINE_ENTITY_WORKERS` | `4` | Entities crawled concurrently (one domain each) |
+| `EXTRACT_MAX_CONCURRENT_CALLS` | `16` | Global LLM-call cap across all workers |
+| `VERIFY_THRESHOLD` | `70` | Fuzzy match gate for quote verification |
+| `DIAGNOSTICS` | `True` | 7 output sheets vs 3 |
 
-### entities sheet
+### The two fetch backends that matter
 
-One column: `entity`.
+- **`firecrawl`** (default): best content quality and discovery in the five-backend comparison; requests raw HTML so nav/footer links survive into link discovery; requires the paid API key; fetches from Firecrawl's IPs.
+- **`local`** (privacy option): httpx + Trafilatura with a three-rule quality gate and Playwright re-render fallback; keeps all traffic on the local network; weaker on JS-heavy sites.
 
-Each row is one entity name. These names become the row labels in the output Matrix sheet.
+## Output workbook
 
-| entity |
-|--------|
-| Oatly |
-| Ripple |
-| Califia |
-| Silk |
-| Elmhurst |
+`Summary`, `Matrix` (one row per entity, one column per question — deduplicated, ranked, conflict-flagged), `Provenance` (every evidence item: claim, verbatim quote, verified flag, match type, scores, source URL). With `DIAGNOSTICS=True` also: `Acquire Log`, `Crawl Candidates`, `Filter Log`, `Extract Log`, `Verify Log`.
 
-### urls sheet
+Unverified claims are marked and highlighted in the Matrix; Provenance is the audit trail back to source.
 
-Three columns: `url`, `depth`, and `entities`.
-
-| url | depth | entities |
-|-----|-------|----------|
-| https://www.oatly.com/oatly-who/sustainability-plan/sustainability-report | 1 | Oatly |
-| https://ripplefoods.com/pages/our-story | 1 | Ripple |
-| https://www.mintel.com/food-and-drink/plant-based-milk | 0 | |
-
-Rules:
-
-- `url` is required.
-- `depth` is optional and defaults to `0` when blank.
-- `depth` must be an integer: `0`, `1`, or `2`.
-- `entities` is optional.
-- If `entities` is blank, the URL is relevant to all entities from the `entities` sheet.
-- If `entities` is present, use comma-separated entity names, for example `Oatly, Ripple`.
-- Entity names in this column must match names from the `entities` sheet.
-
-### questions sheet
-
-Two columns: `question` and optional `instructions`.
-
-| question | instructions |
-|----------|--------------|
-| What sustainability claims does the brand make? | return as a list, one claim per item |
-| What is the carbon footprint of their products? | include specific numbers and units where stated |
-| Do they have any sustainability certifications? | return the certification name and issuing body |
-
-Rules:
-
-- `question` is required.
-- `instructions` is optional.
-- If the `instructions` column is absent, all instructions are treated as blank.
-- Non-blank instructions are appended to the extraction prompt with the old colon syntax, equivalent to `Question: instructions`.
-
-### config sheet
-
-Optional. Two columns: `setting` and `value`.
-
-| setting | value |
-|---------|-------|
-| CRAWL_MAX_PAGES | 15 |
-| DEFAULT_DEPTH | 1 |
-
-Supported settings:
-
-| Setting | Type | Description |
-|---------|------|-------------|
-| `ACQUIRE_TOOL` | string | Fetcher backend for this run. |
-| `EXTRACT_TOOL` | string | Extraction backend for this run. |
-| `CRAWL_MIN_SCORE` | float | Minimum crawl link relevance score. |
-| `CRAWL_MAX_PAGES` | integer | Maximum pages fetched per seed URL crawl. |
-| `DEFAULT_DEPTH` | integer | Default depth used when a URL entry does not provide one in legacy contexts. |
-
-If the `config` sheet is absent, values from `config.py` are used.
-
-### Backward Compatibility
-
-If the workbook has no `entities` sheet, the reader falls back to the legacy behavior:
-
-- The `urls` sheet, or the first sheet if `urls` is missing, is read for URLs.
-- Each URL becomes its own entity.
-- Each URL is extracted only for that URL-as-entity row.
-
-This keeps older URL-only workbooks usable, but the new four-sheet format is preferred.
-
-## Sample Workbook
-
-The repository includes:
-
-```text
-samples/test_smoke.xlsx
-```
-
-It contains:
-
-- Entities: `Oatly`, `Ripple`, `Califia`, `Silk`, `Elmhurst`.
-- Five brand sustainability URLs, each scoped to its matching entity at depth `1`.
-- One multi-entity URL, `https://www.mintel.com/food-and-drink/plant-based-milk`, scoped to all entities by leaving `entities` blank.
-- Three sustainability questions with instructions.
-- Config overrides: `CRAWL_MAX_PAGES = 15` and `DEFAULT_DEPTH = 1`.
-
-## Configuration
-
-Default runtime settings live in `config.py`.
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `ACQUIRE_TOOL` | `"firecrawl"` | Fetcher backend: `requests`, `sgai`, `firecrawl`, or `playwright`. |
-| `EXTRACT_TOOL` | `"azure"` | Extractor backend: `sgai`, `llmapi`, `azure`, or `claude`. Can be set from `.env`; use `azure`/`llmapi` for full runs unless Claude quota is sufficient. |
-| `VERIFY_TOOL` | `"rapidfuzz"` | Quote verification backend. |
-| `CACHE_DIR` | `"cache"` | Directory for cached page text. |
-| `OUTPUT_DIR` | `"outputs"` | Directory for generated Excel output. |
-| `DEFAULT_DEPTH` | `0` | Default crawl depth outside explicit workbook URL depths. |
-| `CRAWL_MAX_DEPTH` | `1` | Max link hops from a seed URL. |
-| `CRAWL_MAX_PAGES` | `2` | Max pages fetched per crawl. |
-| `CRAWL_MIN_SCORE` | `0.12` | Minimum relevance score for a link to be followed. |
-| `VERIFY_THRESHOLD` | `70` | Minimum fuzzy-match score to mark a quote verified. |
-| `EXTRACT_TIMEOUT` | `120` | Seconds before an extraction call times out. |
-| `DIAGNOSTICS` | `True` | Include diagnostic sheets in output. |
-
-Workbook `config` overrides apply only to that run and do not modify `config.py`.
-
-## Output Workbook
-
-Results are written to `outputs/`. By default, the workbook contains these sheets:
-
-- `Summary`
-- `Matrix`
-- `Provenance`
-- `Acquire Log`
-- `Crawl Candidates`
-- `Extract Log`
-- `Verify Log`
-
-If `DIAGNOSTICS = False`, only `Summary`, `Matrix`, and `Provenance` are written.
-
-### Matrix sheet
-
-One row per entity, one column per question. The first column header is `Entity`.
-
-| Entity | What sustainability claims does the brand make? | What is the carbon footprint of their products? |
-|--------|--------------------------------------------------|-------------------------------------------------|
-| Oatly | - claim 1<br>- claim 2 | - 0.31 kg CO2e where stated |
-| Ripple | No data found | - value from supporting evidence |
-
-Cells with no data are highlighted. Unverified claims are marked in the cell text and highlighted.
-
-### Provenance sheet
-
-One row per evidence item, with the entity and source URL preserved.
-
-| Entity | Source URL | Question | Claim | Verbatim Quote | Verified | Verification Score | Match Type | Source Page Depth |
-|--------|------------|----------|-------|----------------|----------|--------------------|------------|-------------------|
-| Oatly | https://... | What sustainability claims does the brand make? | claim text | supporting quote | TRUE | 97.0 | fuzzy | 1 |
-
-The `Entity` column identifies which entity the claim is about. `Source URL` keeps URL traceability.
-
-## Development Checks
-
-Run unit smoke tests:
+## Tests
 
 ```bash
-python test_smoke.py
+python -m pytest tests/ --ignore=tests/test_acquire_smoke.py   # offline suite (~72 tests)
+python -m pytest tests/test_acquire_smoke.py                   # live-network smoke
 ```
 
-These tests cover:
-
-- Input parsing for the four-sheet workbook.
-- Blank URL entities expanding to all entities.
-- Specific URL entities staying scoped.
-- Backward compatibility without an `entities` sheet.
-- Entity-based aggregation.
-- Matrix and Provenance output shape.
-- `main.py` only prompting for input path and output filename.
-
-Run acquire integration tests with live network access:
-
-```bash
-python test_acquire_smoke.py
-```
-
-## Project Structure
+## Project structure
 
 ```text
-.
-+-- main.py
-+-- pipeline.py
-+-- config.py
-+-- models.py
-+-- io_excel.py
-+-- aggregate.py
-+-- extract.py
-+-- filter.py
-+-- verify.py
-+-- src/
-|   +-- acquire/
-|       +-- __init__.py
-|       +-- cache.py
-|       +-- crawler.py
-|       +-- fetcher.py
-|       +-- link_scorer.py
-|       +-- models.py
-+-- samples/
-|   +-- test_smoke.xlsx
-+-- diagnostics/
-+-- test_smoke.py
-+-- test_acquire_smoke.py
-+-- requirements.txt
-+-- cache/
-+-- outputs/
+main.py, pipeline.py, config.py, models.py     entry points + shared config/schema
+src/                                           the five layers
+  acquire/  (fetcher, crawler, link_scorer, cache)
+  filter.py, extract.py, verify.py, aggregate.py
+  io_excel.py, embed.py, llmapi.py
+  resolve/  (company-name -> URL resolver; fallback to the directory scrape)
+tests/                                         offline + live smoke tests
+diagnostics/                                   standalone reports + eval_lib (Stage 10 evaluation)
+brain/                                         decision log, tool register, layer notes, proposals
+adlm-inputs/, adlm-outputs/                    ADLM engagement workbooks (tracked)
+cache/, outputs/                               generated (gitignored)
 ```
 
-## Notes
-
-- `cache/` and `outputs/` are generated directories.
-- `samples/test_smoke.xlsx` is intentionally committed even though `*.xlsx` files are otherwise ignored.
-- The input workbook is now the source of truth for entities, URLs, questions, and supported run-level config overrides.
+`brain/README.md` indexes the project's working memory — start at `brain/decision-log.md` for why anything is the way it is.

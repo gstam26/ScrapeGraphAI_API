@@ -25,6 +25,10 @@ diagnostics/fetch_eval/
 !adlm-inputs/*.xlsx
 !adlm-outputs/*.xlsx
 
+# Load-bearing 182-run input (company -> official URL mapping) — tracked despite
+# the *.csv blanket ignore so the production run is reproducible from the repo
+!matched_official_urls.csv
+
 # OS
 .DS_Store
 Thumbs.db

@@ -48,6 +48,20 @@ FETCH_WAIT_MS = 3000
 THIN_CONTENT_FALLBACK = True
 
 # ============================================================
+# SELF-HOSTED FETCH POLITENESS (playwright_pooled backend)
+# Firecrawl fetches from ITS infrastructure; the pooled-Playwright backend
+# fetches from THIS machine's IP. Sagentia has had IPs blocked before, so
+# politeness is mandatory for the self-hosted path, not tunable-to-zero
+# in production runs.
+# ============================================================
+
+# Minimum seconds between requests to the same domain (all threads combined).
+CRAWL_POLITE_DELAY_S = 2.0
+
+# Respect robots.txt (disallowed pages are skipped with an explicit reason).
+CRAWL_RESPECT_ROBOTS = True
+
+# ============================================================
 # LOCAL-FETCH QUALITY GATE
 # Explicit pass/fail rule applied after httpx + Trafilatura extraction.
 # A page that fails triggers a Playwright re-render (one attempt).

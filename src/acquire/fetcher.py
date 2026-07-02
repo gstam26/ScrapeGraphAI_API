@@ -181,6 +181,35 @@ def _fetch_firecrawl_with_fallback(url: str, cfg: Config) -> tuple[str, str | No
         )
 
 
+def _fetch_playwright_pooled(url: str, cfg: Config) -> tuple[str, str, FetchProvenance]:
+    """
+    Self-hosted render-first backend: pooled headless Chromium (one persistent
+    browser per worker thread) -> Trafilatura text -> full quality gate.
+    Returns (text, rendered_html, provenance); the rendered DOM feeds link
+    discovery, so the nav/footer links Firecrawl's outputs drop are present
+    by construction (no rawHtml workaround needed).
+
+    Politeness (per-domain delay, robots.txt, honest UA) is enforced inside
+    src/acquire/playwright_pool.py — requests come from this machine's IP.
+    """
+    from src.acquire.playwright_pool import RobotsDisallowed, fetch_rendered_html
+
+    try:
+        html = fetch_rendered_html(url)
+    except RobotsDisallowed:
+        return "", "", FetchProvenance(
+            backend="playwright_pooled", render_fallback=False,
+            gate_passed=False, gate_reason="robots_disallowed",
+        )
+
+    text = _extract_text_from_html(html)
+    gate_passed, gate_reason = content_quality_gate(text, html)
+    return text, html, FetchProvenance(
+        backend="playwright_pooled", render_fallback=False,
+        gate_passed=gate_passed, gate_reason=gate_reason,
+    )
+
+
 def _render_page_html(url: str, cfg: Config) -> str:
     """Launch Playwright and return raw rendered HTML (no text extraction)."""
     from playwright.sync_api import sync_playwright  # type: ignore[import]
@@ -252,7 +281,7 @@ _FETCHERS = {
 }
 
 # All valid acquire_tool values including the local backend
-_VALID_BACKENDS = set(_FETCHERS) | {"local"}
+_VALID_BACKENDS = set(_FETCHERS) | {"local", "playwright_pooled"}
 
 
 def fetch_page_raw(url: str, cfg: Config) -> tuple[str, str | None]:
@@ -264,6 +293,9 @@ def fetch_page_raw(url: str, cfg: Config) -> tuple[str, str | None]:
         return _html_to_text(html), html
     if cfg.acquire_tool == "local":
         text, html, _ = _fetch_local(url, cfg)
+        return text, html
+    if cfg.acquire_tool == "playwright_pooled":
+        text, html, _ = _fetch_playwright_pooled(url, cfg)
         return text, html
     return _FETCHERS[cfg.acquire_tool](url, cfg), None
 
@@ -278,6 +310,9 @@ def fetch_page_with_provenance(url: str, cfg: Config) -> tuple[str, str | None, 
     """
     if cfg.acquire_tool == "local":
         return _fetch_local(url, cfg)
+
+    if cfg.acquire_tool == "playwright_pooled":
+        return _fetch_playwright_pooled(url, cfg)
 
     if cfg.acquire_tool == "requests":
         response = requests.get(url, timeout=cfg.request_timeout, headers=cfg.request_headers)

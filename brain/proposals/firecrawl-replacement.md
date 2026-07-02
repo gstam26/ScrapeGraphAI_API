@@ -1,6 +1,8 @@
 # Proposal: Replacing Firecrawl with a self-hosted fetch backend
 
-**Status:** Investigation complete (2026-07-02). No code changed. Recommendation: **feasible and worth testing — but the blocker is not technical.** The decisive question is IP exposure/politeness policy, which is Nick's call.
+**Status update (2026-07-02, evening):** the backend is now **BUILT** — `ACQUIRE_TOOL="playwright_pooled"` (`src/acquire/playwright_pool.py` + fetcher/crawler wiring), off by default, with the politeness gate included (per-domain ≥2 s delay via `CRAWL_POLITE_DELAY_S`, robots.txt respected via `CRAWL_RESPECT_ROBOTS`, honest UA). Offline-tested (8 tests). **Not yet used against external sites** — that still needs Nick's sign-off, now urgent because remaining Firecrawl credits (1,025) cover only ~74 of 178 companies. Explicitly out of scope on request-but-declined grounds: free proxies (security hazard — third parties MITM Sagentia traffic) and stealth anti-bot evasion (hard-blocked sites are recorded as findings instead). The bake-off below is unchanged and is the go/no-go.
+
+**Original investigation (2026-07-02, morning):** feasible and worth testing — but the blocker is not technical. The decisive question is IP exposure/politeness policy, which is Nick's call.
 
 ## What the interface actually requires
 

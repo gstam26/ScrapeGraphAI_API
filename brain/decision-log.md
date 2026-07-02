@@ -5,6 +5,22 @@
 
 -----
 
+## 2026-07-02 — playwright_pooled backend built (politeness gate mandatory); free proxies and stealth anti-bot REJECTED
+
+**Context:** Firecrawl credits remaining: 1,025 ≈ 74 of 178 companies at the measured 13.7 pages/entity. No budget for top-ups without Nick. The remaining ~108 companies therefore need a free fetch path — the self-hosted backend from `proposals/firecrawl-replacement.md`, promoted from "worth testing" to "required to finish".
+
+**Options considered:**
+1. Squeeze 178 into 1,025 credits by cutting `CRAWL_MAX_PAGES` to ~5 — REJECTED: would gut the About/locations coverage that just fixed Q1 (validated same day).
+2. Free proxy lists for IP hiding — REJECTED: unreliable, and routing company traffic through unknown third-party proxies is a security hazard (MITM) worse than the problem it hides.
+3. Stealth anti-bot evasion plugins — REJECTED: indefensible posture for a dissertation/consultancy tool; hard-blocked sites are recorded as findings (same treatment as Firecrawl's 5/60 plant-milk failures).
+4. Pooled Playwright + Trafilatura + mandatory politeness gate — CHOSEN.
+
+**Decision:** `ACQUIRE_TOOL="playwright_pooled"` (`src/acquire/playwright_pool.py`): thread-local persistent Chromium (sync API is not cross-thread-safe; one browser per pipeline worker; kills the ~1–2 s per-page launch cost), Trafilatura text, full 3-rule quality gate, rendered DOM into link discovery (nav links present by construction — no rawHtml workaround needed). Politeness gate built-in, not optional: per-domain ≥`CRAWL_POLITE_DELAY_S`=2 s across all threads, robots.txt per-domain cached (disallowed → skipped with `robots_disallowed` provenance; unreadable → allow), honest UA. Off by default.
+
+**Status:** Built + offline-tested (8 tests, no browser/network). NOT yet pointed at external sites — usage (not code) awaits Nick's IP-exposure sign-off. Go/no-go = the pre-registered bake-off in the proposal: re-fetch ~5 batch-1 companies, compare pages/cells/failures vs Firecrawl. Batch slicing added to `build_182_workbook.py` (`--start/--end`) so batch 1 (1–70, Firecrawl) can run meanwhile.
+
+-----
+
 ## 2026-07-02 — Entity-level parallelism + global LLM-call cap + LLMAPI 5xx retry
 
 **Context:** The 25-company validation run took 36m 44s; Acquire was ~75% of wall clock and doubly serial (pages within `crawl_entity`, entities within `run_pipeline`). 182 projection ≈ 4.5 h. Full analysis: `brain/proposals/runtime-depth1.md`.

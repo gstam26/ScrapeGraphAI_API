@@ -5,6 +5,23 @@
 
 -----
 
+## 2026-07-02 — HORIBA 654-evidence cell diagnosed: NOT a parallelism regression; unbounded-page + unbounded-cell guards added
+
+**Context:** v2 validation run, HORIBA "Recent news": 957 raw evidence rows (654 from ONE page), 5m37s extract, Excel cell-length warning. Suspicion: evidence duplicating across pages / a regression from the entity-parallelism change. Blocks batch 1.
+
+**Diagnosis (from the v2 workbook):** NOT duplication and NOT parallelism. 862 of 957 claims are distinct (~10% dup rate, in line with other entities: QuidelOrtho 9%, McKesson 5%); dedup and aggregation behaved correctly. Root cause chain: `/usa/company/news` is a **735 KB news-archive page** scoring 0.748 on the news question → followed because the same-day **score-aware cap fix** let it into the pool (v1's DOM-order cap had excluded it by accident, not by design) → 95 chunks → 95 LLM calls (1,361 s summed) → 654 legitimately distinct news items → Matrix cell hit Excel's 32,767-char hard limit and was silently truncated (cell measured exactly 32,767). Two real bugs at the boundaries: unbounded per-page extraction cost, unbounded Matrix cell size.
+
+**Decision (3 explicit bounds, nothing silent):**
+1. `EXTRACT_MAX_CHUNKS_PER_PAGE = 40` (~312 KB) — cap with a printed warning; archives list newest first so the kept prefix is the "recent" content. Plant-milk maximum is 15 chunks (Oatly 113 KB) → **locked benchmark unaffected**.
+2. `MATRIX_MAX_DISPLAY_ITEMS = 50` — cells render at most 50 bullets (verified kept preferentially) + `[+N more items — see Provenance]`. Provenance keeps everything.
+3. `_clamp_cell_text` in io_excel — hard clamp below 32,767 on a line boundary + `[truncated — full list in Provenance]`, replacing openpyxl's silent truncation.
+
+**Rejected:** capping evidence at aggregation (would gut the audit trail); skipping oversized pages entirely (their head is exactly the recent-news content Q4 wants).
+
+**Status:** Applied; `tests/test_output_limits.py` (6 tests, incl. locked-benchmark-scale non-regression). Suite 86 green. Batch 1 unblocked.
+
+-----
+
 ## 2026-07-02 — playwright_pooled backend built (politeness gate mandatory); free proxies and stealth anti-bot REJECTED
 
 **Context:** Firecrawl credits remaining: 1,025 ≈ 74 of 178 companies at the measured 13.7 pages/entity. No budget for top-ups without Nick. The remaining ~108 companies therefore need a free fetch path — the self-hosted backend from `proposals/firecrawl-replacement.md`, promoted from "worth testing" to "required to finish".

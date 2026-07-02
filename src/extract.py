@@ -23,6 +23,7 @@ from config import (
     EXTRACT_CHUNK_OVERLAP,
     EXTRACT_CHUNK_SIZE,
     EXTRACT_CACHE_DIR,
+    EXTRACT_MAX_CHUNKS_PER_PAGE,
     EXTRACT_MAX_CONCURRENT_CALLS,
     EXTRACT_MAX_WORKERS,
     EXTRACT_TIMEOUT,
@@ -512,6 +513,15 @@ def _chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
         end = start + chunk_size
         chunks.append(text[start:end])
         if end >= len(text):
+            break
+        if len(chunks) >= EXTRACT_MAX_CHUNKS_PER_PAGE:
+            # Pathological page (news archive / index). Keep the prefix —
+            # archives list newest first — and say so, never truncate silently.
+            print(
+                f"      ! Page exceeds {EXTRACT_MAX_CHUNKS_PER_PAGE} chunks "
+                f"({len(text):,} chars); extracting first "
+                f"{EXTRACT_MAX_CHUNKS_PER_PAGE} chunks only"
+            )
             break
         start = end - overlap
     return chunks

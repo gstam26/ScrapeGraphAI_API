@@ -208,6 +208,14 @@ EXTRACT_CHUNK_OVERLAP = 200
 EXTRACT_MAX_WORKERS = 8
 EXTRACT_PAGE_WORKERS = 4
 
+# Bound extraction cost on pathological pages. HORIBA's /usa/company/news is a
+# 735 KB news archive -> 95 chunks -> 95 LLM calls -> 654 claims in one cell
+# (2026-07-02 validation). 40 chunks (~312 KB) covers every normal page — the
+# plant-milk maximum (Oatly report, 113 KB) is 15 chunks, so the locked
+# benchmark is unaffected. Truncation is printed, never silent; archive pages
+# list newest items first, so the kept prefix is the "recent" part anyway.
+EXTRACT_MAX_CHUNKS_PER_PAGE = 40
+
 # ============================================================
 # PIPELINE CONCURRENCY
 # ============================================================
@@ -228,6 +236,12 @@ EXTRACT_MAX_CONCURRENT_CALLS = 16
 ENABLE_PROVENANCE = True
 
 DIAGNOSTICS = True  # True = all 7 sheets; False = Summary, Matrix, Provenance only
+
+# Cap on bullet items rendered in one Matrix cell. Every item is still in
+# Provenance; overflow is marked "[+N more items — see Provenance]" so nothing
+# is hidden silently. Excel's hard cell limit (32,767 chars) is additionally
+# enforced with an explicit truncation marker in io_excel.
+MATRIX_MAX_DISPLAY_ITEMS = 50
 
 # ============================================================
 # AGGREGATION DIAGNOSTICS

@@ -6,7 +6,25 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from config import MATRIX_MAX_DISPLAY_ITEMS
 from models import ColumnSpec, PipelineInput, PipelineResult, UrlSpec
+
+# Excel's hard per-cell character limit; text beyond it is silently truncated
+# by openpyxl/Excel. We clamp below it with an explicit marker instead.
+_EXCEL_CELL_MAX = 32767
+_TRUNCATION_MARKER = "\n[truncated — full list in Provenance]"
+
+
+def _clamp_cell_text(text: str) -> str:
+    """Keep cell text under Excel's 32,767-char limit, marked, never silent."""
+    if len(text) <= _EXCEL_CELL_MAX:
+        return text
+    keep = _EXCEL_CELL_MAX - len(_TRUNCATION_MARKER)
+    clipped = text[:keep]
+    # Cut on a line boundary so we never show half a claim.
+    if "\n" in clipped:
+        clipped = clipped.rsplit("\n", 1)[0]
+    return clipped + _TRUNCATION_MARKER
 
 # Colour palette
 _HEADER_FILL = "2E4057"
@@ -374,6 +392,16 @@ def _make_matrix_df(
             verified_vals = [v for v in display_vals if ev_verified.get(v, agg_cell.verified)]
             unverified_vals = [v for v in display_vals if not ev_verified.get(v, agg_cell.verified)]
 
+            # Cap rendered items (verified kept preferentially); everything
+            # remains in Provenance and the overflow is stated in the cell.
+            hidden = 0
+            total_items = len(verified_vals) + len(unverified_vals)
+            if total_items > MATRIX_MAX_DISPLAY_ITEMS:
+                hidden = total_items - MATRIX_MAX_DISPLAY_ITEMS
+                keep_v = min(len(verified_vals), MATRIX_MAX_DISPLAY_ITEMS)
+                verified_vals = verified_vals[:keep_v]
+                unverified_vals = unverified_vals[:MATRIX_MAX_DISPLAY_ITEMS - keep_v]
+
             if not verified_vals and not unverified_vals:
                 text = "No data found"
                 fills[(excel_row, col_excel_idx)] = _RED_FILL
@@ -396,7 +424,9 @@ def _make_matrix_df(
             else:
                 text = "\n".join("- " + v for v in verified_vals)
 
-            matrix_row[col.name] = text
+            if hidden:
+                text += f"\n[+{hidden} more items — see Provenance]"
+            matrix_row[col.name] = _clamp_cell_text(text)
 
         matrix_rows.append(matrix_row)
 

@@ -24,6 +24,28 @@ from src.resolve.io_csv import read_input_csv, write_output_csv, OUTPUT_COLUMNS
 from src.resolve.models import Candidate, CompanyInput, ResolutionResult
 from src.resolve import resolver, search as search_mod
 
+# Pytest fixtures mirroring the standalone _run() harness below, so the same
+# test functions work under both `pytest` and `python tests/test_resolve.py`.
+try:
+    import pytest
+
+    @pytest.fixture
+    def tmp_dir(tmp_path):
+        return str(tmp_path)
+
+    @pytest.fixture
+    def monkeypatch_search():
+        orig = resolver.search_mod.search_company
+
+        def _patch(candidates):
+            search_mod.last_search_backend = "test"
+            resolver.search_mod.search_company = lambda *a, **k: [c.model_copy() for c in candidates]
+
+        yield _patch
+        resolver.search_mod.search_company = orig
+except ImportError:  # standalone mode without pytest installed
+    pass
+
 
 def _check(name, cond):
     print(f"  {'PASS' if cond else 'FAIL'}: {name}")

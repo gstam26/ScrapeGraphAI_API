@@ -174,7 +174,9 @@ PAGE_TYPE_ALPHA = 0.4
 #   remains available for analysis — the mode only suppresses the routing
 #   decision. Use this for extraction evaluations over hand-picked GT URLs
 #   where every page is known-relevant and filtering can only lose recall.
-FILTER_MODE = "threshold"
+# Env-overridable (set FILTER_MODE=passthrough in .env) so machine-local mode
+# choices don't live as uncommitted config.py edits that block every git pull.
+FILTER_MODE = os.getenv("FILTER_MODE", "threshold")
 
 # Minimum cosine similarity between page text and a question for that column
 # to be included in extraction. 0.35 keeps clearly irrelevant pages out while

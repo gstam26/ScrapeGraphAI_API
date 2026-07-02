@@ -3,6 +3,8 @@
 Cross-check of every factual claim in `brain/` (and root docs) against live code.
 **Code is the truth.** Each finding: claim → file → what the code actually says.
 
+> **Resolution status (2026-07-02, same day):** §A divergences fixed in the brain files (tool-register rewritten, decision-log entries corrected in place with dated notes). §D stale docs fixed in Task 2 (README rewritten, CHANGELOG added, PROJECT_STRUCTURE.md marked stale). §E stale code comments remain recorded-only. §F unchanged as the dead/orphaned list, except `matched_official_urls.csv` — now git-tracked via a .gitignore exception.
+
 ## A. Divergences in brain files (to fix in brain)
 
 ### A1. Extract "primary" tool — tool-register.md

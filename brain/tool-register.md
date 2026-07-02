@@ -1,22 +1,48 @@
 # Tool Register — AI Extraction Pipeline
 
-**One row per tool. Status: Active / Baseline / Blocked / Dropped.**
+**One row per tool: layer, config flag, actual implementation, constraints. Status: Active / Baseline / Blocked / Dropped / Deferred.**
+**Cross-checked against live code 2026-07-02 (brain/audit-findings.md).**
 
-| Tool                                     | Layer                      | Status                | Why                                                                                                                            | Notes                                                                                                                                                         |
-| ---------------------------------------- | -------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Firecrawl                                | Acquire (primary fetcher)  | Active                | Best content quality (avg 19.5k chars), found depth-2 sustainability pages others missed, no quality gate failures on test set | Standard tier ~$83/mo. FIRECRAWL_API_KEY in .env                                                                                                              |
-| Playwright                               | Acquire (fallback fetcher) | Active                | JS rendering, 60/60 pages, 12k avg chars                                                                                       | Used as thin-content fallback when Firecrawl returns <200 chars. Also used in local backend after static-fetch quality gate failure                           |
-| Requests/httpx                           | Acquire (fast fetcher)     | Active (4th option)   | 70s for 60 pages, 100% success, no JS                                                                                          | No JS rendering — fails on React/SPA sites. Good for simple pages                                                                                             |
-| Local backend (Trafilatura + Playwright) | Acquire (privacy option)   | Active                | Data stays on network, no external API                                                                                         | Uses domcontentloaded+2s wait (fixed from networkidle). include_links=True so markdown context path fires instead of nav-soup HTML path                       |
-| SGAI managed API                         | Acquire (fetcher)          | Dropped               | Total failure: 0/60 pages, API errors on all test entities                                                                     | Retained as extraction baseline only. Do NOT use as fetcher                                                                                                   |
-| SGAI smartscraper                        | Extract (baseline)         | Baseline              | Comparison method for evaluation                                                                                               | Used in evaluation to compare against llmapi/GPT-5.5                                                                                                          |
-| GPT-5.5 via Power Automate (LLMAPI)      | Extract (primary)          | Active                | Best extraction quality, follows verbatim-quote instruction reliably                                                           | `src/llmapi.py`, LLMAPI.call(). Routed via Power Automate flow due to Sagentia IT restrictions. LLM_API_URL in .env                                           |
-| Azure gpt-4.1-mini                       | Extract (fallback)         | Caution               | Available but produces wall-of-text quotes, ignores single-sentence instruction                                                | Used in some test runs — noticeably worse than GPT-5.5. Avoid for evaluation runs                                                                             |
-| nomic-embed-text (Ollama)                | Acquire + Filter           | Active                | Local embeddings, 768-dim, free, no data leaves network                                                                        | Server at <http://10.99.96.1:11434> (Sagentia network/VPN only). Falls back gracefully: BM25 in Acquire, passthrough in Filter, null semantic_score in Verify |
-| rapidfuzz                                | Verify                     | Active                | Exact substring → markdown/whitespace-normalised partial_ratio ≥ 70 → soft anchor fallback ≥ 68 for long quotes (Option A + C, cycle v4) | Pure Python, free, pip install. The verification gate — determines verified/unverified                                                                        |
-| sentence-transformers                    | Filter                     | Blocked               | HuggingFace model downloads blocked by Sagentia IT                                                                             | Original plan (interim report). Replaced by Ollama nomic-embed-text                                                                                           |
-| NLI entailment (HuggingFace)             | Verify                     | Blocked (unconfirmed) | HuggingFace likely blocked by IT                                                                                               | Original plan for “Final” verify tier. Unconfirmed — not attempted                                                                                            |
-| LLM-as-judge                             | Verify                     | Deferred              | Designed but not built — rejected as premature given current metrics                                                           | Would need ground truth to evaluate. Filed as Could-tier future work                                                                                          |
-| Pydantic                                 | Extract                    | Active                | Runtime validation of LLM output — malformed responses trigger retry                                                           |                                                                                                                                                               |
-| openpyxl                                 | io_excel                   | Active                | Seven-sheet Excel output                                                                                                       |                                                                                                                                                               |
-| BM25 (fallback scorer)                   | Acquire                    | Active (fallback)     | Keyword-based scoring when Ollama unreachable                                                                                  | Used automatically when embed_batch() fails. Less accurate than embedding scorer but pipeline continues                                                       |
+## Fetch / Acquire
+
+| Tool | Config flag | Status | Implementation | Constraints / Notes |
+|---|---|---|---|---|
+| Firecrawl | `ACQUIRE_TOOL="firecrawl"` (default) | Active | `_fetch_firecrawl_doc` (`src/acquire/fetcher.py:132`) — requests `["markdown","rawHtml"]`; raw HTML feeds link discovery (markdown/cleaned html drop nav links — 2026-07-01) | ~$83/mo standard tier. `FIRECRAWL_API_KEY` in .env. Fetches from Firecrawl's IPs (shields Sagentia's). Fails on-network when corporate TLS interception breaks the api.firecrawl.dev cert (seen 2026-07-02, EUROIMMUN ×3) |
+| Playwright | `ACQUIRE_TOOL="playwright"`; also auto-fallback | Active (fallback) | `_render_page_html` — domcontentloaded + 2 s wait, 15 s timeout; fresh Chromium per page | Thin-content fallback for Firecrawl (<200 chars) and local quality-gate failures. Candidate primary backend — see `proposals/firecrawl-replacement.md` (blocked on Nick: IP exposure) |
+| Local (httpx + Trafilatura) | `ACQUIRE_TOOL="local"` | Active (privacy option) | `_fetch_local` — static fetch, Trafilatura extract, 3-rule quality gate, Playwright re-render on failure | Data stays on network. `include_links=True` so markdown context path fires (2026-06-16) |
+| Requests | `ACQUIRE_TOOL="requests"` | Active (4th option) | Plain GET + BS4 text | No JS — fails on React/SPA sites. Fastest for static pages |
+| SGAI managed API | `ACQUIRE_TOOL="sgai"` | Dropped (still selectable) | `_fetch_sgai` remains in `_FETCHERS` dispatch — not removed, just never choose it | 0/60 pages in the five-backend comparison. Retained as extraction baseline only |
+
+## Extract
+
+| Tool | Config flag | Status | Implementation | Constraints / Notes |
+|---|---|---|---|---|
+| GPT-5.5 via Power Automate (LLMAPI) | `EXTRACT_TOOL="llmapi"` — set per run via workbook config sheet or .env; **config.py default is `"azure"`** | Active (production runs) | `src/llmapi.py` `LLMAPI.call()`; retries once on 5xx (2026-07-02) | Only externally-reachable LLM permitted by Sagentia IT (Power Automate flow = the approved M365 route). No temperature/seed control — payload is `{"text": prompt}` only. `LLM_API_URL` in .env |
+| Azure gpt-4.1-mini | `EXTRACT_TOOL="azure"` (config.py default) | Caution | `_extract_with_azure` via OpenAI SDK | Produces wall-of-text quotes, ignores single-sentence instruction — avoid for evaluation/production runs |
+| Claude (direct API) | `EXTRACT_TOOL="claude"` | Active (off-network only) | `_extract_with_claude` (`src/extract.py:350`) — direct Anthropic Messages API via httpx; `CLAUDE_MODEL` default haiku-4.5 | Direct LLM APIs are blocked on the Sagentia network — usable only off-network for small runs/spot checks. Rate limits bite at scale |
+| SGAI smartscraper | `EXTRACT_TOOL="sgai"` | Baseline | `_extract_with_sgai` | Evaluation comparison method only |
+| Pydantic | — | Active | Runtime validation of LLM output; malformed responses dropped per field | |
+
+All extractors share: chunking 8000/200, 8 chunk workers, sha256 extract cache, and a **global 16-call semaphore** (`EXTRACT_MAX_CONCURRENT_CALLS`, 2026-07-02).
+
+## Embeddings / scoring
+
+| Tool | Config flag | Status | Implementation | Constraints / Notes |
+|---|---|---|---|---|
+| nomic-embed-text (Ollama) | `OLLAMA_HOST`, `SCORER_TOOL="ollama"` | Active | `src/embed.py` batch endpoint; used by **Acquire** (link scoring), **Filter** (routing), **Verify** (diagnostic semantic_score) | Internal server `http://10.99.96.1:11434` — Science Group WiFi/VPN only. The ONLY permitted embedding source (HuggingFace blocked). Graceful degradation: BM25 in Acquire, route-all in Filter, skipped semantic_score in Verify |
+| BM25 | — (automatic fallback) | Active (fallback) | `score_links` in `link_scorer.py` | Crawler-only fallback when Ollama unreachable. Per-batch relative scores (threshold `CRAWL_MIN_SCORE=0.12`) |
+| sentence-transformers | — | Blocked | Never implemented | HuggingFace downloads blocked by Sagentia IT. Interim-report plan; replaced by Ollama |
+
+## Verify
+
+| Tool | Config flag | Status | Implementation | Constraints / Notes |
+|---|---|---|---|---|
+| rapidfuzz | `VERIFY_TOOL="rapidfuzz"` | Active | exact substring → normalised `partial_ratio ≥ 70` → soft ≥ 68 for quotes ≥ 100 chars with literal 20-char anchors (`src/verify.py:24-45`) | The verification gate. Checks quote EXISTS, not that it SUPPORTS the value — see `proposals/semantic-verify.md` |
+| NLI entailment (HuggingFace) | — | Blocked (unconfirmed) | Not attempted | HuggingFace blocked; original "Final" verify tier |
+| LLM-as-judge | — | Deferred → proposed | Not built | Rejected 2026-06-24 as keep/reject filter; re-scoped 2026-07-02 as an annotation tier gated on a human-labelled eval (`proposals/semantic-verify.md`) |
+
+## Output
+
+| Tool | Config flag | Status | Implementation | Constraints / Notes |
+|---|---|---|---|---|
+| openpyxl | `DIAGNOSTICS` (7 sheets vs 3) | Active | `src/io_excel.py` | `char_span` computed by Verify but NOT written to Provenance (known limitation, report-deltas §5.5) |

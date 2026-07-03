@@ -5,7 +5,19 @@
 
 -----
 
-## 2026-07-03 — Code review of the 2026-07-02 changes: 2 fixed now, 8 recorded
+## 2026-07-03 — Filter routes on name+instruction; deterministic Grouped Themes layer added (Nick's quality pivot)
+
+**Context:** Nick redirected: no big batch runs (credits out), focus extraction quality — make Filter work, add grouping/summarization at Aggregate. Diagnosis already on record (`proposals/filter-and-synthesis.md`): Filter embedded only the 2–3 word column NAME as its query (`filter.py`), discarding the 30–50 word instruction; measured score-vs-answered AUC on the validation run was 0.64 overall (0.55–0.74 per question) — why passthrough was on. Twin defect in the crawl link-scorer call sites.
+
+**Decision (two independent changes, built by parallel worktree agents, merged + audited):**
+1. **Instruction-aware routing:** shared `query_text(col)` helper → `"{name}. {instruction}"`; used by Filter's `score_page_columns` AND both crawler embed-scorer call sites. `QUERY_INCLUDES_INSTRUCTION = True` config flag (False restores name-only for A/B). Critical detail: `_question_emb_cache` key changed from name-tuple to query-text-tuple (else stale name-only embeddings would be silently reused). Keyword gate stays on the name (instruction words are generic — would over-fire). BM25 `build_crawl_query` untouched (already instruction-weighted); experimental scorer untouched (already handles instructions).
+2. **Grouped Themes (proposal Part 2a only — 2b LLM summarization NOT built, per George):** new `src/group.py` — deterministic greedy clustering of each aggregated cell's display values (sorted iteration, first-match centroid ≥ `GROUP_SIMILARITY=0.62`, incremental centroids; medoid member string as theme label — always a real verified claim, never synthesized). One `embed_batch` per run. Cells < `GROUP_MIN_ITEMS=6` → single "(all items)" group with zero embedding calls. Output: "Grouped Themes" sheet (Entity | Question | Theme | Items | Values | Distinct Sources), written after Provenance, reusing the display-cap + clamp conventions. Matrix/Provenance/aggregate.py untouched → locked plant-milk metrics safe. Pipeline hook is try/except with `GROUPING_ENABLED`; Ollama-unreachable or any failure → one printed line, sheet absent, run unaffected.
+
+**Verification (audited against actual output, not agent reports):** suite 106 passed on the merged tree (90 base + 4 filter + 12 grouping; one agent under-reported its own test count by 1 — caught by `--collect-only`). BEFORE AUC table reproduced from my tree: 0.607/0.547/0.623/0.745, overall 0.636. Both diagnostics (`filter_recalibration.py`, `group_calibration.py`) confirmed to degrade gracefully off-network (exit 0, clear work-laptop instructions).
+
+**Pending (work laptop — Ollama + validation cache live there, cannot be computed off-network):** AFTER AUC table + threshold sweep (`python diagnostics/filter_recalibration.py`), and `GROUP_SIMILARITY` calibration on real claims (`python diagnostics/group_calibration.py`). Until the AFTER table shows real separation, `FILTER_MODE` stays passthrough — the fix changes what scores are computed, not yet what routes.
+
+**Status:** Merged and pushed. LLM summarization remains a written option only (`proposals/filter-and-synthesis.md` Part 2b) — awaiting George/Nick's deterministic-template vs LLM decision.
 
 **Context:** Full high-effort review (8 finder angles, candidates verified by direct code reading) of everything from 2026-07-02: entity parallelism, crawl locale-dedup/score-aware cap, LLMAPI retry, output limits, playwright_pooled backend. 10 real findings surfaced; George approved fixing the top 2 before batch 1, recording the rest.
 

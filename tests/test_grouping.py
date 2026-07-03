@@ -317,3 +317,46 @@ def test_no_sheet_when_no_claim_groups(tmp_path):
     assert "Grouped Themes" not in wb.sheetnames
     wb.close()
     print("OK test_no_sheet_when_no_claim_groups passed")
+
+
+# ── Mean-centering (anisotropy correction) ────────────────────────────────────
+
+def test_centering_separates_families_sharing_dominant_component():
+    """The real-data failure geometry (2026-07-03 calibration): every claim in
+    a cell shares a large company/domain component, so RAW cosines all sit in
+    a narrow high band and one giant cluster forms at any usable threshold.
+    center_vector_map must remove the shared component so the same threshold
+    separates the families."""
+    from src.group import center_vector_map, cluster_values
+
+    # Two families, both dominated by the same shared direction [10,0,...]:
+    # raw cosine between ANY pair is ~0.995 — indistinguishable.
+    fam_a = {f"a{i}": [10.0, 1.0 + 0.01 * i, 0.0, 0.0] for i in range(4)}
+    fam_b = {f"b{i}": [10.0, -1.0 - 0.01 * i, 0.0, 0.0] for i in range(4)}
+    vectors = {**fam_a, **fam_b}
+    values = sorted(vectors)
+
+    raw_clusters = cluster_values(values, vectors, threshold=0.9)
+    assert len(raw_clusters) == 1, "raw vectors must reproduce the one-blob failure"
+
+    centered = center_vector_map(vectors)
+    cent_clusters = cluster_values(values, centered, threshold=0.30)
+    assert len(cent_clusters) == 2, f"centered space must separate the families, got {len(cent_clusters)}"
+    memberships = {frozenset(c) for c in cent_clusters}
+    assert frozenset(fam_a) in memberships and frozenset(fam_b) in memberships
+    print("OK test_centering_separates_families_sharing_dominant_component passed")
+
+
+def test_centering_deterministic_and_zero_safe():
+    """Centering is a pure function; a vector equal to the mean keeps its raw
+    vector (no zero-norm cosine)."""
+    from src.group import center_vector_map
+
+    vectors = {"x": [1.0, 1.0], "y": [1.0, 1.0]}  # both ARE the mean
+    centered = center_vector_map(vectors)
+    assert centered["x"] == [1.0, 1.0] and centered["y"] == [1.0, 1.0]
+
+    v2 = {"a": [2.0, 0.0], "b": [0.0, 2.0]}
+    assert center_vector_map(v2) == center_vector_map(v2), "must be deterministic"
+    assert center_vector_map(v2)["a"] == [1.0, -1.0]
+    print("OK test_centering_deterministic_and_zero_safe passed")

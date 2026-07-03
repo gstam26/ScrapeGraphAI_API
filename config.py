@@ -269,11 +269,22 @@ GROUPING_ENABLED = True
 # are emitted as a single "(all items)" group without any embedding call.
 GROUP_MIN_ITEMS = 6
 
-# Centroid-cosine threshold for joining an existing cluster (nomic-embed
-# cosine). Starting default pending calibration on real claim data — run
+# Per-cell mean-centering before clustering (anisotropy correction). The
+# 2026-07-03 calibration on real validation claims showed RAW nomic cosines
+# compress into one giant cluster at any threshold <= 0.70 (all claims from
+# one company share a dominant company/domain component); centering removes
+# that shared component so only what distinguishes claims within the cell
+# drives similarity. Deterministic. Set False only for raw-vs-centered
+# comparison via diagnostics/group_calibration.py.
+GROUP_CENTER_VECTORS = True
+
+# Centroid-cosine threshold for joining an existing cluster. NOTE: applies in
+# the CENTERED space when GROUP_CENTER_VECTORS is True (centered cosines run
+# much lower than raw ones). 0.30 is a provisional default — run
 # diagnostics/group_calibration.py against the validation workbook on the
-# work laptop (Ollama reachable) to pick the final value.
-GROUP_SIMILARITY = 0.62
+# work laptop (Ollama reachable) to pick the final value from the
+# centered-space sweep.
+GROUP_SIMILARITY = 0.30
 
 # ============================================================
 # AGGREGATION DIAGNOSTICS

@@ -33,10 +33,14 @@ import pandas as pd
 
 from config import OLLAMA_DOC_PREFIX, OLLAMA_HOST
 from src.embed import embed_batch
-from src.group import _normalise_value, cluster_values
+from src.group import _normalise_value, center_vector_map, cluster_values
 
 _PROBE_TIMEOUT_S = 4
-_THRESHOLDS = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75]
+# Raw cosines live in a narrow high band (2026-07-03 run on real validation
+# claims: one giant cluster at any threshold <= 0.70); centered cosines
+# spread around 0, so the two spaces need different sweep ranges.
+_RAW_THRESHOLDS = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]
+_CENTERED_THRESHOLDS = [0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60]
 _DEFAULT_BASELINE = "adlm-outputs/validation_sample_run_2026-07-02_v2.xlsx"
 
 
@@ -110,18 +114,25 @@ def main() -> int:
         offset += len(claims)
 
         print(f"\n=== {entity} / {question} ({len(claims)} claims) ===")
-        print(f"{'threshold':>9} | {'clusters':>8} | sizes (desc)")
-        for threshold in _THRESHOLDS:
-            clusters = cluster_values(claims, vectors, threshold=threshold)
-            sizes = sorted((len(c) for c in clusters), reverse=True)
-            shown = ", ".join(str(s) for s in sizes[:15])
-            if len(sizes) > 15:
-                shown += f", ... (+{len(sizes) - 15} more)"
-            print(f"{threshold:>9.2f} | {len(clusters):>8} | {shown}")
+        for label, vecs, thresholds in (
+            ("RAW vectors (GROUP_CENTER_VECTORS=False)", vectors, _RAW_THRESHOLDS),
+            ("CENTERED vectors (production default)", center_vector_map(vectors), _CENTERED_THRESHOLDS),
+        ):
+            print(f"  -- {label} --")
+            print(f"  {'threshold':>9} | {'clusters':>8} | sizes (desc)")
+            for threshold in thresholds:
+                clusters = cluster_values(claims, vecs, threshold=threshold)
+                sizes = sorted((len(c) for c in clusters), reverse=True)
+                shown = ", ".join(str(s) for s in sizes[:15])
+                if len(sizes) > 15:
+                    shown += f", ... (+{len(sizes) - 15} more)"
+                print(f"  {threshold:>9.2f} | {len(clusters):>8} | {shown}")
 
-    print("\nPick the threshold where big cells split into a handful of coherent")
-    print("themes (not 1 giant cluster, not dozens of singletons) and set")
-    print("GROUP_SIMILARITY in config.py.")
+    print("\nProduction clusters in the CENTERED space (GROUP_CENTER_VECTORS=True).")
+    print("Pick the centered threshold where big cells split into a handful of")
+    print("coherent themes (not 1 giant cluster, not dozens of singletons) and set")
+    print("GROUP_SIMILARITY in config.py. Also sanity-read a few themes: the theme")
+    print("label is a real member claim - do its cluster-mates belong with it?")
     return 0
 
 

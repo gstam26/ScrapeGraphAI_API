@@ -20,7 +20,7 @@ bullets. Hard constraints honoured here:
 """
 import math
 
-from config import GROUP_MIN_ITEMS, GROUP_SIMILARITY, OLLAMA_DOC_PREFIX
+from config import GROUP_CENTER_VECTORS, GROUP_MIN_ITEMS, GROUP_SIMILARITY, OLLAMA_DOC_PREFIX
 from models import ExtractedCell, ExtractedRow
 from src.embed import embed_batch
 
@@ -74,6 +74,35 @@ def _display_values(cell: ExtractedCell) -> list[str]:
         seen.add(norm)
         values.append(text)
     return values
+
+
+def center_vector_map(vectors: dict[str, list[float]]) -> dict[str, list[float]]:
+    """Per-cell mean-centering (anisotropy correction, "All-but-the-Top" style).
+
+    All claims in one cell share a large common component (company + domain
+    vocabulary), which compresses raw cosines into a narrow high band — the
+    2026-07-03 calibration on real validation claims showed the 862-claim
+    HORIBA cell staying ONE cluster at any threshold <= 0.70. Subtracting the
+    cell's mean vector removes that shared component so only what
+    DISTINGUISHES claims within the cell drives similarity. Deterministic:
+    a pure function of the cell's own vectors.
+
+    A vector that IS the mean (centered norm ~ 0) keeps its raw vector so
+    cosine never divides by zero.
+    """
+    if not vectors:
+        return vectors
+    vecs = list(vectors.values())
+    dim = len(vecs[0])
+    n = len(vecs)
+    mean = [sum(v[i] for v in vecs) / n for i in range(dim)]
+    centered: dict[str, list[float]] = {}
+    for key, v in vectors.items():
+        cv = [x - m for x, m in zip(v, mean)]
+        if math.sqrt(sum(x * x for x in cv)) < 1e-9:
+            cv = list(v)
+        centered[key] = cv
+    return centered
 
 
 def cluster_values(
@@ -201,6 +230,8 @@ def group_rows(rows: list[ExtractedRow]) -> list[dict]:
 
         vectors = {v: vectors_flat[offset + i] for i, v in enumerate(values)}
         offset += len(values)
+        if GROUP_CENTER_VECTORS:
+            vectors = center_vector_map(vectors)
 
         clusters = cluster_values(values, vectors)
         display_order = {v: i for i, v in enumerate(values)}

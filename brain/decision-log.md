@@ -5,6 +5,23 @@
 
 -----
 
+## 2026-07-03 — Calibration closed: GROUP_SIMILARITY=0.15 (centered); filter recall≥0.95 operating points quantified
+
+**Grouping (centered sweep on real claims, all five big cells):** mean-centering works — real theme structure at every cell (raw was one blob). At **0.15**: HORIBA 862→19 themes, QuidelOrtho 10, Hologic 6, Aniara 8, Monobind 6 — all in the scannable range. The provisional 0.30 would have fragmented HORIBA into 93 clusters. Set `GROUP_SIMILARITY = 0.15`; 0.10 noted as the tighter alternative (5–12 themes). **Remaining human step before the sheet goes in a client deliverable: sanity-read theme coherence** (cluster counts can't prove members belong together; the sheet is additive/optional so this is a review gate, not a launch blocker).
+
+**Filter (full sweep, NEW queries, recall-first per the 2026-06-15 asymmetry):** highest threshold keeping recall ≥ 0.95, with the extraction-call saving it buys (score-only; the keyword-gate OR adds recall on top):
+
+| Question | threshold | precision | recall | calls skipped |
+|---|---|---|---|---|
+| Company type | 0.63 | 0.517 | 0.968 | 14.3% |
+| Diagnostics type | 0.61 | 0.536 | 0.977 | 7.0% |
+| R&D location | 0.58 | 0.109 | 0.974 | **1.0%** |
+| Recent news | 0.58 | 0.400 | 0.967 | 14.0% |
+
+**Honest reading:** the fix made the filter *measurably work* (AUC 0.728), but at quality-safe recall it saves only ~7–14% of extraction calls on three questions and ~nothing on R&D location — confirming "never gate R&D location" and keeping **passthrough as the right mode while quality is the priority**. The likely bigger payoff of instruction-aware queries is the crawl-side link scorer (better page selection with the same budget) — not yet re-measured; needs a sample crawl re-run when fetch credits/backend allow.
+
+-----
+
 ## 2026-07-03 — Work-laptop measurements: filter fix VALIDATED (AUC 0.636→0.728); raw-cosine grouping REFUTED → mean-centering added
 
 **Filter (validated):** `filter_recalibration.py` on all 343 cached validation pages. Harness self-check passed — re-scored name-only queries reproduce the baseline AUC to 3 decimals (0.636), so the measurement is trustworthy. New name+instruction queries: **overall AUC 0.636 → 0.728**; per-question 0.607→0.746 (Company type), 0.547→0.719 (Diagnostics), 0.623→**0.792** (R&D location), 0.745→0.756 (Recent news). Diagnosis confirmed end-to-end.

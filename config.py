@@ -278,13 +278,13 @@ GROUP_MIN_ITEMS = 6
 # comparison via diagnostics/group_calibration.py.
 GROUP_CENTER_VECTORS = True
 
-# Centroid-cosine threshold for joining an existing cluster. NOTE: applies in
-# the CENTERED space when GROUP_CENTER_VECTORS is True (centered cosines run
-# much lower than raw ones). 0.30 is a provisional default — run
-# diagnostics/group_calibration.py against the validation workbook on the
-# work laptop (Ollama reachable) to pick the final value from the
-# centered-space sweep.
-GROUP_SIMILARITY = 0.30
+# Centroid-cosine threshold for joining an existing cluster. Applies in the
+# CENTERED space (GROUP_CENTER_VECTORS=True). Calibrated 2026-07-03 on the
+# five biggest validation cells (65-862 claims): 0.15 puts every cell in the
+# scannable 6-19 theme range (HORIBA 862 news items -> 19 themes; the
+# provisional 0.30 fragmented it into 93). 0.10 is the tighter alternative
+# (5-12 themes) if themes read as over-split.
+GROUP_SIMILARITY = 0.15
 
 # ============================================================
 # AGGREGATION DIAGNOSTICS

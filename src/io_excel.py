@@ -38,6 +38,7 @@ _LORANGE_FILL = "FFF3E0"  # light orange for mixed verified/unverified
 _TAB_COLORS = {
     "Summary": "2E4057",
     "Matrix": "4CAF50",
+    "Digest": "8BC34A",
     "Provenance": "009688",
     "Grouped Themes": "8BC34A",
     "Acquire Log": "FF9800",
@@ -435,13 +436,26 @@ def _make_matrix_df(
     return df, fills
 
 
+def _norm_claim(text) -> str:
+    # Mirrors aggregate.py/group.py _normalise_value so claim-ID lookups from
+    # the Grouped Themes / Digest builders land on the same Provenance rows.
+    return " ".join(str(text).strip().lower().split())
+
+
 def _make_provenance_df(
     result: PipelineResult,
     columns: list[ColumnSpec],
     diag: dict | None,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, dict]:
+    """Returns (df, claim_index).
+
+    claim_index maps (entity, question, normalised claim) -> (claim_id,
+    provenance_excel_row) for the FIRST occurrence of each claim — the anchor
+    the Grouped Themes and Digest sheets hyperlink back to. Claim IDs are
+    sequential in Provenance order, which is deterministic (spec merge order).
+    """
     col_names = [
-        "Entity", "Source URL", "Question", "Claim", "Verbatim Quote",
+        "Claim ID", "Entity", "Source URL", "Question", "Claim", "Verbatim Quote",
         "Page Title", "Extraction Method", "Confidence Score", "Verified",
         "Verification Score", "Match Type", "Semantic Score", "Source Page Depth",
     ]
@@ -452,6 +466,7 @@ def _make_provenance_df(
             url_to_depth[r.get("page_url", "")] = r.get("depth", 0)
 
     rows = []
+    claim_index: dict[tuple[str, str, str], tuple[str, int]] = {}
     for entity_row in result.rows:
         src = entity_row.all_cells  # always granular — never read aggregated cells here
         for cell in src:
@@ -461,8 +476,14 @@ def _make_provenance_df(
                 score = ev.verification_score
                 verified = ev.verified
                 source_url = ev.source_url or cell.source_url
+                claim_id = f"C{len(rows) + 1:04d}"
+                entity = cell.entity or entity_row.entity
+                key = (entity, cell.column, _norm_claim(ev.value))
+                if key not in claim_index:
+                    claim_index[key] = (claim_id, len(rows) + 2)  # +2: 1-based + header
                 rows.append({
-                    "Entity": cell.entity or entity_row.entity,
+                    "Claim ID": claim_id,
+                    "Entity": entity,
                     "Source URL": source_url,
                     "Question": cell.column,
                     "Claim": str(ev.value),
@@ -477,38 +498,138 @@ def _make_provenance_df(
                     "Source Page Depth": url_to_depth.get(source_url, 0),
                 })
 
-    return pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
+    df = pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
+    return df, claim_index
 
 
-def _make_grouped_themes_df(claim_groups: list[dict]) -> pd.DataFrame:
+def _group_claim_refs(group: dict, claim_index: dict) -> tuple[list[tuple[str, str]], tuple[str, int] | None]:
+    """Resolve a theme's member values against the Provenance claim index.
+
+    Returns ([(value, claim_id_or_empty)], anchor) where anchor is the
+    (claim_id, provenance_excel_row) of the theme-label claim itself, falling
+    back to the first member that resolved — the row the theme hyperlinks to.
+    """
+    entity = group.get("entity", "")
+    question = group.get("question", "")
+
+    def _lookup(value) -> tuple[str, int] | None:
+        return claim_index.get((entity, question, _norm_claim(value)))
+
+    pairs: list[tuple[str, str]] = []
+    anchor = _lookup(group.get("theme", ""))
+    for v in group.get("values", []):
+        if v in (None, "", []):
+            continue
+        hit = _lookup(v)
+        pairs.append((str(v).strip(), hit[0] if hit else ""))
+        if anchor is None and hit is not None:
+            anchor = hit
+    return pairs, anchor
+
+
+def _make_grouped_themes_df(
+    claim_groups: list[dict],
+    claim_index: dict,
+) -> tuple[pd.DataFrame, dict[int, int]]:
     """Grouped Themes sheet: deterministic claim clusters per aggregated cell.
 
+    Traceability (Advisory requirement): every bullet carries its Provenance
+    claim ID (`[C0042]`), a "Claim IDs" column lists the theme's references,
+    and the returned theme_links map {sheet_excel_row: provenance_excel_row}
+    is used post-write to hyperlink each Theme cell to its anchor claim.
+
     Mirrors the Matrix writer's display conventions without touching it:
-    bullets are capped at MATRIX_MAX_DISPLAY_ITEMS with the same
-    "[+N more items — see Provenance]" overflow marker, and the final text
-    goes through _clamp_cell_text so Excel's hard cell limit is never hit
-    silently. Every member claim remains fully listed in Provenance.
+    bullets capped at MATRIX_MAX_DISPLAY_ITEMS with the same overflow marker,
+    final text clamped below Excel's hard cell limit. Every member claim
+    remains fully listed in Provenance.
     """
-    col_names = ["Entity", "Question", "Theme", "Items", "Values", "Distinct Sources"]
+    col_names = ["Entity", "Question", "Theme", "Items", "Values", "Claim IDs", "Distinct Sources"]
     rows = []
+    theme_links: dict[int, int] = {}
     for group in claim_groups:
-        values = [str(v).strip() for v in group.get("values", []) if v not in (None, "", [])]
+        pairs, anchor = _group_claim_refs(group, claim_index)
         hidden = 0
-        if len(values) > MATRIX_MAX_DISPLAY_ITEMS:
-            hidden = len(values) - MATRIX_MAX_DISPLAY_ITEMS
-            values = values[:MATRIX_MAX_DISPLAY_ITEMS]
-        text = "\n".join("- " + v for v in values)
+        if len(pairs) > MATRIX_MAX_DISPLAY_ITEMS:
+            hidden = len(pairs) - MATRIX_MAX_DISPLAY_ITEMS
+            pairs = pairs[:MATRIX_MAX_DISPLAY_ITEMS]
+        bullets = [
+            f"- {value} [{cid}]" if cid else f"- {value}"
+            for value, cid in pairs
+        ]
+        text = "\n".join(bullets)
         if hidden:
             text += f"\n[+{hidden} more items — see Provenance]"
+
+        ids = [cid for _, cid in pairs if cid]
+        ids_text = ", ".join(ids)
+        if hidden:
+            ids_text += f" (+{hidden} more)"
+
+        excel_row = len(rows) + 2  # 1-based + header
+        if anchor is not None:
+            theme_links[excel_row] = anchor[1]
         rows.append({
             "Entity": group.get("entity", ""),
             "Question": group.get("question", ""),
             "Theme": group.get("theme", ""),
             "Items": group.get("n_items", ""),
             "Values": _clamp_cell_text(text),
+            "Claim IDs": _clamp_cell_text(ids_text),
             "Distinct Sources": group.get("sources", ""),
         })
-    return pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
+    df = pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
+    return df, theme_links
+
+
+def _make_digest_df(
+    claim_groups: list[dict],
+    claim_index: dict,
+) -> tuple[pd.DataFrame, dict[int, int]]:
+    """Digest sheet: one deterministic template line per grouped cell.
+
+    NO LLM — the text is assembled mechanically from the theme structure, so
+    it is faithful and traceable by construction: theme labels are verbatim
+    member claims and each carries its Provenance claim ID. Returns
+    (df, digest_links) where digest_links maps {digest_excel_row:
+    grouped_themes_excel_row} for post-write hyperlinking.
+    """
+    from src.group import ALL_ITEMS_THEME
+
+    col_names = ["Entity", "Question", "Items", "Themes", "Digest"]
+    # Preserve claim_groups order; remember each cell's first Grouped Themes row.
+    cells: dict[tuple[str, str], dict] = {}
+    for i, group in enumerate(claim_groups):
+        key = (group.get("entity", ""), group.get("question", ""))
+        entry = cells.setdefault(key, {"groups": [], "first_row": i + 2})
+        entry["groups"].append(group)
+
+    rows = []
+    digest_links: dict[int, int] = {}
+    for (entity, question), entry in cells.items():
+        groups = entry["groups"]
+        total = sum(g.get("n_items", 0) for g in groups)
+        real = [g for g in groups if g.get("theme") != ALL_ITEMS_THEME]
+        if not real:
+            digest = f"{total} items (below grouping threshold — see Grouped Themes)."
+        else:
+            tops = []
+            for g in real[:3]:  # groups arrive size-desc from group_rows
+                label = str(g.get("theme", "")).strip()
+                hit = claim_index.get((entity, question, _norm_claim(label)))
+                ref = f" [{hit[0]}]" if hit else ""
+                tops.append(f"“{label}” ({g.get('n_items', '?')} items){ref}")
+            digest = f"{total} items across {len(groups)} themes. Top: " + "; ".join(tops) + "."
+        excel_row = len(rows) + 2
+        digest_links[excel_row] = entry["first_row"]
+        rows.append({
+            "Entity": entity,
+            "Question": question,
+            "Items": total,
+            "Themes": len(groups),
+            "Digest": _clamp_cell_text(digest),
+        })
+    df = pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
+    return df, digest_links
 
 
 # Workbook formatting
@@ -601,7 +722,7 @@ def write_output_excel(
 
     summary_df = _make_summary_df(diag, result)
     matrix_df, matrix_fills = _make_matrix_df(result, columns)
-    provenance_df = _make_provenance_df(result, columns, diag)
+    provenance_df, claim_index = _make_provenance_df(result, columns, diag)
 
     acq_col_keys = [
         "entities", "seed_url", "page_url", "parent_url", "depth", "crawl_score",
@@ -656,11 +777,18 @@ def write_output_excel(
         ("Provenance", provenance_df),
     ]
 
-    # Grouped Themes is deliverable-facing (consultant view of big cells), so
-    # it is written whenever grouping produced rows — NOT gated on DIAGNOSTICS.
+    # Digest + Grouped Themes are deliverable-facing (consultant view of big
+    # cells), written whenever grouping produced rows — NOT gated on
+    # DIAGNOSTICS. Traceability chain: Digest -> Grouped Themes -> Provenance
+    # (claim IDs + internal hyperlinks) -> source URL.
     claim_groups = (diag or {}).get("claim_groups") or []
+    theme_links: dict[int, int] = {}
+    digest_links: dict[int, int] = {}
     if claim_groups:
-        sheets.append(("Grouped Themes", _make_grouped_themes_df(claim_groups)))
+        themes_df, theme_links = _make_grouped_themes_df(claim_groups, claim_index)
+        digest_df, digest_links = _make_digest_df(claim_groups, claim_index)
+        sheets.insert(2, ("Digest", digest_df))  # after Matrix, before Provenance
+        sheets.append(("Grouped Themes", themes_df))
 
     if write_diag:
         sheets += [
@@ -679,4 +807,30 @@ def write_output_excel(
     for ws in wb.worksheets:
         fills = matrix_fills if ws.title == "Matrix" else None
         _style_sheet(ws, _TAB_COLORS.get(ws.title, _HEADER_FILL), matrix_fills=fills)
+
+    # Traceability hyperlinks (applied after styling so the link font wins).
+    link_font = Font(name="Arial", size=9, color="0563C1", underline="single")
+    if theme_links and "Grouped Themes" in wb.sheetnames:
+        ws = wb["Grouped Themes"]
+        for row, prov_row in theme_links.items():
+            c = ws.cell(row=row, column=3)  # Theme
+            c.hyperlink = f"#Provenance!A{prov_row}"
+            c.font = link_font
+    if digest_links and "Digest" in wb.sheetnames and "Grouped Themes" in wb.sheetnames:
+        ws = wb["Digest"]
+        for row, gt_row in digest_links.items():
+            c = ws.cell(row=row, column=2)  # Question
+            c.hyperlink = f"#'Grouped Themes'!A{gt_row}"
+            c.font = link_font
+    if "Provenance" in wb.sheetnames:
+        # Source URL column (C) as real links — the last hop of the chain.
+        # Excel caps workbook hyperlinks around 65k; stay well below.
+        ws = wb["Provenance"]
+        for row in range(2, min(ws.max_row, 20000) + 1):
+            c = ws.cell(row=row, column=3)
+            url = str(c.value or "")
+            if url.startswith("http"):
+                c.hyperlink = url
+                c.font = link_font
+
     wb.save(output_path)

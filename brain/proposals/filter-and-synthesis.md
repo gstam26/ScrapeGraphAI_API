@@ -46,6 +46,8 @@ Cluster the verified claims *within* a cell into themes (HORIBA's ~600 news item
 
 ### 2b. Summarization — LLM, risky, needs a guardrail decision
 
+> **RESOLVED 2026-07-03 (George, with Nick's delegation):** the Advisory requirement is traceability, which settles the design — the **deterministic template Digest** was built (one mechanical line per grouped cell, theme labels = verbatim claims, every reference a Provenance claim ID, faithful by construction). Traceability chain shipped: **Digest → Grouped Themes → Provenance (claim IDs + internal hyperlinks) → source-URL links.** Free-text LLM synthesis remains the future option below, still gated on the faithfulness eval if ever wanted.
+
 Synthesizing prose ("In 2026 HORIBA announced ~15 product launches and 8 regulatory clearances…") is where the architecture pushes back hard, and I won't quietly build past it:
 
 - **Verifiability:** the pipeline's core trust claim is *every* output value has a verbatim source quote we verified. A summary is synthesized text with no single source span — it structurally cannot be verified the same way. Drop it into the Matrix and the reliability guarantee dies.

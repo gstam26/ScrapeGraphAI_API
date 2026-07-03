@@ -5,6 +5,22 @@
 
 -----
 
+## 2026-07-03 — Traceability chain shipped: claim IDs + Digest sheet + hyperlinks (summarization decision resolved: deterministic)
+
+**Context:** Nick delegated the summarization call to George; George's requirement: Advisory needs grouping and summary **traceable to claims**, ideally with hyperlinked references. That requirement settles Part 2b of `proposals/filter-and-synthesis.md`: a deterministic template digest is faithful and traceable *by construction*; LLM prose would need a faithfulness eval to earn the same trust. Deterministic chosen; LLM prose stays a written future option.
+
+**Built (io_excel only — pipeline/aggregate/group logic untouched):**
+1. **Claim IDs**: Provenance gains a `Claim ID` first column (`C0001…`, sequential in deterministic Provenance order). First occurrence per (entity, question, normalised claim) is the anchor row.
+2. **Grouped Themes**: every bullet carries its claim ID (`- claim text [C0042]`), new `Claim IDs` column lists the theme's references, and each Theme cell is an Excel-internal hyperlink to its anchor Provenance row.
+3. **NEW Digest sheet** (after Matrix): one template line per grouped cell — `"N items across K themes. Top: “label” (n) [C####]; …"` — assembled mechanically from the theme structure (labels are verbatim member claims). Question cell hyperlinks to the cell's rows in Grouped Themes.
+4. **Provenance Source URL cells are real hyperlinks** (capped at 20k rows, well under Excel's ~65k workbook limit) — the final hop to the source page.
+
+**Chain: Digest → Grouped Themes → Provenance → source URL.** Matrix untouched (locked plant-milk metrics safe); the eval pipeline_reader reads Provenance by column NAME, so the added first column is compatible (verified). Claim IDs + URL links work even when grouping is off — Provenance traceability doesn't depend on grouping.
+
+**Verification:** `tests/test_traceability.py` (6 tests) exercises the full chain on a written workbook read back with openpyxl — sequential unique IDs, bullet citations, exact hyperlink targets on Theme/Digest cells, source-URL links, and the no-groups degradation. Suite: **114 passed**.
+
+-----
+
 ## 2026-07-03 — Calibration closed: GROUP_SIMILARITY=0.15 (centered); filter recall≥0.95 operating points quantified
 
 **Grouping (centered sweep on real claims, all five big cells):** mean-centering works — real theme structure at every cell (raw was one blob). At **0.15**: HORIBA 862→19 themes, QuidelOrtho 10, Hologic 6, Aniara 8, Monobind 6 — all in the scannable range. The provisional 0.30 would have fragmented HORIBA into 93 clusters. Set `GROUP_SIMILARITY = 0.15`; 0.10 noted as the tighter alternative (5–12 themes). **Remaining human step before the sheet goes in a client deliverable: sanity-read theme coherence** (cluster counts can't prove members belong together; the sheet is additive/optional so this is a review gate, not a launch blocker).

@@ -297,7 +297,7 @@ def test_grouped_themes_sheet_written_with_cap_marker(tmp_path):
 
     ws = wb["Grouped Themes"]
     header = [c.value for c in ws[1]]
-    assert header == ["Entity", "Question", "Theme", "Items", "Values", "Distinct Sources"]
+    assert header == ["Entity", "Question", "Theme", "Items", "Values", "Claim IDs", "Distinct Sources"]
 
     values_cell = ws.cell(row=2, column=5).value
     bullets = [line for line in values_cell.split("\n") if line.startswith("- ")]

@@ -178,6 +178,16 @@ PAGE_TYPE_ALPHA = 0.4
 # choices don't live as uncommitted config.py edits that block every git pull.
 FILTER_MODE = os.getenv("FILTER_MODE", "threshold")
 
+# When True (default), semantic-routing queries embed the column NAME plus its
+# INSTRUCTION ("R&D location. In which country does the company conduct its
+# R&D? ...") instead of the 2-3 word name alone. The instruction is a 30-50
+# word discriminative probe; name-only queries barely discriminate on ADLM
+# (score-vs-answered AUC 0.64 on the 2026-07-02 validation run). Applies to
+# both the Filter (score_page_columns) and the crawler's baseline embed link
+# scorer. Exists as a flag purely for before/after A-B comparison: set False
+# to restore the old name-only queries.
+QUERY_INCLUDES_INSTRUCTION = True
+
 # Minimum cosine similarity between page text and a question for that column
 # to be included in extraction. 0.35 keeps clearly irrelevant pages out while
 # being lenient enough not to drop borderline-relevant content.

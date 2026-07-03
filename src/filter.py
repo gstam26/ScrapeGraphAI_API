@@ -7,6 +7,7 @@ from config import (
     FILTER_THRESHOLD,
     OLLAMA_DOC_PREFIX,
     OLLAMA_QUERY_PREFIX,
+    QUERY_INCLUDES_INSTRUCTION,
 )
 from models import ColumnSpec, PageDoc, RoutedPage
 from src.embed import embed_batch
@@ -24,9 +25,30 @@ _STOP = frozenset({
     "does", "did", "do", "can", "could", "should", "would", "will",
 })
 
-# Question embeddings cached by column-name tuple — computed once per unique
-# column set per process, not once per page.
+# Question embeddings cached by the tuple of ACTUAL query texts (not column
+# names) — computed once per unique query set per process, not once per page.
+# Keying on query texts rather than names means flipping
+# QUERY_INCLUDES_INSTRUCTION (or editing an instruction) can never silently
+# reuse stale name-only embeddings.
 _question_emb_cache: dict[tuple[str, ...], list[list[float]]] = {}
+
+
+def query_text(col) -> str:
+    """Semantic-routing query text for a column.
+
+    With QUERY_INCLUDES_INSTRUCTION (config) enabled, returns
+    "<name>. <instruction>" when the column carries a non-empty instruction —
+    the instruction is a 30-50 word discriminative probe, far richer than the
+    2-3 word name. Falls back to the bare name otherwise (and when the flag
+    is False, restoring the old name-only behaviour for A-B comparison).
+
+    Shared by the Filter (score_page_columns) and the crawler's baseline
+    embed link scorer so both route on the same query.
+    """
+    instruction = (getattr(col, "instruction", None) or "").strip()
+    if QUERY_INCLUDES_INSTRUCTION and instruction:
+        return f"{col.name}. {instruction}"
+    return col.name
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -83,8 +105,10 @@ def score_page_columns(text: str, columns: list[ColumnSpec]) -> dict[str, float]
     Return max-chunk cosine similarity per column name.
 
     Chunks *text* with _chunk_text(), embeds all chunks in one call, then
-    takes the per-column max cosine across chunks. Question embeddings are
-    cached per unique column set (computed once per process, not per page).
+    takes the per-column max cosine across chunks. Query texts come from
+    query_text() (name + instruction when QUERY_INCLUDES_INSTRUCTION is set).
+    Question embeddings are cached per unique query-text set (computed once
+    per process, not per page).
 
     Raises on embedding failure — callers should wrap in try/except.
     Returns {} when text or columns is empty.
@@ -93,15 +117,19 @@ def score_page_columns(text: str, columns: list[ColumnSpec]) -> dict[str, float]
         return {}
 
     all_names = [col.name for col in columns]
-    cache_key = tuple(all_names)
+    query_texts = [query_text(col) for col in columns]
+    # Cache key MUST be the actual query texts: keying on names alone would
+    # silently reuse stale name-only embeddings after the instruction-aware
+    # query change (or across a QUERY_INCLUDES_INSTRUCTION flip).
+    cache_key = tuple(query_texts)
     chunks = _chunk_text(text)
     chunk_texts = [OLLAMA_DOC_PREFIX + c for c in chunks]
 
     if cache_key not in _question_emb_cache:
-        question_texts = [OLLAMA_QUERY_PREFIX + name for name in all_names]
+        question_texts = [OLLAMA_QUERY_PREFIX + q for q in query_texts]
         all_embs = embed_batch(question_texts + chunk_texts)
-        _question_emb_cache[cache_key] = all_embs[:len(all_names)]
-        chunk_embs = all_embs[len(all_names):]
+        _question_emb_cache[cache_key] = all_embs[:len(query_texts)]
+        chunk_embs = all_embs[len(query_texts):]
     else:
         chunk_embs = embed_batch(chunk_texts)
 
@@ -140,6 +168,9 @@ def filter_page(
         page_text_lower = page.text.lower()
 
         # Step 1: compute scores and keyword gate for every column.
+        # The keyword gate stays on the column NAME only (never the
+        # instruction): instruction words like "check", "pages", "company"
+        # are generic and would over-fire the gate on almost every page.
         col_info: dict[str, tuple[float, bool]] = {}
         for name, max_score in scores.items():
             kw_gate = any(kw in page_text_lower for kw in _keywords(name))

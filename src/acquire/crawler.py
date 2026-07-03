@@ -23,6 +23,7 @@ from src.acquire.link_scorer import (
     score_links_embed_experimental,
 )
 from src.acquire.acquire_models import EntityDoc, LinkCandidate
+from src.filter import query_text
 
 
 # ── Crawl planner ─────────────────────────────────────────────────────────────
@@ -431,8 +432,10 @@ def crawl_entity(
                 print(f"    ! Experimental scorer failed ({exc}); falling back to baseline")
                 if SCORER_TOOL == "ollama":
                     try:
-                        questions = [col.name for col in columns]
-                        scored_children = score_links_embed(unvisited, questions)
+                        # Instruction-aware queries (shared query_text helper,
+                        # QUERY_INCLUDES_INSTRUCTION flag) — same fix as Filter.
+                        link_queries = [query_text(col) for col in columns]
+                        scored_children = score_links_embed(unvisited, link_queries)
                     except Exception as embed_exc:
                         print(f"    ! Ollama scorer failed ({embed_exc}); falling back to BM25")
                         scored_children = score_links(unvisited, crawl_query)
@@ -442,8 +445,10 @@ def crawl_entity(
                     scored_children.sort(key=lambda c: c.score, reverse=True)
         elif SCORER_TOOL == "ollama":
             try:
-                questions = [col.name for col in columns]
-                scored_children = score_links_embed(unvisited, questions)
+                # Instruction-aware queries (shared query_text helper,
+                # QUERY_INCLUDES_INSTRUCTION flag) — same fix as Filter.
+                link_queries = [query_text(col) for col in columns]
+                scored_children = score_links_embed(unvisited, link_queries)
             except Exception as exc:
                 print(f"    ! Ollama scorer failed ({exc}); falling back to BM25")
                 scored_children = score_links(unvisited, crawl_query)

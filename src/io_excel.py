@@ -39,6 +39,7 @@ _TAB_COLORS = {
     "Summary": "2E4057",
     "Matrix": "4CAF50",
     "Provenance": "009688",
+    "Grouped Themes": "8BC34A",
     "Acquire Log": "FF9800",
     "Crawl Candidates": "FF9800",
     "Filter Log": "2196F3",
@@ -479,6 +480,37 @@ def _make_provenance_df(
     return pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
 
 
+def _make_grouped_themes_df(claim_groups: list[dict]) -> pd.DataFrame:
+    """Grouped Themes sheet: deterministic claim clusters per aggregated cell.
+
+    Mirrors the Matrix writer's display conventions without touching it:
+    bullets are capped at MATRIX_MAX_DISPLAY_ITEMS with the same
+    "[+N more items — see Provenance]" overflow marker, and the final text
+    goes through _clamp_cell_text so Excel's hard cell limit is never hit
+    silently. Every member claim remains fully listed in Provenance.
+    """
+    col_names = ["Entity", "Question", "Theme", "Items", "Values", "Distinct Sources"]
+    rows = []
+    for group in claim_groups:
+        values = [str(v).strip() for v in group.get("values", []) if v not in (None, "", [])]
+        hidden = 0
+        if len(values) > MATRIX_MAX_DISPLAY_ITEMS:
+            hidden = len(values) - MATRIX_MAX_DISPLAY_ITEMS
+            values = values[:MATRIX_MAX_DISPLAY_ITEMS]
+        text = "\n".join("- " + v for v in values)
+        if hidden:
+            text += f"\n[+{hidden} more items — see Provenance]"
+        rows.append({
+            "Entity": group.get("entity", ""),
+            "Question": group.get("question", ""),
+            "Theme": group.get("theme", ""),
+            "Items": group.get("n_items", ""),
+            "Values": _clamp_cell_text(text),
+            "Distinct Sources": group.get("sources", ""),
+        })
+    return pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
+
+
 # Workbook formatting
 
 def _style_sheet(ws, tab_color: str, matrix_fills: dict | None = None) -> None:
@@ -623,6 +655,12 @@ def write_output_excel(
         ("Matrix", matrix_df),
         ("Provenance", provenance_df),
     ]
+
+    # Grouped Themes is deliverable-facing (consultant view of big cells), so
+    # it is written whenever grouping produced rows — NOT gated on DIAGNOSTICS.
+    claim_groups = (diag or {}).get("claim_groups") or []
+    if claim_groups:
+        sheets.append(("Grouped Themes", _make_grouped_themes_df(claim_groups)))
 
     if write_diag:
         sheets += [

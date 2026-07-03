@@ -246,6 +246,26 @@ DIAGNOSTICS = True  # True = all 7 sheets; False = Summary, Matrix, Provenance o
 MATRIX_MAX_DISPLAY_ITEMS = 50
 
 # ============================================================
+# GROUPING (deterministic themes sheet)
+# ============================================================
+
+# Cluster the claims inside each aggregated Matrix cell into themes and write
+# them as a "Grouped Themes" sheet. Deterministic (embeddings + fixed-threshold
+# greedy clustering, no LLM); the Matrix/Provenance chain is untouched. Fails
+# soft: if Ollama is unreachable the sheet is simply absent, the run unaffected.
+GROUPING_ENABLED = True
+
+# Cells with fewer distinct values than this aren't worth clustering — they
+# are emitted as a single "(all items)" group without any embedding call.
+GROUP_MIN_ITEMS = 6
+
+# Centroid-cosine threshold for joining an existing cluster (nomic-embed
+# cosine). Starting default pending calibration on real claim data — run
+# diagnostics/group_calibration.py against the validation workbook on the
+# work laptop (Ollama reachable) to pick the final value.
+GROUP_SIMILARITY = 0.62
+
+# ============================================================
 # AGGREGATION DIAGNOSTICS
 # ============================================================
 

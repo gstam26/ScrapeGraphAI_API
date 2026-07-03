@@ -16,10 +16,12 @@ from config import (
     EXTRACT_TOOL,
     EXTRACT_PAGE_WORKERS,
     FETCH_BACKEND,
+    GROUPING_ENABLED,
     PIPELINE_ENTITY_WORKERS,
     REQUEST_HEADERS,
 )
 from src.aggregate import aggregate_cells, _is_list_column
+from src.group import group_rows
 from src.extract import extract_cells
 from src.filter import filter_page
 from models import ColumnSpec, Config, ExtractedRow, PageDoc, PipelineInput, PipelineResult, UrlSpec
@@ -385,5 +387,17 @@ def run_pipeline(
             cells=final_cells,
             all_cells=all_cells,
         ))
+
+    # Deterministic claim grouping (Grouped Themes sheet). Strictly additive:
+    # reads the aggregated rows, never mutates them. Any failure — including
+    # an unreachable Ollama host off-network — only skips the sheet; the run
+    # itself must never fail because of grouping.
+    if GROUPING_ENABLED:
+        try:
+            claim_groups = group_rows(rows)
+            if claim_groups:
+                diag["claim_groups"] = claim_groups
+        except Exception as exc:
+            _safe_print(f"! Grouping skipped: {exc}")
 
     return PipelineResult(rows=rows), diag

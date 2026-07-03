@@ -4,6 +4,15 @@ One entry per lesson; one-line summary on top of each. Both corrections and conf
 
 ---
 
+## Build a null-check into every measurement harness
+The filter recalibration re-scored cached pages with the OLD queries alongside the new ones; the old-query AUC reproduced the baseline to three decimals, proving the harness itself was faithful before we trusted the improvement (0.636→0.728). A before/after comparison without that null leg can't distinguish "the fix worked" from "the harness measures differently." (2026-07-03, filter validation.)
+
+## Absolute cosine thresholds don't transfer across embedding anisotropy — calibrate in the deployed geometry
+Grouping worked perfectly on orthogonal test vectors and produced one giant blob on real claims at every threshold: claims within a cell share a dominant company/domain component that compresses raw cosines into a narrow band (the same compression seen in filter scores). Fix was per-cell mean-centering, not threshold tuning. Rule: whenever a similarity threshold "works in tests but not on real data," suspect the geometry before the threshold — and calibrate on real data from the deployed domain. (2026-07-03, group calibration.)
+
+## Optimise the metric the error asymmetry demands, not the default one
+The threshold sweep's best-F1 operating point for R&D location had recall 0.526 — F1 balances precision and recall, but a filter false negative is an unrecoverable lost answer while a false positive costs one LLM call. The right operating point is recall-first (≥0.95), chosen from the same sweep. Defaults like best-F1 encode an error trade-off; check it matches yours. (2026-07-03, filter thresholds.)
+
 ## Audit subagent reports with cheap mechanical checks, not re-reads
 The grouping agent reported "11 new tests"; `pytest --collect-only` showed 12 — harmless here, but the same class of error could hide a failure. Counts, SHAs, and table numbers from a subagent are one `--collect-only` / one script re-run away from verified; always spend that minute. Same session: re-ran both diagnostics from the merged main tree rather than trusting the worktree output. (2026-07-03, filter/grouping integration.)
 

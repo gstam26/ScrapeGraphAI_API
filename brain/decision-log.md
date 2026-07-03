@@ -5,6 +5,15 @@
 
 -----
 
+## 2026-07-03 — Work-laptop measurements: filter fix VALIDATED (AUC 0.636→0.728); raw-cosine grouping REFUTED → mean-centering added
+
+**Filter (validated):** `filter_recalibration.py` on all 343 cached validation pages. Harness self-check passed — re-scored name-only queries reproduce the baseline AUC to 3 decimals (0.636), so the measurement is trustworthy. New name+instruction queries: **overall AUC 0.636 → 0.728**; per-question 0.607→0.746 (Company type), 0.547→0.719 (Diagnostics), 0.623→**0.792** (R&D location), 0.745→0.756 (Recent news). Diagnosis confirmed end-to-end.
+**Threshold decision — do NOT adopt the best-F1 thresholds:** best-F1 optimises the wrong objective. A filter false negative is an unrecoverable lost answer (2026-06-15 asymmetry), and at best-F1 the R&D-location operating point has recall 0.526 — it would discard ~47% of the starved question's answer-pages to save extraction calls we aren't currently paying for. Also the sweep understates production recall (routing is score ≥ t OR keyword-gate; the sweep measures score alone). **Policy: stay passthrough while runs are validation-scale; when cost matters again (paid 182-scale runs), pick per-question thresholds at the recall ≥ 0.95 operating point from the full sweep in `adlm-outputs/filter_recalibration.xlsx`, and consider never gating R&D location.**
+
+**Grouping (refuted, fixed):** `group_calibration.py` on real claims — at every threshold ≤ 0.70 the 862-claim HORIBA cell stays ONE cluster (816/862 even at 0.70; 668+104+fragments at 0.75, still not themes). Root cause: claims within a cell share a dominant company/domain embedding component; raw cosines compress into a narrow high band (same anisotropy family as the filter-score compression). Fix (commit f20a82a): per-cell mean-centering (`center_vector_map`, All-but-the-Top style, deterministic) behind `GROUP_CENTER_VECTORS=True`; `GROUP_SIMILARITY` → 0.30 provisional in centered space; calibration script now sweeps RAW and CENTERED so one re-run picks the final value; the one-blob failure geometry is reproduced in a test and centering's separation proven. **Pending: one work-laptop re-run of `group_calibration.py` + a theme-coherence sanity read before trusting the sheet.**
+
+-----
+
 ## 2026-07-03 — Filter routes on name+instruction; deterministic Grouped Themes layer added (Nick's quality pivot)
 
 **Context:** Nick redirected: no big batch runs (credits out), focus extraction quality — make Filter work, add grouping/summarization at Aggregate. Diagnosis already on record (`proposals/filter-and-synthesis.md`): Filter embedded only the 2–3 word column NAME as its query (`filter.py`), discarding the 30–50 word instruction; measured score-vs-answered AUC on the validation run was 0.64 overall (0.55–0.74 per question) — why passthrough was on. Twin defect in the crawl link-scorer call sites.

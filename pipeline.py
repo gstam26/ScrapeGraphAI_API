@@ -1,3 +1,4 @@
+import sys
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -55,6 +56,23 @@ def _build_config(overrides: dict[str, Any] | None = None) -> Config:
             setattr(cfg, attr, value)
 
     return cfg
+
+
+def _safe_print(msg: str) -> None:
+    """Print that never raises on encoding.
+
+    A workbook entity name or URL containing a character outside the
+    console's active codepage (common on Windows without PYTHONIOENCODING
+    set) would otherwise raise UnicodeEncodeError from a bare print() call —
+    2026-07-03 code review found this sitting outside _process_url_spec's
+    try block, where it propagated through the unguarded future.result() in
+    run_pipeline and discarded every already-completed entity's results.
+    """
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+        print(msg.encode(encoding, errors="replace").decode(encoding))
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -162,7 +180,7 @@ def _process_url_spec(
         "error": None,
     }
 
-    print(
+    _safe_print(
         f"\n  Processing URL: {spec.url}"
         + (f"  [crawl depth={depth}]" if depth > 0 else "")
         + f"  [entities: {', '.join(relevant_entities)}]"
@@ -185,7 +203,7 @@ def _process_url_spec(
         result["pages"] = pages
 
         elapsed_acquire = _format_elapsed(time.time() - t_acquire)
-        print(f"    OK Acquire [{spec.url}]: {len(pages)} page(s) - {elapsed_acquire}")
+        _safe_print(f"    OK Acquire [{spec.url}]: {len(pages)} page(s) - {elapsed_acquire}")
 
         # ========== FILTER & EXTRACT & VERIFY ==========
         t_extract = time.time()
@@ -244,10 +262,10 @@ def _process_url_spec(
         t_extract_end = time.time()
         result["extract_time_ms"] = int((t_extract_end - t_extract) * 1000)
         elapsed_extract = _format_elapsed(t_extract_end - t_extract)
-        print(f"    OK Filter+Extract+Verify [{spec.url}]: {len(url_cells)} cell(s) - {elapsed_extract}")
+        _safe_print(f"    OK Filter+Extract+Verify [{spec.url}]: {len(url_cells)} cell(s) - {elapsed_extract}")
 
     except Exception as e:
-        print(f"    X Failed [{spec.url}]: {e}")
+        _safe_print(f"    X Failed [{spec.url}]: {e}")
         import traceback
         traceback.print_exc()
         result["error"] = e
@@ -289,18 +307,31 @@ def run_pipeline(
     extract_time_by_entity: dict[str, int] = defaultdict(int)
 
     spec_results: list[dict[str, Any] | None] = [None for _ in request.urls]
-    max_spec_workers = min(PIPELINE_ENTITY_WORKERS, len(request.urls)) if request.urls else 1
-    if max_spec_workers <= 1:
-        for index, spec in enumerate(request.urls):
-            spec_results[index] = _process_url_spec(spec, request, cfg, all_entities)
-    else:
-        with ThreadPoolExecutor(max_workers=max_spec_workers) as ex:
-            futures = {
-                ex.submit(_process_url_spec, spec, request, cfg, all_entities): index
-                for index, spec in enumerate(request.urls)
-            }
-            for future in as_completed(futures):
-                spec_results[futures[future]] = future.result()
+    max_spec_workers = max(1, min(PIPELINE_ENTITY_WORKERS, len(request.urls))) if request.urls else 1
+    with ThreadPoolExecutor(max_workers=max_spec_workers) as ex:
+        futures = {
+            ex.submit(_process_url_spec, spec, request, cfg, all_entities): index
+            for index, spec in enumerate(request.urls)
+        }
+        for future in as_completed(futures):
+            index = futures[future]
+            try:
+                spec_results[index] = future.result()
+            except Exception as exc:
+                # _process_url_spec already catches everything it can attribute
+                # to a specific spec; this is the backstop so one spec's
+                # unexpected failure (e.g. a bug outside that try block) can
+                # never discard every other already-completed entity's results
+                # (2026-07-03 code review) — mirrors the page-level pattern
+                # a few lines below in _process_url_spec.
+                print(f"    X Spec crashed unexpectedly [{request.urls[index].url}]: {exc}")
+                import traceback
+                traceback.print_exc()
+                spec_results[index] = {
+                    "entities": request.urls[index].entities or all_entities,
+                    "diag": {"acquire_log": [], "crawl_candidates": [], "filter_log": [], "extract_log": [], "verify_log": []},
+                    "pages": [], "cells": [], "extract_time_ms": 0, "error": exc,
+                }
 
     # Merge in original spec order (single-threaded) so diagnostic sheets are
     # deterministic regardless of which spec finished first.

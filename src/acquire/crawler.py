@@ -321,6 +321,14 @@ def crawl_entity(
         visited.add(current.url)
 
         if current.depth > 0 and current.score < _min_score:
+            # Release this URL's locale-key claim: it was reserved at queue
+            # time (below) on the assumption it would be fetched, but a
+            # fallback-selected child can still fail this re-check at pop
+            # time. Without releasing, a same-key sibling discovered later
+            # would be dropped as a "duplicate" of a page that was never
+            # actually acquired (2026-07-03 code review).
+            if CRAWL_LOCALE_DEDUP:
+                visited_locale_keys.discard(_locale_key(current.url))
             continue
 
         try:
@@ -362,6 +370,11 @@ def crawl_entity(
 
         except Exception as e:
             print(f"    ✗ Failed to acquire {current.url}: {e}")
+            # Same release as the threshold-skip above: a fetch failure means
+            # no page was actually acquired, so a same-key sibling must still
+            # get a chance rather than being silently dropped as a duplicate.
+            if CRAWL_LOCALE_DEDUP:
+                visited_locale_keys.discard(_locale_key(current.url))
             if diag is not None:
                 diag.setdefault("acquire_log", []).append({
                     "entity_url": start_url,
@@ -466,6 +479,9 @@ def crawl_entity(
                 if CRAWL_LOCALE_DEDUP:
                     # Claim the key at queue time so a variant discovered on a
                     # later page can't also be queued before this one fetches.
+                    # Released back (discard, not permanent) if this URL turns
+                    # out not to actually be fetched — see the threshold-skip
+                    # and except-Exception release points above.
                     visited_locale_keys.add(_locale_key(child.url))
                 queue.append(child)
 

@@ -5,7 +5,25 @@
 
 -----
 
-## 2026-07-02 — HORIBA 654-evidence cell diagnosed: NOT a parallelism regression; unbounded-page + unbounded-cell guards added
+## 2026-07-03 — Code review of the 2026-07-02 changes: 2 fixed now, 8 recorded
+
+**Context:** Full high-effort review (8 finder angles, candidates verified by direct code reading) of everything from 2026-07-02: entity parallelism, crawl locale-dedup/score-aware cap, LLMAPI retry, output limits, playwright_pooled backend. 10 real findings surfaced; George approved fixing the top 2 before batch 1, recording the rest.
+
+**Fixed:**
+1. **Locale-key permanent blackhole** (`src/acquire/crawler.py`): a locale key was claimed at queue time and never released if the claimed URL then failed to fetch (exception) or got skipped by the depth>0 threshold re-check — any later-discovered sibling sharing that key was silently dropped as a "duplicate" of a page that was never actually acquired, undoing some of the locale-dedup fix's own recall gain. Fixed: both failure points now `visited_locale_keys.discard(_locale_key(current.url))` before continuing. Single-threaded per-entity crawl loop, so no race on the release. Test: `test_locale_key_released_after_fetch_failure`.
+2. **Whole-run crash from one bad print()** (`pipeline.py`): `_process_url_spec`'s identifying print sat outside its try block; a workbook entity name or URL with a character outside the console's codepage (realistic on Windows, e.g. accented company names) raises `UnicodeEncodeError` there, which propagated through the unguarded `future.result()` in `run_pipeline` and would have discarded every already-completed entity's results. Fixed two ways: (a) new `_safe_print()` helper (encode/replace/decode fallback, never raises) used for every print in `_process_url_spec` that embeds workbook-controlled strings; (b) the entity-level future collection now has the same try/except backstop the page-level pool already had (defense in depth — catches *any* per-spec exception, not just this one). Also removed the now-redundant serial-loop branch (`max_spec_workers <= 1`) while fixing this, since it duplicated the pool's behavior and was the exact kind of "fix one branch, forget the other" trap this bug came from. Tests: `test_safe_print_survives_encoding_error`, `test_safe_print_passthrough_for_plain_text`, `test_run_pipeline_survives_one_spec_crashing`.
+
+**Recorded, not fixed (in severity order — revisit before or during the 178-company run if time allows):**
+3. Score-aware cap removed the pre-scoring truncation, so `score_links_embed`/`_experimental` now embed every same-domain candidate on a page (previously ≤30) before the cap applies — nav-heavy/archive pages can push 300+ texts into one Ollama batch call, risking `OLLAMA_TIMEOUT` and a mid-crawl silent fallback to BM25 (which re-normalises scores per-batch, changing follow/skip decisions).
+4. `LLMAPI`'s 5xx retry sleeps 5s while still holding one of the 16 global `_LLM_CALL_SEMAPHORE` slots — during a proxy brownout (the exact condition it targets), correlated 502s across chunks can occupy most/all slots in blocking sleep, collapsing throughput instead of gracefully degrading.
+5. `EXTRACT_MAX_CHUNKS_PER_PAGE` truncation is `print()`-only; the Extract Log's `page_length_input` still shows the full untruncated length with no truncated/chunks-used flag — contradicts this feature's own "never silent" rationale, since the one artifact meant to make it visible (the diagnostic workbook) doesn't.
+6. `write_cache` is non-atomic (`open(path,"w")` truncates before writing) and entity-level parallelism has no enforcement of its own "one spec = one seed domain" assumption — two specs resolving an overlapping URL could race the cache. Design risk, not yet observed.
+7. The politeness gate (per-domain delay, robots.txt) lives only in `playwright_pool.py`, wired to `playwright_pooled`; the `local`/`requests`/plain `playwright` backends remain fully unthrottled despite also being self-hosted (fetching from this machine's IP).
+8. `_process_url_spec` sets `result["error"]` on exception but `run_pipeline`'s merge loop never reads it — a crashed spec renders identically to a legitimately-empty one in the Matrix/Summary, with no artifact flagging which companies need a re-run.
+9. `robots_allows()`'s `RobotFileParser.read()` has no timeout — an unresponsive robots.txt endpoint hangs the calling thread forever. Only reachable via `playwright_pooled`, which is not yet in production use (still pending the bake-off re-fix), so lower urgency than 3–8 for now but must be fixed before that backend ships.
+10. `_locale_key`/`_same_domain` (crawler.py) and `playwright_pool._domain` normalise the netloc three subtly different ways (case-sensitivity differs) — low practical hit-rate since `urljoin`-derived URLs are rarely mixed-case, but worth consolidating into one shared host-normalisation helper if the code gets touched again.
+
+**Status:** #1–2 applied, 90 offline tests pass (was 86). #3–10 recorded for the post-batch-1 cleanup pass.
 
 **Context:** v2 validation run, HORIBA "Recent news": 957 raw evidence rows (654 from ONE page), 5m37s extract, Excel cell-length warning. Suspicion: evidence duplicating across pages / a regression from the entity-parallelism change. Blocks batch 1.
 

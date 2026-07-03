@@ -176,6 +176,57 @@ def test_locale_key_keeps_distinct_content_pages():
     print("OK test_locale_key_keeps_distinct_content_pages passed")
 
 
+def test_locale_key_released_after_fetch_failure(monkeypatch):
+    """A locale-key claim must be released if the claimed URL's fetch fails,
+    so a same-key sibling discovered later on a different page is still
+    fetched rather than silently dropped as a 'duplicate' of a page that was
+    never actually acquired (2026-07-03 code review: this was previously a
+    permanent, silent coverage-loss bug — the threshold-skip path a few lines
+    above crawl_entity's except block releases the same way, via the same
+    one-line discard() call, so this test covers both release sites)."""
+    import src.acquire.crawler as crawler_mod
+    from models import Config, PageDoc
+
+    monkeypatch.setattr(crawler_mod, "SCORER_TOOL", "bm25")  # force non-ollama BM25 path, no network
+    monkeypatch.setattr(crawler_mod, "CRAWL_LOCALE_DEDUP", True)
+
+    seed = "https://x.com"
+    fail_url = "https://x.com/de/contact"      # depth 1: claimed, then fetch fails
+    other_url = "https://x.com/other-page"     # depth 1: fetches fine, leads to the sibling
+    sibling_url = "https://x.com/en/contact"   # depth 2: same locale key as fail_url
+
+    def fake_discover(page_url, start_url, depth, html=None, page_text=None, cfg=None):
+        if page_url == seed:
+            return [
+                LinkCandidate(url=fail_url, anchor_text="contact", depth=depth, context=""),
+                LinkCandidate(url=other_url, anchor_text="other", depth=depth, context=""),
+            ]
+        if page_url == other_url:
+            return [LinkCandidate(url=sibling_url, anchor_text="contact", depth=depth, context="")]
+        return []
+
+    def fake_acquire(url, cfg):
+        if url == fail_url:
+            raise RuntimeError("simulated transient fetch failure")
+        return PageDoc(url=url, text="content", html=None)
+
+    monkeypatch.setattr(crawler_mod, "_discover_links", fake_discover)
+    monkeypatch.setattr(crawler_mod, "_acquire_page_cfg", fake_acquire)
+
+    cfg = Config(acquire_tool="requests", crawl_min_score=0.0, crawl_max_pages=10)
+    columns = [ColumnSpec(name="contact info")]
+
+    doc = crawler_mod.crawl_entity(seed, columns, cfg, max_depth=2)
+    fetched = {p.url for p in doc.pages}
+
+    assert other_url in fetched
+    assert fail_url not in fetched
+    assert sibling_url in fetched, (
+        "sibling must be fetched once the failed variant's locale-key claim is released"
+    )
+    print("OK test_locale_key_released_after_fetch_failure passed")
+
+
 def test_discovery_no_longer_truncates_before_scoring():
     """The CRAWL_MAX_LINKS_PER_PAGE cap must not be applied at discovery time —
     a footer About link past the 30th anchor has to reach the scorer."""
@@ -198,5 +249,6 @@ if __name__ == "__main__":
     test_normal_threshold_takes_precedence_over_fallback()
     test_locale_key_collapses_language_homepages()
     test_locale_key_keeps_distinct_content_pages()
+    test_locale_key_released_after_fetch_failure()
     test_discovery_no_longer_truncates_before_scoring()
     print("\nAll crawl relevance tests passed!")

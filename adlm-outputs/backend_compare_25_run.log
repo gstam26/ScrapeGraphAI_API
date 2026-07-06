@@ -1,0 +1,518 @@
+
+=== Agilent Technologies (15 pages, seed https://www.agilent.com/)
+  [gate_failed]   4348 ms      101 ch (fc  18,784, x0.01)  links pw   0 / fc  30  https://www.agilent.com
+  [gate_failed]   2064 ms      101 ch (fc   3,930, x0.03)  links pw   0 / fc   0  https://www.agilent.com/en/solutions/clinical-diagnostics
+  [gate_failed]   2074 ms      101 ch (fc  11,992, x0.01)  links pw   0 / fc   0  https://www.agilent.com/about/companyinfo/index.html
+  [gate_failed]   2057 ms      101 ch (fc   2,865, x0.04)  links pw   0 / fc   0  https://www.agilent.com/en/solutions/companion-diagnostics
+  [gate_failed]   2071 ms      101 ch (fc   6,876, x0.01)  links pw   0 / fc   0  https://www.agilent.com/en/solutions/clinical-research
+  [gate_failed]   2059 ms      101 ch (fc     627, x0.16)  links pw   0 / fc   0  https://www.agilent.com/en/product/digital-pathology
+  [gate_failed]   2049 ms      101 ch (fc     239, x0.42)  links pw   0 / fc   0  https://www.agilent.com/en/product/digital-pathology/biocare
+  [gate_failed]   2053 ms      101 ch (fc   4,004, x0.03)  links pw   0 / fc   0  https://www.agilent.com/en/product/certified-pre-owned-instruments
+  [gate_failed]   2057 ms      101 ch (fc   1,496, x0.07)  links pw   0 / fc   0  https://www.agilent.com/en/product/molecular-pathology
+  [gate_failed]   2040 ms      101 ch (fc   6,866, x0.01)  links pw   0 / fc   0  https://www.agilent.com/en/training-events/events/agilent-education
+  [gate_failed]   2060 ms      101 ch (fc     825, x0.12)  links pw   0 / fc   0  https://www.agilent.com/en/service/pathology-services
+  [gate_failed]   2066 ms      101 ch (fc   7,214, x0.01)  links pw   0 / fc   0  https://www.agilent.com/en/solutions/pathology-solutions/digital-patho
+  [gate_failed]   2058 ms      101 ch (fc  11,308, x0.01)  links pw   0 / fc   0  https://www.agilent.com/en/solutions/pathology-solutions
+  [gate_failed]   2053 ms      101 ch (fc  16,934, x0.01)  links pw   0 / fc   0  https://www.agilent.com/about/mygreenlab/en/act-labeled-products.html
+  [ok         ]   2061 ms      272 ch (fc     268, x1.01)  links pw   0 / fc   0  https://www.agilent.com/en/service/software-for-lab-management/patholo
+
+=== Bruker (15 pages, seed https://www.bruker.com/en.html)
+  [gate_failed]   2842 ms    2,539 ch (fc  11,269, x0.23)  links pw  36 / fc  25  https://www.bruker.com/en.html
+  [ok         ]   2597 ms    2,539 ch (fc  26,096, x0.1)  links pw  50 / fc   0  https://www.bruker.com/en/products-and-solutions/test-and-measurement/
+  [ok         ]   2387 ms    3,127 ch (fc  27,165, x0.12)  links pw  33 / fc   0  https://www.bruker.com/fr/products-and-solutions/elemental-analyzers/h
+  [ok         ]   2347 ms    2,539 ch (fc  25,303, x0.1)  links pw  41 / fc   0  https://www.bruker.com/en/products-and-solutions/fluorescence-microsco
+  [ok         ]   2361 ms    2,539 ch (fc  26,315, x0.1)  links pw  39 / fc   0  https://www.bruker.com/en/products-and-solutions/elemental-analyzers/x
+  [ok         ]   2209 ms    2,539 ch (fc   7,049, x0.36)  links pw  26 / fc   0  https://www.bruker.com/en/news-and-events/news/2022/bruker-technologie
+  [ok         ]   2308 ms    2,539 ch (fc  16,758, x0.15)  links pw  31 / fc   0  https://www.bruker.com/en/products-and-solutions/infrared-and-raman/da
+  [gate_failed]   2203 ms    2,539 ch (fc   9,483, x0.27)  links pw  37 / fc   0  https://www.bruker.com/en/products-and-solutions.html
+  [ok         ]   2223 ms    2,539 ch (fc   5,520, x0.46)  links pw  26 / fc   0  https://www.bruker.com/en/about.html
+  [ok         ]   2187 ms    2,539 ch (fc   4,838, x0.52)  links pw  23 / fc   0  https://www.bruker.com/en/news-and-events/news/2026/bruker-launches-d8
+  [ok         ]   2215 ms    2,539 ch (fc   4,901, x0.52)  links pw  32 / fc   0  https://www.bruker.com/en/applications.html
+  [ok         ]   2267 ms    2,539 ch (fc   8,181, x0.31)  links pw  28 / fc   0  https://www.bruker.com/en/landingpages/bbio/1-3-ghz-nmr-spectrometer.h
+  [ok         ]   2326 ms    2,539 ch (fc  19,628, x0.13)  links pw  28 / fc   0  https://www.bruker.com/en/products-and-solutions/infrared-and-raman/ft
+  [ok         ]   2216 ms    2,539 ch (fc  16,266, x0.16)  links pw  42 / fc   0  https://www.bruker.com/en/applications/academia-life-science/proteomic
+  [ok         ]   2211 ms    2,539 ch (fc   6,570, x0.39)  links pw  28 / fc   0  https://www.bruker.com/en/applications/academia-life-science/cell-biol
+
+=== Danaher (15 pages, seed https://danaher.com/our-businesses/diagnostics)
+  [ok         ]   9896 ms    1,827 ch (fc   5,544, x0.33)  links pw  35 / fc  30  https://danaher.com/our-businesses/diagnostics
+  [ok         ]   3575 ms      791 ch (fc   5,422, x0.15)  links pw  43 / fc   0  https://www.danaher.com/our-businesses/diagnostics/beckman-coulter
+  [ok         ]   2418 ms    1,036 ch (fc   5,679, x0.18)  links pw  44 / fc   0  https://www.danaher.com/our-businesses/diagnostics/cepheid
+  [ok         ]   2398 ms      904 ch (fc   5,691, x0.16)  links pw  43 / fc   0  https://www.danaher.com/our-businesses/diagnostics/leica-biosystems
+  [ok         ]   4916 ms      985 ch (fc   1,219, x0.81)  links pw  22 / fc   0  https://www.danaher.com/global-locations
+  [ok         ]   5411 ms    2,929 ch (fc   6,587, x0.44)  links pw  43 / fc   0  https://www.danaher.com/business-directory
+  [ok         ]   6398 ms    1,087 ch (fc   5,686, x0.19)  links pw  43 / fc   0  https://www.danaher.com/our-businesses/diagnostics/masimo
+  [ok         ]   8181 ms      838 ch (fc   5,407, x0.15)  links pw  43 / fc   0  https://www.danaher.com/our-businesses/diagnostics/hemocue
+  [ok         ]   6997 ms    1,017 ch (fc   5,749, x0.18)  links pw  43 / fc   0  https://www.danaher.com/our-businesses/diagnostics/mammotome
+  [ok         ]   6490 ms      953 ch (fc   5,636, x0.17)  links pw  43 / fc   0  https://www.danaher.com/our-businesses/diagnostics/radiometer
+  [ok         ]   2612 ms    3,311 ch (fc   8,023, x0.41)  links pw  45 / fc   0  https://www.danaher.com/our-businesses
+  [ok         ]   9293 ms      733 ch (fc     418, x1.75)  links pw  22 / fc   0  https://www.danaher.com/search
+  [ok         ]   6769 ms    1,882 ch (fc   4,814, x0.39)  links pw  28 / fc   0  https://www.danaher.com/how-we-work/partners
+  [ok         ]   2558 ms    1,678 ch (fc   4,139, x0.41)  links pw  28 / fc   0  https://www.danaher.com/how-we-work/danaher-business-system
+  [ok         ]   2390 ms    1,933 ch (fc   3,994, x0.48)  links pw  28 / fc   0  https://www.danaher.com/how-we-work/acquisitions
+
+=== EUROIMMUN (15 pages, seed https://www.euroimmun.us/)
+  [gate_failed]   4223 ms      357 ch (fc  17,347, x0.02)  links pw  62 / fc  30  https://www.euroimmun.us
+  [ok         ]   3851 ms    3,295 ch (fc   5,291, x0.62)  links pw  43 / fc   0  https://www.euroimmun.us/about/subsidiaries
+  [gate_failed]   3860 ms      273 ch (fc   4,594, x0.06)  links pw  63 / fc   0  https://www.euroimmun.us/products/autoimmune
+  [ok         ]   3940 ms    2,449 ch (fc   5,211, x0.47)  links pw  43 / fc   0  https://www.euroimmun.us/techniques/radioimmunoassays
+  [ok         ]   3975 ms    1,692 ch (fc   4,358, x0.39)  links pw  44 / fc   0  https://www.euroimmun.us/techniques/real-time-pcr
+  [gate_failed]   3546 ms      164 ch (fc   7,049, x0.02)  links pw  44 / fc   0  https://www.euroimmun.us/products
+  [gate_failed]   3972 ms      249 ch (fc   3,162, x0.08)  links pw  51 / fc   0  https://www.euroimmun.us/news
+  [gate_failed]   4086 ms      452 ch (fc   8,369, x0.05)  links pw  43 / fc   0  https://www.euroimmun.us/techniques/elisa
+  [ok         ]   3840 ms    2,118 ch (fc   5,238, x0.4)  links pw  53 / fc   0  https://www.euroimmun.us/news/sars-cov-2-variants-of-concern-voc-alpha
+  [gate_failed]   3823 ms      164 ch (fc   3,611, x0.05)  links pw  46 / fc   0  https://www.euroimmun.us/products/automation
+  [gate_failed]   3913 ms      273 ch (fc   4,160, x0.07)  links pw  60 / fc   0  https://www.euroimmun.us/products/endocrinology
+  [ok         ]   3812 ms    7,259 ch (fc  10,064, x0.72)  links pw  53 / fc   0  https://www.euroimmun.us/news/first-commercial-serological-tests-avail
+  [gate_failed]   3899 ms      321 ch (fc   5,326, x0.06)  links pw  54 / fc   0  https://www.euroimmun.us/news/euroimmun-ceo-interviewed-by-clinical-la
+  [gate_failed]   3902 ms      273 ch (fc   4,626, x0.06)  links pw  56 / fc   0  https://www.euroimmun.us/products/infection
+  [ok         ]   3921 ms    5,828 ch (fc   9,633, x0.61)  links pw  53 / fc   0  https://www.euroimmun.us/news/distribution-of-the-procisedx-platform-i
+
+=== FUJIFILM Healthcare Americas Corporation (1 pages, seed https://www.fujifilmivd-us.com)
+  [ok         ]   7139 ms    3,180 ch (fc   6,217, x0.51)  links pw   1 / fc   0  https://www.fujifilmivd-us.com
+
+=== Greiner Bio-One North America Inc. (15 pages, seed https://www.gbo.com)
+  [gate_failed]    142 ms        0 ch (fc  10,643, x0.0)  links pw   0 / fc  30  https://www.gbo.com
+  [gate_failed]      0 ms        0 ch (fc  11,996, x0.0)  links pw   0 / fc   0  https://www.gbo.com/en-us/company
+  [gate_failed]      0 ms        0 ch (fc 124,983, x0.0)  links pw   0 / fc   0  https://www.gbo.com/en-us/company/subsidiaries-distributors
+  [gate_failed]      0 ms        0 ch (fc     790, x0.0)  links pw   0 / fc   0  https://www.gbo.com/en-us/press-events/press/article/sustainability-in
+  [gate_failed]      0 ms        0 ch (fc   7,198, x0.0)  links pw   0 / fc   0  https://www.gbo.com/en-us/company/preanalytics/digital-preanalytics
+  [gate_failed]      0 ms        0 ch (fc   7,753, x0.0)  links pw   0 / fc   0  https://www.gbo.com/en-us/sustainability/act-certified-labware-by-grei
+  [gate_failed]      0 ms        0 ch (fc  18,896, x0.0)  links pw   0 / fc   0  https://www.gbo.com/en-us/company/customized-solutions
+  [gate_failed]      0 ms        0 ch (fc  11,551, x0.0)  links pw   0 / fc   0  https://www.gbo.com/en-us/terms-conditions
+  [gate_failed]      0 ms        0 ch (fc   6,265, x0.0)  links pw   0 / fc   0  https://www.gbo.com/en-us/press-events/press
+  [gate_failed]      0 ms        0 ch (fc   4,894, x0.0)  links pw   0 / fc   0  https://www.gbo.com/en-us/press-events/events
+  [gate_failed]      0 ms        0 ch (fc   4,644, x0.0)  links pw   0 / fc   0  https://www.gbo.com/en-us/company/bioscience/be-sharp-screening-and-im
+  [gate_failed]      0 ms        0 ch (fc   5,657, x0.0)  links pw   0 / fc   0  https://www.gbo.com/en-us/press-events
+  [gate_failed]      0 ms        0 ch (fc   3,684, x0.0)  links pw   0 / fc   0  https://www.gbo.com/en-us/safe-blood-collection/product-family
+  [gate_failed]      0 ms        0 ch (fc   5,021, x0.0)  links pw   0 / fc   0  https://www.gbo.com/en-us/media-center
+  [gate_failed]      0 ms        0 ch (fc   6,648, x0.0)  links pw   0 / fc   0  https://www.gbo.com/en-us/sustainability
+
+=== Hologic (15 pages, seed http://www.hologic.com)
+  [ok         ]   4326 ms      959 ch (fc   5,201, x0.18)  links pw  49 / fc  30  http://www.hologic.com
+  [gate_failed]   2885 ms      305 ch (fc  12,044, x0.03)  links pw  55 / fc   0  https://www.hologic.com/molecular-diagnostics
+  [gate_failed]   2510 ms      304 ch (fc  11,371, x0.03)  links pw  55 / fc   0  https://www.hologic.com/screening-technologies
+  [ok         ]   2814 ms    6,244 ch (fc   8,369, x0.75)  links pw  42 / fc   0  https://www.hologic.com/support/locations
+  [ok         ]   2374 ms      668 ch (fc   3,025, x0.22)  links pw  42 / fc   0  https://www.hologic.com/lab-technologies
+  [ok         ]   2482 ms    6,554 ch (fc  10,182, x0.64)  links pw  47 / fc   0  https://www.hologic.com/about/newsroom/hologic-global-womens-health-in
+  [gate_failed]   2631 ms      651 ch (fc   4,995, x0.13)  links pw  48 / fc   0  https://www.hologic.com/hologic-products/coronavirus-news-updates
+  [ok         ]   2386 ms    2,023 ch (fc   9,330, x0.22)  links pw  42 / fc   0  https://www.hologic.com/patent-information
+  [ok         ]   2425 ms   13,877 ch (fc  16,384, x0.85)  links pw  42 / fc   0  https://www.hologic.com/terms-conditions
+  [gate_failed]   2600 ms      351 ch (fc  11,614, x0.03)  links pw  55 / fc   0  https://www.hologic.com/tests
+  [ok         ]   2510 ms      651 ch (fc  11,441, x0.06)  links pw  55 / fc   0  https://www.hologic.com/cytology
+  [ok         ]   2820 ms    2,660 ch (fc  16,333, x0.16)  links pw  44 / fc   0  https://www.hologic.com/project-health-equity
+  [gate_failed]   2418 ms      316 ch (fc  12,199, x0.03)  links pw  55 / fc   0  https://www.hologic.com/gynecological-health
+  [ok         ]   2374 ms      651 ch (fc   1,485, x0.44)  links pw  42 / fc   0  https://www.hologic.com/advamed-code-ethics
+  [ok         ]   2622 ms      651 ch (fc   1,775, x0.37)  links pw  42 / fc   0  https://www.hologic.com/contact-us
+
+=== HORIBA (15 pages, seed https://www.horiba.com/usa/healthcare/)
+  [ok         ]   9226 ms    1,083 ch (fc  12,898, x0.08)  links pw 116 / fc  30  https://www.horiba.com/usa/healthcare
+  [error      ]  15168 ms        0 ch (fc 736,586, x0.0)  links pw   0 / fc   0  https://www.horiba.com/usa/company/news
+  [ok         ]   6159 ms   41,811 ch (fc 167,210, x0.25)  links pw 311 / fc   0  https://www.horiba.com/usa/contact/worldwide-locations
+  [ok         ]   4626 ms      834 ch (fc   6,543, x0.13)  links pw  52 / fc   0  https://www.horiba.com/usa/veterinary
+  [gate_failed]   4351 ms    1,054 ch (fc  18,458, x0.06)  links pw 366 / fc   0  https://www.horiba.com/usa/company/career
+  [gate_failed]   3732 ms      903 ch (fc   8,018, x0.11)  links pw 321 / fc   0  https://www.horiba.com/usa/company/events
+  [ok         ]   2772 ms      921 ch (fc   8,587, x0.11)  links pw 131 / fc   0  https://www.horiba.com/usa/semiconductor
+  [gate_failed]   2701 ms      623 ch (fc   2,084, x0.3)  links pw 114 / fc   0  https://www.horiba.com/usa/healthcare/products/clinical-chemistry/reag
+  [gate_failed]   3031 ms    1,672 ch (fc  21,800, x0.08)  links pw 404 / fc   0  https://www.horiba.com/usa/applications/education-rd-and-government-in
+  [gate_failed]   4315 ms      319 ch (fc   4,916, x0.06)  links pw 112 / fc   0  https://www.horiba.com/usa/healthcare/products/toxicology/reagents
+  [error      ]  15104 ms        0 ch (fc  48,347, x0.0)  links pw   0 / fc   0  https://www.horiba.com/usa
+  [ok         ]   3538 ms    2,063 ch (fc     545, x3.79)  links pw 105 / fc   0  https://www.horiba.com/usa/healthcare/academy/technology/fluorescence-
+  [gate_failed]   2706 ms      687 ch (fc   1,435, x0.48)  links pw 107 / fc   0  https://www.horiba.com/usa/healthcare/news/news-press-release/detail/n
+  [gate_failed]   2866 ms      814 ch (fc  46,215, x0.02)  links pw  74 / fc   0  https://www.horiba.com/usa/life-science
+  [ok         ]  12207 ms   20,375 ch (fc 188,221, x0.11)  links pw 267 / fc   0  https://www.horiba.com/usa/healthcare/news/news-press-release
+
+=== Metrohm USA (15 pages, seed https://www.metrohm.com/)
+  [gate_failed]    116 ms        0 ch (fc  11,592, x0.0)  links pw   0 / fc  30  https://www.metrohm.com
+  [gate_failed]      0 ms        0 ch (fc  20,312, x0.0)  links pw   0 / fc   0  https://www.metrohm.com/en_us/company/about-us.html
+  [gate_failed]      0 ms        0 ch (fc   1,873, x0.0)  links pw   0 / fc   0  https://www.metrohm.com/en_us/company/how-to-find-us.html
+  [gate_failed]      0 ms        0 ch (fc   7,379, x0.0)  links pw   0 / fc   0  https://www.metrohm.com/en_us/company/jobs.html
+  [gate_failed]      0 ms        0 ch (fc   6,431, x0.0)  links pw   0 / fc   0  https://www.metrohm.com/en_us/industries.html
+  [gate_failed]      0 ms        0 ch (fc   6,943, x0.0)  links pw   0 / fc   0  https://www.metrohm.com/content/metrohm/en_us/service/quality-service.
+  [gate_failed]      0 ms        0 ch (fc  20,580, x0.0)  links pw   0 / fc   0  https://www.metrohm.com/en_us/products/raman-spectroscopy/i-raman-nxg.
+  [gate_failed]      0 ms        0 ch (fc  11,895, x0.0)  links pw   0 / fc   0  https://www.metrohm.com/en_us/products/sensolytics.html
+  [gate_failed]      0 ms        0 ch (fc  17,097, x0.0)  links pw   0 / fc   0  https://www.metrohm.com/en_us/products/liquid-handling.html
+  [gate_failed]      0 ms        0 ch (fc   8,886, x0.0)  links pw   0 / fc   0  https://www.metrohm.com/en_us/products/stability-measurement.html
+  [gate_failed]      0 ms        0 ch (fc  10,939, x0.0)  links pw   0 / fc   0  https://www.metrohm.com/en_us/products/alsys-robots.html
+  [gate_failed]      0 ms        0 ch (fc  16,129, x0.0)  links pw   0 / fc   0  https://www.metrohm.com/en_us/products/process-analyzers/2060-rise.htm
+  [gate_failed]      0 ms        0 ch (fc   8,852, x0.0)  links pw   0 / fc   0  https://www.metrohm.com/en_us/products/lab-automation.html
+  [gate_failed]      0 ms        0 ch (fc   6,034, x0.0)  links pw   0 / fc   0  https://www.metrohm.com/en_us/discover/news/2025/discover-subscription
+  [gate_failed]      0 ms        0 ch (fc   5,962, x0.0)  links pw   0 / fc   0  https://www.metrohm.com/en_us/products/electrochemistry/portable-line/
+
+=== Neogen (15 pages, seed https://www.neogen.com)
+  [gate_failed]     94 ms        0 ch (fc  19,619, x0.0)  links pw   0 / fc  30  https://www.neogen.com
+  [gate_failed]      0 ms        0 ch (fc 112,307, x0.0)  links pw   0 / fc   0  https://www.neogen.com/en/categories/diagnostic-laboratory-services
+  [gate_failed]      0 ms        0 ch (fc  29,383, x0.0)  links pw   0 / fc   0  https://www.neogen.com/en/categories/veterinary-diagnostics
+  [gate_failed]      0 ms        0 ch (fc  27,178, x0.0)  links pw   0 / fc   0  https://www.neogen.com/en/usac/solutions/diagnostic-laboratory-service
+  [gate_failed]      0 ms        0 ch (fc  70,206, x0.0)  links pw   0 / fc   0  https://www.neogen.com/en/categories/diagnostic-research-enzymes
+  [gate_failed]      0 ms        0 ch (fc  29,065, x0.0)  links pw   0 / fc   0  https://www.neogen.com/en/usac/industries/laboratory
+  [gate_failed]      0 ms        0 ch (fc  22,310, x0.0)  links pw   0 / fc   0  https://www.neogen.com/en/usac/solutions/veterinary-diagnostics
+  [gate_failed]      0 ms        0 ch (fc  31,257, x0.0)  links pw   0 / fc   0  https://www.neogen.com/en/usac/industries/university-research
+  [gate_failed]      0 ms        0 ch (fc  21,046, x0.0)  links pw   0 / fc   0  https://www.neogen.com/en/patents
+  [gate_failed]      0 ms        0 ch (fc  37,410, x0.0)  links pw   0 / fc   0  https://www.neogen.com/en/categories/mycotoxins/proficiency-testing-pr
+  [gate_failed]      0 ms        0 ch (fc  22,397, x0.0)  links pw   0 / fc   0  https://www.neogen.com/en/usac/solutions/life-science-research
+  [gate_failed]      0 ms        0 ch (fc  28,088, x0.0)  links pw   0 / fc   0  https://www.neogen.com/en/usac/solutions/healthcare-environmental-atp-
+  [gate_failed]      0 ms        0 ch (fc  23,498, x0.0)  links pw   0 / fc   0  https://www.neogen.com/en/usac/industries/ivd-manufacturing
+  [gate_failed]      0 ms        0 ch (fc  24,339, x0.0)  links pw   0 / fc   0  https://www.neogen.com/en/usac/industries/healthcare
+  [gate_failed]      0 ms        0 ch (fc  26,189, x0.0)  links pw   0 / fc   0  https://www.neogen.com/en/usac/industries/toxicology
+
+=== Nova Biomedical (15 pages, seed https://www.novabiomedical.com/)
+  [gate_failed]   3260 ms    1,793 ch (fc   5,892, x0.3)  links pw 159 / fc  30  https://www.novabiomedical.com
+  [ok         ]   2143 ms      337 ch (fc  13,890, x0.02)  links pw   0 / fc   0  https://www.novabiomedical.com/company
+  [ok         ]   2083 ms      337 ch (fc  26,470, x0.01)  links pw   0 / fc   0  https://www.novabiomedical.com/locations
+  [ok         ]   2062 ms      337 ch (fc  13,366, x0.03)  links pw   0 / fc   0  https://www.novabiomedical.com/company/news-events
+  [ok         ]   2060 ms      337 ch (fc  14,101, x0.02)  links pw   0 / fc   0  https://www.novabiomedical.com/company/leadership
+  [ok         ]   2071 ms      337 ch (fc   5,917, x0.06)  links pw   0 / fc   0  https://www.novabiomedical.com/terms-conditions
+  [ok         ]   2060 ms      337 ch (fc  10,806, x0.03)  links pw   0 / fc   0  https://www.novabiomedical.com/liquid-handling-verification/pcs-qualas
+  [ok         ]   2064 ms      337 ch (fc   7,647, x0.04)  links pw   0 / fc   0  https://www.novabiomedical.com/services/clinical-validation-services
+  [ok         ]   2073 ms      337 ch (fc   1,246, x0.27)  links pw   0 / fc   0  https://www.novabiomedical.com/distributor-portal
+  [ok         ]   2076 ms      337 ch (fc  22,686, x0.01)  links pw   0 / fc   0  https://www.novabiomedical.com/product-brands/advanced-instruments
+  [ok         ]   2073 ms      337 ch (fc  12,793, x0.03)  links pw   0 / fc   0  https://www.novabiomedical.com/cell-culture-analyzers/nova-primary-glu
+  [ok         ]   2059 ms      337 ch (fc  28,945, x0.01)  links pw   0 / fc   0  https://www.novabiomedical.com/clinical-osmometers/osmo1-single-sample
+  [ok         ]   2083 ms      337 ch (fc  25,527, x0.01)  links pw   0 / fc   0  https://www.novabiomedical.com/clinical-osmometers/osmopro-multi-sampl
+  [ok         ]   2059 ms      337 ch (fc  74,710, x0.0)  links pw   0 / fc   0  https://www.novabiomedical.com/point-of-care-meters/statstrip-glucose
+  [ok         ]   2063 ms      337 ch (fc   5,465, x0.06)  links pw   0 / fc   0  https://www.novabiomedical.com/product-brands/statstrip
+
+=== QuidelOrtho (15 pages, seed https://www.quidelortho.com)
+  [ok         ]   3368 ms    4,395 ch (fc  13,306, x0.33)  links pw 136 / fc  30  https://www.quidelortho.com
+  [gate_failed]   2647 ms      406 ch (fc   1,960, x0.21)  links pw 128 / fc   0  https://www.quidelortho.com/global/en/laboratory-professionals/point-o
+  [ok         ]   2536 ms    2,578 ch (fc   4,477, x0.58)  links pw 128 / fc   0  https://www.quidelortho.com/global/en/our-company
+  [ok         ]   2825 ms    2,746 ch (fc  13,377, x0.21)  links pw 148 / fc   0  https://www.quidelortho.com/global/en/our-company/news-and-events
+  [gate_failed]   2163 ms      406 ch (fc   1,960, x0.21)  links pw 128 / fc   0  https://www.quidelortho.com/global/en/healthcare-providers/hcp-molecul
+  [ok         ]   3164 ms    2,825 ch (fc   5,957, x0.47)  links pw 128 / fc   0  https://www.quidelortho.com/global/en/our-company/cybersecurity
+  [gate_failed]   2173 ms      302 ch (fc   1,570, x0.19)  links pw 129 / fc   0  https://www.quidelortho.com/global/en/laboratory-professionals/point-o
+  [ok         ]   2510 ms    1,966 ch (fc   4,387, x0.45)  links pw 128 / fc   0  https://www.quidelortho.com/global/en/our-company/sustainability
+  [gate_failed]   2806 ms    1,821 ch (fc   3,981, x0.46)  links pw 128 / fc   0  https://www.quidelortho.com/global/en/our-company/leadership
+  [ok         ]   2147 ms    2,096 ch (fc   5,731, x0.37)  links pw 128 / fc   0  https://www.quidelortho.com/global/en/laboratory-professionals/clinica
+  [ok         ]   2489 ms      957 ch (fc   1,482, x0.65)  links pw 128 / fc   0  https://www.quidelortho.com/global/en/our-company/regulatory/legal-tra
+  [ok         ]   2522 ms    1,956 ch (fc   6,097, x0.32)  links pw 131 / fc   0  https://www.quidelortho.com/global/en/laboratory-professionals/clinica
+  [ok         ]   4043 ms   66,469 ch (fc  41,719, x1.59)  links pw 133 / fc   0  https://www.quidelortho.com/global/en/laboratory-professionals/clinica
+  [ok         ]   2536 ms    2,007 ch (fc   4,811, x0.42)  links pw 128 / fc   0  https://www.quidelortho.com/global/en/laboratory-professionals/point-o
+  [ok         ]   2592 ms    3,710 ch (fc   7,939, x0.47)  links pw 129 / fc   0  https://www.quidelortho.com/global/en/products/redirect---vitros-autom
+
+=== Sartorius (15 pages, seed https://www.sartorius.com)
+  [gate_failed]   3918 ms      580 ch (fc  16,744, x0.03)  links pw  77 / fc  30  https://www.sartorius.com
+  [gate_failed]   2678 ms    1,868 ch (fc   7,879, x0.24)  links pw  31 / fc   0  https://www.sartorius.com/en/company/newsroom/corporate-news/sartorius
+  [gate_failed]   2509 ms    1,182 ch (fc   8,739, x0.14)  links pw  42 / fc   0  https://www.sartorius.com/en/company/newsroom/blog?nav_teaser
+  [ok         ]   2899 ms    2,348 ch (fc  15,286, x0.15)  links pw  50 / fc   0  https://www.sartorius.com/en/company/newsroom?ban_position=hp_cc_news&
+  [gate_failed]   2636 ms    1,952 ch (fc   8,073, x0.24)  links pw  31 / fc   0  https://www.sartorius.com/en/company/newsroom/corporate-news/sartorius
+  [ok         ]   2393 ms    2,348 ch (fc  14,786, x0.16)  links pw  49 / fc   0  https://www.sartorius.com/en/company/newsroom
+  [ok         ]   2704 ms    4,077 ch (fc  24,447, x0.17)  links pw  37 / fc   0  https://www.sartorius.com/en/services/biologics-contract-services/pd-s
+  [gate_failed]   2697 ms      383 ch (fc  13,127, x0.03)  links pw  60 / fc   0  https://www.sartorius.com/en/company
+  [ok         ]   2945 ms    6,145 ch (fc  35,796, x0.17)  links pw  54 / fc   0  https://www.sartorius.com/en/products/microbiological-testing?ban_posi
+  [gate_failed]   2610 ms      827 ch (fc   7,039, x0.12)  links pw  33 / fc   0  https://www.sartorius.com/en/company/investor-relations
+  [gate_failed]   2910 ms      827 ch (fc   7,602, x0.11)  links pw  34 / fc   0  https://www.sartorius.com/en/company/investor-relations?ban_position=h
+  [gate_failed]   2533 ms      579 ch (fc  11,451, x0.05)  links pw  39 / fc   0  https://www.sartorius.com/en/products/process-analytical-technology?ba
+  [ok         ]   3435 ms   40,743 ch (fc  52,904, x0.77)  links pw  26 / fc   0  https://www.sartorius.com/en/patents-and-trademarks
+  [ok         ]   2760 ms    2,605 ch (fc  18,584, x0.14)  links pw  34 / fc   0  https://www.sartorius.com/en/company/newsroom/capacity-expansions/frei
+  [gate_failed]   2544 ms      267 ch (fc   7,973, x0.03)  links pw  31 / fc   0  https://www.sartorius.com/en/company/exhibition-conferences
+
+=== Sebia (15 pages, seed http://www.sebia.com/en-us)
+  [gate_failed]   5485 ms      269 ch (fc   4,511, x0.06)  links pw  34 / fc  30  http://www.sebia.com/en-us
+  [ok         ]   4899 ms    3,829 ch (fc  11,253, x0.34)  links pw  44 / fc   0  https://www.sebia.com/en-us/pathologies/diabetes-diagnosis-en-us
+  [ok         ]   4632 ms    2,759 ch (fc  10,476, x0.26)  links pw  49 / fc   0  https://www.sebia.com/en-us/technologies/gel-electrophoresis
+  [ok         ]   3907 ms    1,827 ch (fc   4,970, x0.37)  links pw  31 / fc   0  https://www.sebia.com/en-us/sebia/company-overview-en-us
+  [ok         ]   4019 ms    3,820 ch (fc   5,651, x0.68)  links pw  27 / fc   0  https://www.sebia.com/en-us/sebia/corporate-and-social-responsibility-
+  [ok         ]   4954 ms    4,493 ch (fc  18,743, x0.24)  links pw  68 / fc   0  https://www.sebia.com/en-us/technologies/capillary-electrophoresis
+  [ok         ]   4459 ms    2,437 ch (fc   5,604, x0.43)  links pw  27 / fc   0  https://www.sebia.com/en-us/sebia/worldwide-presence-en-us
+  [ok         ]   4122 ms      995 ch (fc   6,144, x0.16)  links pw  36 / fc   0  https://www.sebia.com/en-us/solutions/tests-en-us
+  [ok         ]   4817 ms    4,267 ch (fc  16,792, x0.25)  links pw  59 / fc   0  https://www.sebia.com/en-us/pathologies/multiple-myeloma-diagnosis
+  [ok         ]   4133 ms    1,795 ch (fc   7,124, x0.25)  links pw  37 / fc   0  https://www.sebia.com/en-us/ressources/putting-a1c-to-work-ada-standar
+  [gate_failed]   4226 ms      693 ch (fc   4,335, x0.16)  links pw  34 / fc   0  https://www.sebia.com/en-us/resources
+  [ok         ]   4694 ms    3,483 ch (fc  13,248, x0.26)  links pw  58 / fc   0  https://www.sebia.com/en-us/pathologies/hemoglobin-disorders-en-us
+  [ok         ]   4008 ms    1,582 ch (fc   4,536, x0.35)  links pw  27 / fc   0  https://www.sebia.com/en-us/sebia/research-innovation-en-us
+  [gate_failed]   4277 ms      579 ch (fc   6,072, x0.1)  links pw  33 / fc   0  https://www.sebia.com/en-us/solutions/instruments-en-us
+  [ok         ]   4229 ms    1,905 ch (fc   9,272, x0.21)  links pw  42 / fc   0  https://www.sebia.com/en-us/ressources/fix-it-utilizing-all-your-tools
+
+=== Shimadzu Scientific Instruments Inc. (15 pages, seed https://www.shimadzu.com/an/)
+  [gate_failed]   3224 ms      413 ch (fc  11,142, x0.04)  links pw  42 / fc  30  https://www.shimadzu.com/an
+  [ok         ]   2942 ms   10,972 ch (fc  13,864, x0.79)  links pw  25 / fc   0  https://www.shimadzu.com/an/products/gas-chromatography/70th-anniversa
+  [gate_failed]   2578 ms      413 ch (fc  11,418, x0.04)  links pw  40 / fc   0  https://www.shimadzu.com/an/products/life-science-lab-instruments/prot
+  [gate_failed]   2522 ms      567 ch (fc   8,739, x0.06)  links pw  31 / fc   0  https://www.shimadzu.com/an/products/software-informatics/labsolutions
+  [gate_failed]   2974 ms      413 ch (fc   3,874, x0.11)  links pw  25 / fc   0  https://www.shimadzu.com/an/news-events/campaign/2025/sfc-user-meeting
+  [gate_failed]   2495 ms      413 ch (fc  19,770, x0.02)  links pw 146 / fc   0  https://www.shimadzu.com/an/industries/index.html
+  [gate_failed]   2565 ms    2,688 ch (fc   8,737, x0.31)  links pw  36 / fc   0  https://www.shimadzu.com/an/products/life-science-lab-instruments/cell
+  [ok         ]   2467 ms      600 ch (fc   3,925, x0.15)  links pw  37 / fc   0  https://www.shimadzu.com/an/resources/index.html
+  [ok         ]   2770 ms    3,574 ch (fc  10,716, x0.33)  links pw  30 / fc   0  https://www.shimadzu.com/an/products/life-science-lab-instruments/dnar
+  [gate_failed]   2554 ms      413 ch (fc  26,726, x0.02)  links pw 168 / fc   0  https://www.shimadzu.com/an/products/index.html
+  [gate_failed]   3152 ms      600 ch (fc   7,643, x0.08)  links pw  22 / fc   0  https://www.shimadzu.com/an/forms/product/index.html?page=webform_star
+  [ok         ]   2838 ms      858 ch (fc  10,751, x0.08)  links pw  36 / fc   0  https://www.shimadzu.com/an/products/materials-testing/hardness-testin
+  [gate_failed]   2407 ms      308 ch (fc   5,653, x0.05)  links pw  73 / fc   0  https://www.shimadzu.com/about/index.html
+  [ok         ]   2592 ms      436 ch (fc   2,716, x0.16)  links pw  29 / fc   0  https://www.shimadzu.com/an/products/liquid-chromatography/hplc-consum
+  [gate_failed]   2268 ms    1,345 ch (fc  24,646, x0.05)  links pw 103 / fc   0  https://www.shimadzu.com
+
+=== Sysmex America (15 pages, seed https://www.sysmex.com)
+  [gate_failed]   6091 ms      825 ch (fc  10,038, x0.08)  links pw 133 / fc  30  https://www.sysmex.com
+  [ok         ]   5357 ms    2,095 ch (fc   8,161, x0.26)  links pw  76 / fc   0  https://www.sysmex.com/en-us/company/news-and-events
+  [ok         ]   2756 ms    1,502 ch (fc   3,439, x0.44)  links pw  58 / fc   0  https://www.sysmex.com/en-us/lab-solutions/informatics-solutions
+  [ok         ]   2960 ms    2,117 ch (fc   9,067, x0.23)  links pw  63 / fc   0  https://www.sysmex.com/en-us/lab-solutions/hemostasis/sysmex-cn-6000
+  [ok         ]   2987 ms    2,163 ch (fc   5,148, x0.42)  links pw  58 / fc   0  https://www.sysmex.com/en-us/lab-solutions/informatics-solutions/cares
+  [ok         ]   2772 ms    2,837 ch (fc   5,814, x0.49)  links pw  60 / fc   0  https://www.sysmex.com/en-us/company/corporate-social-responsibility
+  [ok         ]   2902 ms    1,129 ch (fc   2,916, x0.39)  links pw  58 / fc   0  https://www.sysmex.com/en-us/lab-solutions/flow-cytometry/industry-spe
+  [ok         ]   2939 ms    1,687 ch (fc   4,848, x0.35)  links pw  64 / fc   0  https://www.sysmex.com/en-us/lab-solutions/hematology/offices-clinics
+  [ok         ]   2942 ms    2,695 ch (fc   8,130, x0.33)  links pw  70 / fc   0  https://www.sysmex.com/en-us/lab-solutions/hematology/xn-series
+  [ok         ]   2939 ms    1,693 ch (fc   3,593, x0.47)  links pw  58 / fc   0  https://www.sysmex.com/en-us/lab-solutions/flow-cytometry/applications
+  [ok         ]   3009 ms    1,612 ch (fc   4,290, x0.38)  links pw  61 / fc   0  https://www.sysmex.com/en-us/lab-solutions/hematology/xn-l-series
+  [ok         ]   2946 ms    2,289 ch (fc   4,072, x0.56)  links pw  58 / fc   0  https://www.sysmex.com/en-us/lab-solutions/flow-cytometry/applications
+  [ok         ]   2864 ms    1,479 ch (fc   3,006, x0.49)  links pw  60 / fc   0  https://www.sysmex.com/en-us/lab-solutions/informatics-solutions/bcqm
+  [ok         ]   2891 ms    1,618 ch (fc   4,791, x0.34)  links pw  63 / fc   0  https://www.sysmex.com/en-us/lab-solutions/hematology/cell-image-analy
+  [ok         ]   2924 ms    2,580 ch (fc   7,449, x0.35)  links pw  66 / fc   0  https://www.sysmex.com/en-us/lab-solutions/hemostasis
+
+=== Thermo Fisher Scientific (15 pages, seed http://www.thermofisher.com)
+  [gate_failed]   3220 ms      326 ch (fc  18,791, x0.02)  links pw  91 / fc  30  http://www.thermofisher.com
+  [ok         ]   2985 ms    2,994 ch (fc  15,759, x0.19)  links pw  82 / fc   0  https://www.thermofisher.com/us/en/home/lab-solutions/solutions-diagno
+  [ok         ]   2455 ms    2,491 ch (fc  11,802, x0.21)  links pw 102 / fc   0  https://www.thermofisher.com/us/en/home/life-science/pcr/real-time-pcr
+  [ok         ]   2596 ms    6,040 ch (fc  32,404, x0.19)  links pw  97 / fc   0  https://www.thermofisher.com/lt/en/home/industrial/pharma-biopharma/bi
+  [gate_failed]   2483 ms      443 ch (fc  11,156, x0.04)  links pw  93 / fc   0  https://www.thermofisher.com/us/en/home/industrial.html
+  [ok         ]   3613 ms  136,545 ch (fc 137,327, x0.99)  links pw  71 / fc   0  https://www.thermofisher.com/us/en/home/global/trademark-information.h
+  [ok         ]   2916 ms    2,370 ch (fc     573, x4.14)  links pw  80 / fc   0  https://www.thermofisher.com/us/en/home/technical-resources/contact-us
+  [ok         ]   2413 ms    2,977 ch (fc   8,816, x0.34)  links pw  83 / fc   0  https://www.thermofisher.com/us/en/home/digital-solutions/lab-informat
+  [ok         ]   3038 ms    5,478 ch (fc  11,136, x0.49)  links pw  87 / fc   0  https://www.thermofisher.com/us/en/home/life-science/dna-rna-purificat
+  [ok         ]   2777 ms      740 ch (fc   2,620, x0.28)  links pw  81 / fc   0  https://www.thermofisher.com/us/en/home/life-science/sequencing/next-g
+  [gate_failed]   2445 ms      498 ch (fc   6,556, x0.08)  links pw  81 / fc   0  https://www.thermofisher.com/us/en/home/industrial/spectroscopy-elemen
+  [ok         ]   2611 ms    2,004 ch (fc  11,704, x0.17)  links pw 121 / fc   0  https://www.thermofisher.com/us/en/home/life-science/oligonucleotides-
+  [ok         ]   2633 ms    4,580 ch (fc   9,160, x0.5)  links pw  34 / fc   0  https://www.thermofisher.com/blog/biotechnology/bio-recap-day-4
+  [ok         ]   2625 ms    3,351 ch (fc  10,894, x0.31)  links pw 129 / fc   0  https://www.thermofisher.com/us/en/home/life-science/cell-culture.html
+  [gate_failed]   2408 ms      988 ch (fc  14,198, x0.07)  links pw  91 / fc   0  https://www.thermofisher.com/us/en/home/brands/thermo-scientific.html
+
+=== McKesson Medical-Surgical (15 pages, seed https://www.mckesson.com/)
+  [ok         ]   3154 ms    6,140 ch (fc   5,941, x1.03)  links pw  63 / fc  30  https://www.mckesson.com
+  [ok         ]   2680 ms    7,084 ch (fc   4,921, x1.44)  links pw  56 / fc   0  https://www.mckesson.com/about-us/our-locations
+  [ok         ]   2731 ms    3,227 ch (fc  13,779, x0.23)  links pw  76 / fc   0  https://www.mckesson.com/business-solutions/oncology-specialty-health
+  [ok         ]   3241 ms    4,377 ch (fc   2,588, x1.69)  links pw  70 / fc   0  https://www.mckesson.com/about-us/newsroom/press-releases
+  [gate_failed]   3042 ms      329 ch (fc   7,513, x0.04)  links pw  59 / fc   0  https://www.mckesson.com/business-solutions/pharmaceutical-medical-pro
+  [ok         ]   2707 ms    5,617 ch (fc   2,173, x2.58)  links pw  60 / fc   0  https://www.mckesson.com/about-us/corporate-governance
+  [ok         ]   2620 ms    8,263 ch (fc   3,612, x2.29)  links pw  55 / fc   0  https://www.mckesson.com/about-us/business-segments
+  [ok         ]   2888 ms    5,514 ch (fc   5,900, x0.93)  links pw  62 / fc   0  https://www.mckesson.com/business-solutions/pharmaceutical-medical-pro
+  [ok         ]   3868 ms   19,348 ch (fc  52,521, x0.37)  links pw 162 / fc   0  https://www.mckesson.com/about-us/newsroom
+  [ok         ]   2649 ms    5,260 ch (fc     851, x6.18)  links pw  59 / fc   0  https://www.mckesson.com/about-us/corporate-governance/governance-docu
+  [ok         ]   2708 ms    6,831 ch (fc   5,835, x1.17)  links pw  63 / fc   0  https://www.mckesson.com/business-solutions/prescription-benefit-solut
+  [ok         ]   2671 ms    6,723 ch (fc   4,150, x1.62)  links pw  59 / fc   0  https://www.mckesson.com/business-solutions/consumer-products-services
+  [ok         ]   2837 ms    3,856 ch (fc  17,031, x0.23)  links pw  79 / fc   0  https://www.mckesson.com/business-solutions/biopharma-capabilities
+  [ok         ]   2809 ms    8,767 ch (fc   7,720, x1.14)  links pw  69 / fc   0  https://www.mckesson.com/business-solutions/pharmacy-services
+  [ok         ]   2645 ms    6,416 ch (fc   3,228, x1.99)  links pw  63 / fc   0  https://www.mckesson.com/about-us/newsroom/press-releases/2026/mckesso
+
+=== Aalto Scientific Ltd.- Audit MicroControls (15 pages, seed https://www.aaltoscientific.com)
+  [gate_failed]    330 ms        0 ch (fc     579, x0.0)  links pw   0 / fc  16  https://www.aaltoscientific.com
+  [gate_failed]      0 ms        0 ch (fc     532, x0.0)  links pw   0 / fc   0  https://www.aaltoscientific.com/services/research-development
+  [gate_failed]      0 ms        0 ch (fc     646, x0.0)  links pw   0 / fc   0  https://www.aaltoscientific.com/services/formulation
+  [gate_failed]      0 ms        0 ch (fc   2,013, x0.0)  links pw   0 / fc   0  https://www.aaltoscientific.com/facilities
+  [gate_failed]      0 ms        0 ch (fc   2,098, x0.0)  links pw   0 / fc   0  https://www.aaltoscientific.com/products
+  [gate_failed]      0 ms        0 ch (fc   3,229, x0.0)  links pw   0 / fc   0  https://www.aaltoscientific.com/products/sera
+  [gate_failed]      0 ms        0 ch (fc   5,563, x0.0)  links pw   0 / fc   0  https://www.aaltoscientific.com/products/controls-calibrators
+  [gate_failed]      0 ms        0 ch (fc   6,360, x0.0)  links pw   0 / fc   0  https://www.aaltoscientific.com/products/proteins
+  [gate_failed]      0 ms        0 ch (fc     471, x0.0)  links pw   0 / fc   0  https://www.aaltoscientific.com/services/lyophilization
+  [gate_failed]      0 ms        0 ch (fc     579, x0.0)  links pw   0 / fc   0  https://www.aaltoscientific.com/index.php
+  [gate_failed]      0 ms        0 ch (fc     605, x0.0)  links pw   0 / fc   0  https://www.aaltoscientific.com/services/filling-capping-labeling-kit-
+  [gate_failed]      0 ms        0 ch (fc     464, x0.0)  links pw   0 / fc   0  https://www.aaltoscientific.com/services/protein-purification
+  [gate_failed]      0 ms        0 ch (fc   2,499, x0.0)  links pw   0 / fc   0  https://www.aaltoscientific.com/services
+  [gate_failed]      0 ms        0 ch (fc   1,521, x0.0)  links pw   0 / fc   0  https://www.aaltoscientific.com/about
+  [gate_failed]      0 ms        0 ch (fc     893, x0.0)  links pw   0 / fc   0  https://www.aaltoscientific.com/contact
+
+=== Acro Biotech Inc. (13 pages, seed https://www.acrobiotech.com)
+  [gate_failed]   2729 ms      138 ch (fc   5,983, x0.02)  links pw  13 / fc  12  https://www.acrobiotech.com
+  [ok         ]   2223 ms      467 ch (fc   3,585, x0.13)  links pw  13 / fc   0  https://www.acrobiotech.com/infectious-disease
+  [ok         ]   2177 ms      524 ch (fc   1,901, x0.28)  links pw  13 / fc   0  https://www.acrobiotech.com/covid-19-tests
+  [ok         ]   2205 ms      461 ch (fc   1,823, x0.25)  links pw  13 / fc   0  https://www.acrobiotech.com/tumor-markers
+  [ok         ]   2199 ms    1,836 ch (fc   3,575, x0.51)  links pw  13 / fc   0  https://www.acrobiotech.com/about
+  [ok         ]   2184 ms      454 ch (fc   1,933, x0.23)  links pw  13 / fc   0  https://www.acrobiotech.com/others
+  [ok         ]   2224 ms      464 ch (fc   2,046, x0.23)  links pw  13 / fc   0  https://www.acrobiotech.com/cardiac-markers
+  [ok         ]   2885 ms      500 ch (fc   5,133, x0.1)  links pw  13 / fc   0  https://www.acrobiotech.com/products
+  [ok         ]   2213 ms      359 ch (fc   1,090, x0.33)  links pw  13 / fc   0  https://www.acrobiotech.com/contact
+  [ok         ]   2173 ms      491 ch (fc   4,685, x0.1)  links pw  13 / fc   0  https://www.acrobiotech.com/veterinary
+  [ok         ]   2191 ms    1,176 ch (fc   5,515, x0.21)  links pw  15 / fc   0  https://www.acrobiotech.com/blog
+  [ok         ]   2204 ms      463 ch (fc   1,825, x0.25)  links pw  13 / fc   0  https://www.acrobiotech.com/women-s-health
+  [ok         ]   2175 ms      463 ch (fc   2,909, x0.16)  links pw  13 / fc   0  https://www.acrobiotech.com/drugs-of-abuse
+
+=== Aladdin Scientific (15 pages, seed https://www.aladdinsci.com)
+  [gate_failed]   3603 ms    3,303 ch (fc   1,838, x1.8)  links pw 388 / fc  30  https://www.aladdinsci.com
+  [ok         ]   2139 ms      333 ch (fc   3,136, x0.11)  links pw   0 / fc   0  https://www.aladdinsci.com/us_en/notification/setting/index
+  [ok         ]   2081 ms      333 ch (fc  32,427, x0.01)  links pw   0 / fc   0  https://www.aladdinsci.com/ligands-for-targets/by-disease-doid.html
+  [ok         ]   2063 ms      333 ch (fc  25,361, x0.01)  links pw   0 / fc   0  https://www.aladdinsci.com/us_en/ligands-for-targets/by-target-dto/gpc
+  [ok         ]   2080 ms      333 ch (fc  20,342, x0.02)  links pw   0 / fc   0  https://www.aladdinsci.com/us_en/life-sciences/cat-protein-biology/pro
+  [ok         ]   2076 ms      333 ch (fc  20,701, x0.02)  links pw   0 / fc   0  https://www.aladdinsci.com/us_en/cat-chemicals-and-biochemicals/cat-ch
+  [ok         ]   2071 ms      333 ch (fc  25,629, x0.01)  links pw   0 / fc   0  https://www.aladdinsci.com/us_en/cat-chemicals-and-biochemicals/cat-an
+  [ok         ]   2076 ms      333 ch (fc   5,482, x0.06)  links pw   0 / fc   0  https://www.aladdinsci.com/us_en/cat-chemicals-and-biochemicals/cat-an
+  [ok         ]   2086 ms      333 ch (fc  25,670, x0.01)  links pw   0 / fc   0  https://www.aladdinsci.com/us_en/cat-chemicals-and-biochemicals/cat-an
+  [ok         ]   2071 ms      333 ch (fc  28,605, x0.01)  links pw   0 / fc   0  https://www.aladdinsci.com/us_en/ligands-for-targets/by-disease-doid/d
+  [ok         ]   2080 ms      333 ch (fc  27,714, x0.01)  links pw   0 / fc   0  https://www.aladdinsci.com/us_en/ligands-for-targets/signaling-pathway
+  [ok         ]   2071 ms      333 ch (fc 124,405, x0.0)  links pw   0 / fc   0  https://www.aladdinsci.com/us_en/ligands-for-targets/by-target-dto/gpc
+  [ok         ]   2075 ms      333 ch (fc  19,045, x0.02)  links pw   0 / fc   0  https://www.aladdinsci.com/us_en/cat-applications/cat-biopharmaceutica
+  [ok         ]   2077 ms      333 ch (fc  24,529, x0.01)  links pw   0 / fc   0  https://www.aladdinsci.com/us_en/cat-chemicals-and-biochemicals/cat-ch
+  [ok         ]   2084 ms      333 ch (fc  30,472, x0.01)  links pw   0 / fc   0  https://www.aladdinsci.com/us_en/life-sciences.html
+
+=== Aniara Diagnostica (15 pages, seed http://www.aniara.com)
+  [gate_failed]   4707 ms    1,267 ch (fc   4,409, x0.29)  links pw 135 / fc  30  http://www.aniara.com
+  [gate_failed]   3093 ms      993 ch (fc   1,731, x0.57)  links pw 126 / fc   0  https://www.aniara.com/CTGY/5-diagnostics.html
+  [gate_failed]   2592 ms      641 ch (fc   6,876, x0.09)  links pw 126 / fc   0  https://www.aniara.com/product-documentation.html
+  [gate_failed]   2704 ms    2,553 ch (fc   5,852, x0.44)  links pw 147 / fc   0  https://www.aniara.com/CTGY/chromogenic-and-immunological-assays.html
+  [gate_failed]   2699 ms    2,343 ch (fc   5,810, x0.4)  links pw 147 / fc   0  https://www.aniara.com/CTGY/buffers-solutions-for-clotting-or-chromoge
+  [gate_failed]   2598 ms      804 ch (fc   3,933, x0.2)  links pw 126 / fc   0  https://www.aniara.com/about-us.html
+  [gate_failed]   2615 ms    1,920 ch (fc   2,950, x0.65)  links pw 131 / fc   0  https://www.aniara.com/CTGY/reagents-for-quality-control-ep-usp.html
+  [gate_failed]   2709 ms      836 ch (fc   1,904, x0.44)  links pw 129 / fc   0  https://www.aniara.com/CTGY/pai-1-and-tpa-activity-antigen.html
+  [gate_failed]   2741 ms    1,444 ch (fc   2,681, x0.54)  links pw 132 / fc   0  https://www.aniara.com/CTGY/reagents-for-the-detection-of-heparin-indu
+  [gate_failed]   2670 ms    2,439 ch (fc   6,001, x0.41)  links pw 147 / fc   0  https://www.aniara.com/CTGY/calibrators-and-controls-for-reagents-for-
+  [gate_failed]   2635 ms      768 ch (fc   1,312, x0.59)  links pw 126 / fc   0  https://www.aniara.com/CTGY/ivd-products.html
+  [ok         ]   2574 ms    4,206 ch (fc  11,339, x0.37)  links pw 126 / fc   0  https://www.aniara.com/press-release.html
+  [gate_failed]   2672 ms    1,897 ch (fc   4,228, x0.45)  links pw 138 / fc   0  https://www.aniara.com/CTGY/global-assays.html
+  [gate_failed]   2438 ms      735 ch (fc     293, x2.51)  links pw 125 / fc   0  https://www.aniara.com/CTGY/anti-cardiolipinanti-phospholipid-antibodi
+  [gate_failed]   2732 ms    2,487 ch (fc   6,249, x0.4)  links pw 147 / fc   0  https://www.aniara.com/CTGY/research.html
+
+=== Calbiotech Inc. (15 pages, seed http://www.calbiotech.com)
+  [gate_failed]   3398 ms      577 ch (fc  13,418, x0.04)  links pw  54 / fc  30  http://www.calbiotech.com
+  [gate_failed]   2811 ms      668 ch (fc   2,129, x0.31)  links pw  26 / fc   0  https://calbiotech.com/pages/contract-manufacturing
+  [gate_failed]   2474 ms      590 ch (fc   6,247, x0.09)  links pw  25 / fc   0  https://calbiotech.com/pages/global-ivd-made-in-usa
+  [gate_failed]   2354 ms      767 ch (fc   2,929, x0.26)  links pw  25 / fc   0  https://calbiotech.com/pages/about-us
+  [gate_failed]   2416 ms       59 ch (fc   5,622, x0.01)  links pw  47 / fc   0  https://calbiotech.com/collections/research-animal-elisas
+  [gate_failed]   2297 ms    1,015 ch (fc     599, x1.69)  links pw  25 / fc   0  https://calbiotech.com/pages/contact-us
+  [gate_failed]   2528 ms       60 ch (fc  14,534, x0.0)  links pw  67 / fc   0  https://calbiotech.com/collections/research-assays
+  [gate_failed]   2425 ms    1,867 ch (fc   4,511, x0.41)  links pw  27 / fc   0  https://calbiotech.com/products/helicobacter-pylori-igm-elisa
+  [gate_failed]   2438 ms    1,867 ch (fc   4,530, x0.41)  links pw  27 / fc   0  https://calbiotech.com/products/helicobacter-pylori-igg-elisa
+  [gate_failed]   2402 ms       59 ch (fc   6,559, x0.01)  links pw  48 / fc   0  https://calbiotech.com/collections/reagents-substrates
+  [ok         ]   2452 ms    4,612 ch (fc   7,131, x0.65)  links pw  27 / fc   0  https://calbiotech.com/products/estradiol-elisa
+  [gate_failed]   2332 ms    1,600 ch (fc   2,493, x0.64)  links pw  26 / fc   0  https://calbiotech.com/pages/services
+  [gate_failed]   2409 ms      536 ch (fc   4,778, x0.11)  links pw  27 / fc   0  https://calbiotech.com/products/prolactin-elisa
+  [gate_failed]   2359 ms    2,057 ch (fc   3,346, x0.61)  links pw  25 / fc   0  https://calbiotech.com/pages/faqs
+  [gate_failed]   2406 ms       59 ch (fc   5,579, x0.01)  links pw  47 / fc   0  https://calbiotech.com/collections/neonatal-screening
+
+=== Catachem (1 pages, seed https://catacheminc.com/)
+  [ok         ]   3459 ms    2,586 ch (fc   4,541, x0.57)  links pw   1 / fc   0  https://catacheminc.com
+
+=== Monobind Inc. (15 pages, seed http://www.monobind.com)
+  [gate_failed]   3149 ms      675 ch (fc   2,754, x0.25)  links pw  73 / fc  30  http://www.monobind.com
+  [gate_failed]   4323 ms      675 ch (fc  12,842, x0.05)  links pw 136 / fc   0  https://www.monobind.com/products/science/other
+  [gate_failed]   3812 ms      675 ch (fc   2,543, x0.27)  links pw  73 / fc   0  https://www.monobind.com/product-r-d
+  [gate_failed]   2221 ms      675 ch (fc  11,539, x0.06)  links pw 123 / fc   0  https://www.monobind.com/products/science/cancer
+  [gate_failed]   2892 ms      675 ch (fc  10,611, x0.06)  links pw 114 / fc   0  https://www.monobind.com/products/science/infectious
+  [gate_failed]   4038 ms      902 ch (fc   5,202, x0.17)  links pw  98 / fc   0  https://www.monobind.com/products/science/veterinary
+  [gate_failed]   4266 ms      675 ch (fc  11,987, x0.06)  links pw 119 / fc   0  https://www.monobind.com/products/science/autoimmune
+  [gate_failed]   4624 ms      675 ch (fc  12,390, x0.05)  links pw 138 / fc   0  https://www.monobind.com/products/science/hormone
+  [gate_failed]   4706 ms      458 ch (fc  17,101, x0.03)  links pw 163 / fc   0  https://www.monobind.com/products/solutions/immunoassay
+  [gate_failed]   3919 ms      902 ch (fc   2,529, x0.36)  links pw  82 / fc   0  https://www.monobind.com/products/solutions/instruments
+  [ok         ]   2180 ms      887 ch (fc   4,706, x0.19)  links pw  79 / fc   0  https://www.monobind.com/products/science
+  [gate_failed]   4015 ms      675 ch (fc   4,651, x0.15)  links pw  94 / fc   0  https://www.monobind.com/products/science/allergy
+  [gate_failed]   2148 ms      675 ch (fc   2,500, x0.27)  links pw  73 / fc   0  https://www.monobind.com/product-release
+  [gate_failed]   3897 ms      675 ch (fc   6,066, x0.11)  links pw 101 / fc   0  https://www.monobind.com/products/science/cardiac
+  [gate_failed]   4480 ms      675 ch (fc  10,486, x0.06)  links pw 115 / fc   0  https://www.monobind.com/products/science/vitamin
+
+================ SUMMARY ================
+                                            pages  pw_ok  med_ratio  pw_links  fc_cands  pw_med_ms  fc_med_ms
+Entity                                                                                                       
+Aalto Scientific Ltd.- Audit MicroControls     15      0       0.00         0        16        0.0     6046.0
+Acro Biotech Inc.                              13     12       0.23       171        12     2204.0     6900.0
+Agilent Technologies                           15      1       0.03         0        30     2059.0     3782.0
+Aladdin Scientific                             15     14       0.01       388        30     2077.0     6799.0
+Aniara Diagnostica                             15      1       0.44      2008        30     2672.0     3975.0
+Bruker                                         15     13       0.23       500        25     2267.0     3570.0
+Calbiotech Inc.                                15      1       0.26       523        30     2416.0     2782.0
+Catachem                                        1      1       0.57         1         0     3459.0     5245.0
+Danaher                                        15     15       0.33       553        30     5411.0     2718.0
+EUROIMMUN                                      15      6       0.07       768        30     3902.0     4246.0
+FUJIFILM Healthcare Americas Corporation        1      1       0.51         1         0     7139.0     6976.0
+Greiner Bio-One North America Inc.             15      0       0.00         0        30        0.0     3494.0
+HORIBA                                         15      6       0.11      2480        30     4315.0     5073.0
+Hologic                                        15     10       0.18       715        30     2510.0     3381.0
+McKesson Medical-Surgical                      15     14       1.17      1055        30     2731.0     6165.0
+Metrohm USA                                    15      0       0.00         0        30        0.0     4023.0
+Monobind Inc.                                  15      1       0.11      1581        30     3919.0     3454.0
+Neogen                                         15      0       0.00         0        30        0.0     2941.0
+Nova Biomedical                                15     14       0.03       159        30     2071.0     3951.0
+QuidelOrtho                                    15     11       0.42      1958        30     2536.0     2274.0
+Sartorius                                      15      6       0.14       628        30     2697.0     4244.0
+Sebia                                          15     12       0.25       606        30     4277.0     6802.0
+Shimadzu Scientific Instruments Inc.           15      5       0.08       843        30     2578.0     6121.0
+Sysmex America                                 15     14       0.38      1006        30     2939.0     9124.0
+Thermo Fisher Scientific                       15     11       0.21      1323        30     2625.0     3873.0
+
+Overall: 169/345 pages ok (49.0%) | median chars ratio 0.13 | links pw 17267 vs fc 653 | median fetch pw 2533 ms vs fc 4233 ms
+
+Pages to inspect (ratio < 0.3): 88
+  x0.1 https://www.bruker.com/en/products-and-solutions/test-and-measurement/nanomechan
+  x0.12 https://www.bruker.com/fr/products-and-solutions/elemental-analyzers/handheld-xr
+  x0.1 https://www.bruker.com/en/products-and-solutions/fluorescence-microscopy/light-s
+  x0.1 https://www.bruker.com/en/products-and-solutions/elemental-analyzers/xrf-spectro
+  x0.15 https://www.bruker.com/en/products-and-solutions/infrared-and-raman/dairy-analyz
+  x0.13 https://www.bruker.com/en/products-and-solutions/infrared-and-raman/ft-ir-resear
+  x0.16 https://www.bruker.com/en/applications/academia-life-science/proteomics.html
+  x0.15 https://www.danaher.com/our-businesses/diagnostics/beckman-coulter
+  x0.18 https://www.danaher.com/our-businesses/diagnostics/cepheid
+  x0.16 https://www.danaher.com/our-businesses/diagnostics/leica-biosystems
+  x0.19 https://www.danaher.com/our-businesses/diagnostics/masimo
+  x0.15 https://www.danaher.com/our-businesses/diagnostics/hemocue
+  x0.18 https://www.danaher.com/our-businesses/diagnostics/mammotome
+  x0.17 https://www.danaher.com/our-businesses/diagnostics/radiometer
+  x0.18 http://www.hologic.com
+  x0.22 https://www.hologic.com/lab-technologies
+  x0.22 https://www.hologic.com/patent-information
+  x0.06 https://www.hologic.com/cytology
+  x0.16 https://www.hologic.com/project-health-equity
+  x0.08 https://www.horiba.com/usa/healthcare
+  x0.25 https://www.horiba.com/usa/contact/worldwide-locations
+  x0.13 https://www.horiba.com/usa/veterinary
+  x0.11 https://www.horiba.com/usa/semiconductor
+  x0.11 https://www.horiba.com/usa/healthcare/news/news-press-release
+  x0.02 https://www.novabiomedical.com/company
+  x0.01 https://www.novabiomedical.com/locations
+  x0.03 https://www.novabiomedical.com/company/news-events
+  x0.02 https://www.novabiomedical.com/company/leadership
+  x0.06 https://www.novabiomedical.com/terms-conditions
+  x0.03 https://www.novabiomedical.com/liquid-handling-verification/pcs-qualassure-solut
+  x0.04 https://www.novabiomedical.com/services/clinical-validation-services
+  x0.27 https://www.novabiomedical.com/distributor-portal
+  x0.01 https://www.novabiomedical.com/product-brands/advanced-instruments
+  x0.03 https://www.novabiomedical.com/cell-culture-analyzers/nova-primary-glucose-refer
+  x0.01 https://www.novabiomedical.com/clinical-osmometers/osmo1-single-sample-micro-osm
+  x0.01 https://www.novabiomedical.com/clinical-osmometers/osmopro-multi-sample-micro-os
+  x0.0 https://www.novabiomedical.com/point-of-care-meters/statstrip-glucose
+  x0.06 https://www.novabiomedical.com/product-brands/statstrip
+  x0.21 https://www.quidelortho.com/global/en/our-company/news-and-events
+  x0.15 https://www.sartorius.com/en/company/newsroom?ban_position=hp_cc_news&ban_name=e
+  x0.16 https://www.sartorius.com/en/company/newsroom
+  x0.17 https://www.sartorius.com/en/services/biologics-contract-services/pd-service-adv
+  x0.17 https://www.sartorius.com/en/products/microbiological-testing?ban_position=portf
+  x0.14 https://www.sartorius.com/en/company/newsroom/capacity-expansions/freiburg-germa
+  x0.26 https://www.sebia.com/en-us/technologies/gel-electrophoresis
+  x0.24 https://www.sebia.com/en-us/technologies/capillary-electrophoresis
+  x0.16 https://www.sebia.com/en-us/solutions/tests-en-us
+  x0.25 https://www.sebia.com/en-us/pathologies/multiple-myeloma-diagnosis
+  x0.25 https://www.sebia.com/en-us/ressources/putting-a1c-to-work-ada-standards-testing
+  x0.26 https://www.sebia.com/en-us/pathologies/hemoglobin-disorders-en-us
+  x0.21 https://www.sebia.com/en-us/ressources/fix-it-utilizing-all-your-tools-for-chall
+  x0.15 https://www.shimadzu.com/an/resources/index.html
+  x0.08 https://www.shimadzu.com/an/products/materials-testing/hardness-testing/mct-seri
+  x0.16 https://www.shimadzu.com/an/products/liquid-chromatography/hplc-consumables/shim
+  x0.26 https://www.sysmex.com/en-us/company/news-and-events
+  x0.23 https://www.sysmex.com/en-us/lab-solutions/hemostasis/sysmex-cn-6000
+  x0.19 https://www.thermofisher.com/us/en/home/lab-solutions/solutions-diagnostics-labs
+  x0.21 https://www.thermofisher.com/us/en/home/life-science/pcr/real-time-pcr/real-time
+  x0.19 https://www.thermofisher.com/lt/en/home/industrial/pharma-biopharma/biopharmaceu
+  x0.28 https://www.thermofisher.com/us/en/home/life-science/sequencing/next-generation-
+  x0.17 https://www.thermofisher.com/us/en/home/life-science/oligonucleotides-primers-pr
+  x0.23 https://www.mckesson.com/business-solutions/oncology-specialty-health
+  x0.23 https://www.mckesson.com/business-solutions/biopharma-capabilities
+  x0.13 https://www.acrobiotech.com/infectious-disease
+  x0.28 https://www.acrobiotech.com/covid-19-tests
+  x0.25 https://www.acrobiotech.com/tumor-markers
+  x0.23 https://www.acrobiotech.com/others
+  x0.23 https://www.acrobiotech.com/cardiac-markers
+  x0.1 https://www.acrobiotech.com/products
+  x0.1 https://www.acrobiotech.com/veterinary
+  x0.21 https://www.acrobiotech.com/blog
+  x0.25 https://www.acrobiotech.com/women-s-health
+  x0.16 https://www.acrobiotech.com/drugs-of-abuse
+  x0.11 https://www.aladdinsci.com/us_en/notification/setting/index
+  x0.01 https://www.aladdinsci.com/ligands-for-targets/by-disease-doid.html
+  x0.01 https://www.aladdinsci.com/us_en/ligands-for-targets/by-target-dto/gpcr-non-olfa
+  x0.02 https://www.aladdinsci.com/us_en/life-sciences/cat-protein-biology/protein-analy
+  x0.02 https://www.aladdinsci.com/us_en/cat-chemicals-and-biochemicals/cat-chemical-bio
+  x0.01 https://www.aladdinsci.com/us_en/cat-chemicals-and-biochemicals/cat-analytical-r
+  x0.06 https://www.aladdinsci.com/us_en/cat-chemicals-and-biochemicals/cat-analytical-r
+  x0.01 https://www.aladdinsci.com/us_en/cat-chemicals-and-biochemicals/cat-analytical-r
+  x0.01 https://www.aladdinsci.com/us_en/ligands-for-targets/by-disease-doid/doid-doid-0
+  x0.01 https://www.aladdinsci.com/us_en/ligands-for-targets/signaling-pathways/anti-inf
+  x0.0 https://www.aladdinsci.com/us_en/ligands-for-targets/by-target-dto/gpcr-non-olfa
+  x0.02 https://www.aladdinsci.com/us_en/cat-applications/cat-biopharmaceutical-manufact
+  x0.01 https://www.aladdinsci.com/us_en/cat-chemicals-and-biochemicals/cat-chemical-bio
+  x0.01 https://www.aladdinsci.com/us_en/life-sciences.html
+  x0.19 https://www.monobind.com/products/science
+
+Wrote adlm-outputs/backend_compare_25_playwright_vs_firecrawl_2026-07-05.xlsx

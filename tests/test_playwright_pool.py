@@ -33,44 +33,53 @@ def test_domain_slot_independent_domains_do_not_wait():
 
 # ── robots.txt ────────────────────────────────────────────────────────────────
 
-class _FakeRobots:
-    """Stands in for RobotFileParser; records reads, answers can_fetch."""
-    instances = 0
-
-    def __init__(self, allow=True, read_raises=False):
-        self._allow = allow
-        self._read_raises = read_raises
-
-    def set_url(self, url):
-        pass
-
-    def read(self):
-        type(self).instances += 1
-        if self._read_raises:
-            raise OSError("unreachable")
-
-    def can_fetch(self, ua, url):
-        return self._allow
+class _FakeHttpxResponse:
+    def __init__(self, status_code=200, text=""):
+        self.status_code = status_code
+        self.text = text
 
 
 def test_robots_disallow_blocks_and_caches(monkeypatch):
     pp._robots_cache.clear()
-    _FakeRobots.instances = 0
-    monkeypatch.setattr(pp.robotparser, "RobotFileParser", lambda: _FakeRobots(allow=False))
+    call_count = {"n": 0}
+
+    def fake_get(url, **kwargs):
+        call_count["n"] += 1
+        return _FakeHttpxResponse(200, "User-agent: *\nDisallow: /")
+
+    monkeypatch.setattr(pp.httpx, "get", fake_get)
     monkeypatch.setattr(pp, "CRAWL_RESPECT_ROBOTS", True)
 
     assert pp.robots_allows("https://blocked.com/page") is False
     assert pp.robots_allows("https://blocked.com/other") is False
-    assert _FakeRobots.instances == 1, "robots.txt must be fetched once per domain, then cached"
+    assert call_count["n"] == 1, "robots.txt must be fetched once per domain, then cached"
     print("OK test_robots_disallow_blocks_and_caches passed")
 
 
 def test_robots_unreadable_treated_as_allow(monkeypatch):
     pp._robots_cache.clear()
-    monkeypatch.setattr(pp.robotparser, "RobotFileParser", lambda: _FakeRobots(read_raises=True))
+
+    def raise_error(*args, **kwargs):
+        raise OSError("unreachable")
+
+    monkeypatch.setattr(pp.httpx, "get", raise_error)
     monkeypatch.setattr(pp, "CRAWL_RESPECT_ROBOTS", True)
     assert pp.robots_allows("https://norobots.com/page") is True
     print("OK test_robots_unreadable_treated_as_allow passed")
+
+
+def test_robots_403_treated_as_allow(monkeypatch):
+    """WAF returning 403 on robots.txt fetch must be allow, not disallow_all.
+
+    The original urllib-based implementation set disallow_all=True on any 403,
+    causing false-positive blocks on domains whose robots.txt actually reads
+    "Allow: /" but whose WAF rejects Python's default User-Agent.
+    """
+    pp._robots_cache.clear()
+    monkeypatch.setattr(pp.httpx, "get", lambda *a, **kw: _FakeHttpxResponse(403))
+    monkeypatch.setattr(pp, "CRAWL_RESPECT_ROBOTS", True)
+    assert pp.robots_allows("https://waf-protected.com/page") is True
+    print("OK test_robots_403_treated_as_allow passed")
 
 
 def test_robots_respect_flag_off_allows_everything(monkeypatch):

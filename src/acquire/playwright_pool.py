@@ -22,6 +22,8 @@ import time
 from urllib import robotparser
 from urllib.parse import urlparse
 
+import httpx
+
 from config import (
     CRAWL_POLITE_DELAY_S,
     CRAWL_RESPECT_ROBOTS,
@@ -68,7 +70,14 @@ _robots_cache: dict[str, robotparser.RobotFileParser | None] = {}
 def robots_allows(url: str) -> bool:
     """True if robots.txt permits fetching url (or robots.txt is absent or
     unreadable — unreachable robots is treated as allow, the conventional
-    interpretation). Cached per domain."""
+    interpretation). Cached per domain.
+
+    Fetches robots.txt with the pipeline's own User-Agent (REQUEST_HEADERS).
+    The previous implementation used rp.read() which calls urllib with Python's
+    default User-Agent ("Python-urllib/3.x"); several WAFs return HTTP 403 to
+    that UA while serving 200 to the honest pipeline UA — causing false-positive
+    blocks on domains whose robots.txt reads "Allow: /".
+    """
     if not CRAWL_RESPECT_ROBOTS:
         return True
     parsed = urlparse(url)
@@ -76,12 +85,18 @@ def robots_allows(url: str) -> bool:
     with _robots_lock:
         rp = _robots_cache.get(base, "miss")
     if rp == "miss":
+        robots_url = f"{base}/robots.txt"
         rp = robotparser.RobotFileParser()
-        rp.set_url(f"{base}/robots.txt")
+        rp.set_url(robots_url)
         try:
-            rp.read()
+            resp = httpx.get(robots_url, headers=REQUEST_HEADERS, follow_redirects=True, timeout=10)
+            if resp.status_code == 200:
+                rp.parse(resp.text.splitlines())
+                rp.modified()  # mark as fetched so can_fetch() doesn't short-circuit to False
+            else:
+                rp = None  # non-200 (incl. 403, 404) → treat as allow
         except Exception:
-            rp = None  # unreadable -> allow
+            rp = None  # network error → allow
         with _robots_lock:
             _robots_cache[base] = rp
     if rp is None:

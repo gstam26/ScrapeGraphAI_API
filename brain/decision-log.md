@@ -5,6 +5,26 @@
 
 -----
 
+## 2026-07-06 — FINDING: a populated cache does not pin the crawl — discovery/scoring re-run live every run, and cache hits use a DIFFERENT discovery path than live fetches
+
+**Context:** George's 25-sample re-run (intended to isolate the verified-only output-layer change against the 07-03 baseline) made live Firecrawl calls and selected different subpages per company, despite a fully populated cache — visible via avif scrape failures that only occur on live fetches. The prior advice ("cache intact → identical replay, zero credits") was **wrong**.
+
+**Mechanism (read from `src/acquire/crawler.py`, confirmed against `fetcher.py` and the 07-03 workbook):**
+1. The cache persists **page text only** — rendered HTML is discarded (`write_cache(url, text)`, crawler.py:142; cache.py stores one string). Cache hits return `html=None` (crawler.py:137).
+2. `_discover_links` dispatches on that: live Firecrawl → anchor-tag parse of **rawHtml** (crawler.py:249-250, the 2026-07-01 nav/footer fix); cache hit → **markdown-regex** parse of cached text (crawler.py:253-254) — the exact link set the rawHtml fix exists to replace. The two paths produce structurally different candidate sets *by design*, not by drift.
+3. The markdown path also surfaces **image links** the HTML path cannot: `_MD_LINK_RE` (crawler.py:152) matches the `[alt](url)` inside markdown images `![alt](url)`, and `.avif` is **not** in `_JUNK_EXTS` (crawler.py:92-95, which lists .png/.jpg/.webp/etc. but predates avif). The HTML path reads only `<a href>` tags, so image URLs never become candidates there. This is the smoking gun matching the observed avif failures: those candidates can *only* arise on a cache-served run.
+4. **Scoring is never cached and re-runs live every time**: Ollama embedding scoring per run (crawler.py:446-455) with a silent BM25 fallback if Ollama hiccups mid-run; the `>= threshold` select (crawler.py:466), top-30 cap (crawler.py:464), and locale-dedup first-in-batch tie-break (crawler.py:423-425) then amplify any candidate-set or score difference into a different followed set.
+5. Every newly selected URL misses the per-URL cache → **live Firecrawl fetch + credits** (crawler.py:141-142). (A third path exists too: cached text with no markdown links at all → discovery re-fetches the page live via `requests`, crawler.py:256-266.)
+6. **Baseline provenance, verified:** the 07-03 run's Acquire Log shows 345/345 pages `From Cache=False` — the baseline discovered everything from live rawHtml, the re-run from cached markdown. The page-set divergence is fully explained; no appeal to site changes needed (though those add drift on top for live-vs-live).
+
+**Consequences:**
+- **"Same tool, different run ⇒ same pages" is false on two independent axes:** live-vs-cached runs differ *structurally* (discovery-path switch); live-vs-live runs differ *environmentally* (site changes, scorer nondeterminism, mid-run fallbacks). Any A/B comparison that lets both sides crawl is comparing different page sets. This matters for the dissertation's comparative-evaluation methodology: comparisons must **replay a pinned URL list** — the pattern `diagnostics/backend_compare.py` already uses (it re-fetches the baseline Acquire Log's exact URLs) — or explicitly diff page sets before diffing answers.
+- Matrix-identical is invalid as a cross-run validation check for output-layer changes. Page-set-independent invariants remain valid: zero unverified Claim IDs/anchors in Grouped Themes; orange flag on every Verified=False Provenance row.
+
+**Candidate fixes (recorded, NOT implemented — priority is George's call):** (a) persist rawHtml alongside text in the cache so cache hits discover from the same DOM as live runs; (b) add `.avif` (and modern image formats generally) to `_JUNK_EXTS`; (c) a "crawl-plan replay" mode — persist each entity's selected URL list as a run artifact and re-run from it for comparisons; (d) cache link scores keyed on candidate set. (a)+(b) are small; (c) is the methodologically clean one for evaluations.
+
+-----
+
 ## 2026-07-06 — Verified-only grouping/digest enforced (George's standing decision); LLM summary layer designed, not built
 
 **Context:** The 2026-07-05 traceability audit found the "every citation traces to a verified claim" assertion (this log, 2026-07-03) was never enforced — unverified claims appeared as theme anchors and Digest citations. Separately, Nick asked for LLM-synthesized summary prose for consultants.

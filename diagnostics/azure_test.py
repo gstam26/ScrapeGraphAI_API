@@ -1,10 +1,18 @@
 """
-Azure OpenAI connectivity and extraction diagnostic.
+Azure OpenAI connectivity, extraction, and determinism diagnostic.
 
-Runs two checks:
+Runs three checks:
   1. Basic connectivity — sends a trivial prompt and prints the response.
+     Passing also proves the API key is present, the deployment name resolves,
+     and corporate TLS is not intercepting the Azure endpoint.
   2. Mock extraction — runs _extract_with_azure() on a small synthetic page
      with one entity and one column to verify the full JSON-parsing path.
+  3. Seed determinism probe (llm-summary-layer.md §7 item 5) — two identical
+     calls with temperature=0 + seed=42; prints system_fingerprint and whether
+     the outputs are byte-identical. "identical: True" + non-null fingerprint
+     confirms the reduced-nondeterminism assumption of the summary-layer
+     design; False/None means the design's self-agreement leg reverts to
+     measuring variance (design unchanged otherwise).
 
 Usage:
     python diagnostics/azure_test.py
@@ -40,7 +48,7 @@ def check_connectivity() -> bool:
         print("  ERROR: AZURE_API_KEY is not set in .env")
         return False
 
-    print("  [1/2] Basic connectivity test...")
+    print("  [1/3] Basic connectivity test...")
     t0 = time.time()
     try:
         client = OpenAI(base_url=AZURE_ENDPOINT, api_key=AZURE_API_KEY)
@@ -63,7 +71,7 @@ def check_extraction() -> bool:
     from models import ColumnSpec, PageDoc
     from src.extract import _extract_with_azure
 
-    print("  [2/2] Mock extraction test...")
+    print("  [2/3] Mock extraction test...")
 
     page = PageDoc(
         url="https://example.com/test",
@@ -102,6 +110,49 @@ def check_extraction() -> bool:
     return True
 
 
+def check_determinism() -> bool:
+    """Seed probe for the LLM summary layer (llm-summary-layer.md §7 item 5).
+
+    Two identical calls with temperature=0 + seed=42. Reports, never fails the
+    diagnostic: non-determinism here is a design INPUT (the self-agreement leg
+    reverts to measuring variance), not an error.
+    """
+    from openai import OpenAI
+
+    print("  [3/3] Seed determinism probe (temperature=0, seed=42)...")
+
+    client = OpenAI(base_url=AZURE_ENDPOINT, api_key=AZURE_API_KEY)
+    outs: list[str] = []
+    try:
+        for i in range(2):
+            t0 = time.time()
+            completion = client.chat.completions.create(
+                model=AZURE_DEPLOYMENT,
+                messages=[{"role": "user", "content": "List three primary colors on one line."}],
+                temperature=0,
+                seed=42,
+                timeout=30,
+            )
+            elapsed = time.time() - t0
+            outs.append(completion.choices[0].message.content or "")
+            fp = getattr(completion, "system_fingerprint", None)
+            print(f"    call {i + 1}: {elapsed:.2f}s, system_fingerprint: {fp!r}")
+    except Exception as e:
+        print(f"  FAILED: {e}")
+        print("  (If the error mentions 'temperature' or 'seed' being unsupported,")
+        print("   that IS the answer to §7 item 5 — report it as such.)\n")
+        return False
+
+    identical = outs[0] == outs[1]
+    print(f"    output: {outs[0].strip()!r}")
+    print(f"  identical outputs: {identical}")
+    if identical:
+        print("  -> seeded determinism holds on this deployment (summary-layer §5 assumption confirmed)\n")
+    else:
+        print("  -> outputs differ despite temperature=0 + seed: self-agreement leg measures variance\n")
+    return True
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Azure OpenAI diagnostic")
     parser.add_argument("--skip-extract", action="store_true", help="Only run connectivity check")
@@ -119,6 +170,9 @@ def main() -> None:
         ok = check_extraction()
         if not ok:
             sys.exit(1)
+
+    if not check_determinism():
+        sys.exit(1)
 
     print("  All checks passed.")
 

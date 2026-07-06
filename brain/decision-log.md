@@ -21,7 +21,11 @@
 - **"Same tool, different run ⇒ same pages" is false on two independent axes:** live-vs-cached runs differ *structurally* (discovery-path switch); live-vs-live runs differ *environmentally* (site changes, scorer nondeterminism, mid-run fallbacks). Any A/B comparison that lets both sides crawl is comparing different page sets. This matters for the dissertation's comparative-evaluation methodology: comparisons must **replay a pinned URL list** — the pattern `diagnostics/backend_compare.py` already uses (it re-fetches the baseline Acquire Log's exact URLs) — or explicitly diff page sets before diffing answers.
 - Matrix-identical is invalid as a cross-run validation check for output-layer changes. Page-set-independent invariants remain valid: zero unverified Claim IDs/anchors in Grouped Themes; orange flag on every Verified=False Provenance row.
 
-**Candidate fixes (recorded, NOT implemented — priority is George's call):** (a) persist rawHtml alongside text in the cache so cache hits discover from the same DOM as live runs; (b) add `.avif` (and modern image formats generally) to `_JUNK_EXTS`; (c) a "crawl-plan replay" mode — persist each entity's selected URL list as a run artifact and re-run from it for comparisons; (d) cache link scores keyed on candidate set. (a)+(b) are small; (c) is the methodologically clean one for evaluations.
+**Candidate fixes — status (updated 2026-07-06, later same day, per George):**
+- **(b) DONE:** `.avif .heic .heif .bmp .tif .tiff .jxl .apng` added to `_JUNK_EXTS` (crawler.py); regression test covers the exact failure shape (markdown-image URL becoming a candidate) on both discovery paths.
+- **(c) DONE, generalised — now a STANDING REQUIREMENT:** `diagnostics/build_replay_input.py` pins any baseline run's page set into a standard 4-sheet input workbook (Acquire Log "ok"/"cached" pages as depth-0 specs → the pipeline's direct-fetch path, no discovery/scoring; questions+config copied from the original input since the output workbook doesn't store instructions). Every future before/after validation replays a pinned page set via this tool — never re-crawls — so the diff isolates the code change under test. Validated end-to-end against the real 07-03 baseline: 345 pages / 25 entities, round-trips through `read_input`. 4 tests; suite 130.
+- **(a) DEFERRED to its own session (George):** persist rawHtml in the cache so cache hits discover from the same DOM as live runs — held deliberately, not mid-validation.
+- (d) unprioritised.
 
 -----
 

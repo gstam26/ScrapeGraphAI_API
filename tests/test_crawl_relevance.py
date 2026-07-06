@@ -148,6 +148,37 @@ def test_normal_threshold_takes_precedence_over_fallback():
     print("OK test_normal_threshold_takes_precedence_over_fallback passed")
 
 
+# ── Junk-link filtering ────────────────────────────────────────────────────────
+
+def test_image_urls_never_become_crawl_candidates():
+    """Regression for the 2026-07-06 finding: cached-markdown link discovery
+    matches the [alt](url) inside markdown images ![alt](url), so image URLs
+    became crawl candidates — and .avif was missing from _JUNK_EXTS, producing
+    live Firecrawl calls against image files during George's validation
+    re-run. Every common image extension must be junk-filtered, on both the
+    markdown and HTML discovery paths."""
+    from src.acquire.crawler import _discover_links_from_markdown, _is_junk_link
+
+    image_exts = [".avif", ".heic", ".heif", ".bmp", ".tif", ".tiff", ".jxl",
+                  ".apng", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"]
+    for ext in image_exts:
+        assert _is_junk_link(f"https://example.com/media/photo{ext}"), ext
+        assert _is_junk_link(f"https://example.com/media/photo{ext.upper()}"), ext
+        assert _is_junk_link(f"https://example.com/media/photo{ext}/"), ext
+
+    # The observed failure shape: a markdown image inline in cached page text.
+    text = (
+        "Welcome. ![hero banner](https://example.com/img/hero.avif) "
+        "Read [about us](https://example.com/about) for more."
+    )
+    candidates = _discover_links_from_markdown(
+        "https://example.com", "https://example.com", depth=1, text=text)
+    urls = [c.url for c in candidates]
+    assert "https://example.com/about" in urls
+    assert not any(u.endswith(".avif") for u in urls), urls
+    print("OK test_image_urls_never_become_crawl_candidates passed")
+
+
 # ── Locale-variant dedup ───────────────────────────────────────────────────────
 
 def test_locale_key_collapses_language_homepages():

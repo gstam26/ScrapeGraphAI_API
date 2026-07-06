@@ -91,6 +91,7 @@ def _same_domain(start_url: str, candidate_url: str) -> bool:
 
 _JUNK_EXTS = (
     ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico",
+    ".avif", ".heic", ".heif", ".bmp", ".tif", ".tiff", ".jxl", ".apng",
     ".css", ".js", ".mp4", ".webm", ".pdf", ".zip",
 )
 

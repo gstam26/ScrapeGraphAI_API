@@ -450,9 +450,13 @@ def _make_provenance_df(
     """Returns (df, claim_index).
 
     claim_index maps (entity, question, normalised claim) -> (claim_id,
-    provenance_excel_row) for the FIRST occurrence of each claim — the anchor
-    the Grouped Themes and Digest sheets hyperlink back to. Claim IDs are
-    sequential in Provenance order, which is deterministic (spec merge order).
+    provenance_excel_row) — the anchor the Grouped Themes and Digest sheets
+    hyperlink back to. The anchor is the first VERIFIED occurrence of each
+    claim, falling back to the first occurrence when no verified one exists
+    (standing decision 2026-07-06: grouping/digest cite verified rows only;
+    since group.py feeds them verified claims only, the fallback is never
+    consultant-visible). Claim IDs are sequential in Provenance order, which
+    is deterministic (spec merge order).
     """
     col_names = [
         "Claim ID", "Entity", "Source URL", "Question", "Claim", "Verbatim Quote",
@@ -467,6 +471,7 @@ def _make_provenance_df(
 
     rows = []
     claim_index: dict[tuple[str, str, str], tuple[str, int]] = {}
+    verified_anchor_keys: set[tuple[str, str, str]] = set()
     for entity_row in result.rows:
         src = entity_row.all_cells  # always granular — never read aggregated cells here
         for cell in src:
@@ -479,8 +484,10 @@ def _make_provenance_df(
                 claim_id = f"C{len(rows) + 1:04d}"
                 entity = cell.entity or entity_row.entity
                 key = (entity, cell.column, _norm_claim(ev.value))
-                if key not in claim_index:
+                if key not in claim_index or (verified and key not in verified_anchor_keys):
                     claim_index[key] = (claim_id, len(rows) + 2)  # +2: 1-based + header
+                    if verified:
+                        verified_anchor_keys.add(key)
                 rows.append({
                     "Claim ID": claim_id,
                     "Entity": entity,
@@ -548,22 +555,28 @@ def _make_grouped_themes_df(
     theme_links: dict[int, int] = {}
     for group in claim_groups:
         pairs, anchor = _group_claim_refs(group, claim_index)
+        # Claim IDs column must stay complete even when the bullet display is
+        # capped — it is the traceability escape hatch for oversized cells
+        # (e.g. HORIBA's 328-item Recent news theme), so truncating it in
+        # lockstep with the display bullets silently dropped every ID past
+        # MATRIX_MAX_DISPLAY_ITEMS, leaving the "+N more — see Provenance"
+        # items with no ID to search Provenance by. Compute ids from the
+        # FULL pairs list, before slicing for display.
+        all_ids = [cid for _, cid in pairs if cid]
         hidden = 0
+        display_pairs = pairs
         if len(pairs) > MATRIX_MAX_DISPLAY_ITEMS:
             hidden = len(pairs) - MATRIX_MAX_DISPLAY_ITEMS
-            pairs = pairs[:MATRIX_MAX_DISPLAY_ITEMS]
+            display_pairs = pairs[:MATRIX_MAX_DISPLAY_ITEMS]
         bullets = [
             f"- {value} [{cid}]" if cid else f"- {value}"
-            for value, cid in pairs
+            for value, cid in display_pairs
         ]
         text = "\n".join(bullets)
         if hidden:
             text += f"\n[+{hidden} more items — see Provenance]"
 
-        ids = [cid for _, cid in pairs if cid]
-        ids_text = ", ".join(ids)
-        if hidden:
-            ids_text += f" (+{hidden} more)"
+        ids_text = ", ".join(all_ids)
 
         excel_row = len(rows) + 2  # 1-based + header
         if anchor is not None:
@@ -680,7 +693,11 @@ def _style_sheet(ws, tab_color: str, matrix_fills: dict | None = None) -> None:
             if "no data found" in vl:
                 cell.fill = PatternFill("solid", fgColor=_RED_FILL)
                 cell.font = Font(name="Arial", size=10, color=_RED_FONT)
-            elif cell.column in verified_cols and val == "FALSE":
+            elif cell.column in verified_cols and vl == "false":
+                # Excel stores booleans as Python bool -> str(False) == "False",
+                # so an exact "FALSE" comparison never matched; compare on the
+                # lowercased value. This is the analyst-review flag for
+                # unverified Provenance / Verify Log rows.
                 cell.fill = PatternFill("solid", fgColor=_ORANGE_FILL)
             elif any(kw in vl for kw in ("timed out", "timeout", "status: error")):
                 cell.fill = PatternFill("solid", fgColor=_RED_FILL)

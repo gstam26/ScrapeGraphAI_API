@@ -8,6 +8,11 @@ bullets. Hard constraints honoured here:
 
   * NO LLM anywhere — embeddings (Ollama nomic-embed) + fixed-threshold
     greedy agglomerative clustering only.
+  * VERIFIED CLAIMS ONLY (standing decision, 2026-07-06): a value enters
+    grouping only if at least one of its evidence items passed verification.
+    Unverified claims stay in Provenance (Verified=False, flagged for analyst
+    review) and never appear in Grouped Themes or Digest. Enforced in
+    _display_values — the single entry point for what gets grouped.
   * Fully deterministic given embeddings: values are iterated in sorted()
     order, assigned to the FIRST existing cluster whose centroid clears
     GROUP_SIMILARITY, and theme labels are medoid MEMBER strings (real
@@ -49,12 +54,32 @@ def _is_null_sentinel(normalised: str) -> bool:
     return normalised.startswith(_NULL_SENTINEL_PREFIX)
 
 
+def _verified_norms(cell: ExtractedCell) -> set[str]:
+    """Normalised values of the cell's evidence items that passed verification.
+
+    A value counts as verified if ANY evidence item with that (normalised)
+    value has verified=True — the same claim found on two pages and confirmed
+    on one is a verified claim. Values with no verified evidence anywhere
+    (including values with no evidence at all, e.g. synthesized union-list
+    strings) are unverifiable and excluded.
+    """
+    return {
+        _normalise_value(ev.value)
+        for ev in cell.evidence
+        if ev.value is not None and ev.verified
+    }
+
+
 def _display_values(cell: ExtractedCell) -> list[str]:
-    """Distinct display values of an aggregated cell, in original display order.
+    """Distinct VERIFIED display values of an aggregated cell, in original
+    display order.
 
     cell.value is a list of deduped value strings for list cells; scalars are
     normalised to a 1-item list. Empty values and null sentinels are dropped;
-    exact (normalised) duplicates keep their first occurrence.
+    exact (normalised) duplicates keep their first occurrence. Values without
+    at least one verified evidence item are dropped (standing decision,
+    2026-07-06): unverified claims never reach grouping/digest — they remain
+    in Provenance flagged for analyst review.
     """
     raw = cell.value
     if isinstance(raw, list):
@@ -64,12 +89,13 @@ def _display_values(cell: ExtractedCell) -> list[str]:
     else:
         candidates = []
 
+    verified = _verified_norms(cell)
     values: list[str] = []
     seen: set[str] = set()
     for v in candidates:
         text = str(v).strip()
         norm = _normalise_value(text)
-        if not text or _is_null_sentinel(norm) or norm in seen:
+        if not text or _is_null_sentinel(norm) or norm in seen or norm not in verified:
             continue
         seen.add(norm)
         values.append(text)
@@ -179,7 +205,9 @@ def _distinct_sources(cell: ExtractedCell, members: list[str]) -> int:
 
 
 def group_rows(rows: list[ExtractedRow]) -> list[dict]:
-    """Group the claims inside each aggregated cell into deterministic themes.
+    """Group the VERIFIED claims inside each aggregated cell into
+    deterministic themes. Unverified claims are excluded before GROUP_MIN_ITEMS
+    is applied (see _display_values).
 
     Returns one dict per theme:
       {"entity", "question", "theme", "n_items", "values", "sources"}

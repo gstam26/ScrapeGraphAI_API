@@ -65,11 +65,12 @@ _DISPLAY = [_LAUNCH[1], _REG[0], _LAUNCH[0], _PARTNER[0], _REG[1], _LAUNCH[2], _
 
 def _big_cell() -> ExtractedCell:
     evidence = (
-        [SourceQuote(value=v, source_url="https://a.example.com/news") for v in _REG[:2]]
-        + [SourceQuote(value=_REG[2], source_url="https://b.example.com/press")]
-        + [SourceQuote(value=v, source_url="https://a.example.com/news") for v in _LAUNCH]
-        + [SourceQuote(value=_PARTNER[0], source_url="https://c.example.com/pr")]
-        # _PARTNER[1] intentionally has no matching evidence -> omitted from count
+        [SourceQuote(value=v, source_url="https://a.example.com/news", verified=True) for v in _REG[:2]]
+        + [SourceQuote(value=_REG[2], source_url="https://b.example.com/press", verified=True)]
+        + [SourceQuote(value=v, source_url="https://a.example.com/news", verified=True) for v in _LAUNCH]
+        + [SourceQuote(value=_PARTNER[0], source_url="https://c.example.com/pr", verified=True)]
+        # _PARTNER[1] intentionally has no matching evidence -> no verified
+        # backing, so the verified-only policy excludes it from grouping.
     )
     return ExtractedCell(
         entity="HORIBA",
@@ -95,12 +96,13 @@ def test_cluster_memberships_match_vector_families(monkeypatch):
     member_sets = [frozenset(g["values"]) for g in groups]
     assert frozenset(_REG) in member_sets
     assert frozenset(_LAUNCH) in member_sets
-    assert frozenset(_PARTNER) in member_sets
+    # _PARTNER[1] has no verified evidence -> excluded (verified-only policy).
+    assert frozenset([_PARTNER[0]]) in member_sets
 
     # Sorted size desc, then theme label asc.
     keys = [(-g["n_items"], g["theme"]) for g in groups]
     assert keys == sorted(keys)
-    assert [g["n_items"] for g in groups] == [3, 3, 2]
+    assert [g["n_items"] for g in groups] == [3, 3, 1]
 
     for g in groups:
         assert g["entity"] == "HORIBA"
@@ -116,9 +118,9 @@ def test_medoid_theme_is_a_member_string(monkeypatch):
     groups = group_rows(_rows_with_big_cell())
     for g in groups:
         assert g["theme"] in g["values"], "theme must be a real member claim, never synthesized"
-    # 2-member cluster: label is the first member in sorted order.
-    partner = next(g for g in groups if set(g["values"]) == set(_PARTNER))
-    assert partner["theme"] == min(_PARTNER)
+    # 1-member cluster (only the verified partner claim): label is that member.
+    partner = next(g for g in groups if set(g["values"]) == {_PARTNER[0]})
+    assert partner["theme"] == _PARTNER[0]
     print("OK test_medoid_theme_is_a_member_string passed")
 
 
@@ -128,8 +130,7 @@ def test_distinct_source_counts(monkeypatch):
     by_members = {frozenset(g["values"]): g for g in groups}
     assert by_members[frozenset(_REG)]["sources"] == 2      # a.example + b.example
     assert by_members[frozenset(_LAUNCH)]["sources"] == 1   # a.example only
-    # One partner value matched (c.example); the unmatched one is omitted.
-    assert by_members[frozenset(_PARTNER)]["sources"] == 1
+    assert by_members[frozenset([_PARTNER[0]])]["sources"] == 1  # c.example
     print("OK test_distinct_source_counts passed")
 
 
@@ -153,7 +154,7 @@ def test_small_cell_single_all_items_group_no_embedding(monkeypatch):
         source_url="https://s.example.com",
         column="Company type",
         value=list(values),
-        evidence=[SourceQuote(value=v, source_url="https://s.example.com") for v in values],
+        evidence=[SourceQuote(value=v, source_url="https://s.example.com", verified=True) for v in values],
     )
     groups = group_rows([ExtractedRow(entity="Small Co", cells=[cell], all_cells=[cell])])
 
@@ -173,6 +174,7 @@ def test_scalar_value_normalised_to_one_item_list(monkeypatch):
         source_url="https://x.example.com",
         column="Company type",
         value="Corporate",
+        evidence=[SourceQuote(value="Corporate", quote="Corporate", verified=True)],
     )
     groups = group_rows([ExtractedRow(entity="Scalar Co", cells=[cell], all_cells=[cell])])
     assert len(groups) == 1
@@ -193,6 +195,63 @@ def test_empty_and_null_sentinel_cells_skipped(monkeypatch):
     groups = group_rows([ExtractedRow(entity="E", cells=cells, all_cells=cells)])
     assert groups == []
     print("OK test_empty_and_null_sentinel_cells_skipped passed")
+
+
+# ── Verified-only policy (standing decision, 2026-07-06) ─────────────────────
+
+def test_unverified_values_excluded_before_min_items_threshold(monkeypatch):
+    """Unverified claims never reach grouping — and the exclusion applies
+    BEFORE GROUP_MIN_ITEMS, so a cell with 6 values of which only 3 are
+    verified becomes one '(all items)' group of the 3, with no embedding."""
+    def _must_not_embed(texts):
+        raise AssertionError(f"embed_batch must not run for {len(texts)} verified values")
+
+    monkeypatch.setattr(group_mod, "embed_batch", _must_not_embed)
+    values = _REG + _LAUNCH
+    assert len(values) >= GROUP_MIN_ITEMS
+    evidence = (
+        [SourceQuote(value=v, source_url="https://a.example.com", verified=True) for v in _REG]
+        + [SourceQuote(value=v, source_url="https://a.example.com", verified=False) for v in _LAUNCH]
+    )
+    cell = ExtractedCell(entity="E", source_url="u", column="Recent news",
+                         value=list(values), evidence=evidence)
+    groups = group_rows([ExtractedRow(entity="E", cells=[cell], all_cells=[cell])])
+
+    assert len(groups) == 1
+    assert groups[0]["theme"] == ALL_ITEMS_THEME
+    assert groups[0]["values"] == _REG
+    assert groups[0]["n_items"] == 3
+    print("OK test_unverified_values_excluded_before_min_items_threshold passed")
+
+
+def test_value_verified_on_any_source_is_included(monkeypatch):
+    """The same claim found on two pages, confirmed on one: it IS a verified
+    claim — one failed fuzzy match on a second page must not exclude it."""
+    monkeypatch.setattr(group_mod, "embed_batch", _fake_embed_batch)
+    v = _REG[0]
+    cell = ExtractedCell(
+        entity="E", source_url="u", column="Recent news", value=[v],
+        evidence=[
+            SourceQuote(value=v, source_url="https://a.example.com", verified=False),
+            SourceQuote(value=v, source_url="https://b.example.com", verified=True),
+        ],
+    )
+    groups = group_rows([ExtractedRow(entity="E", cells=[cell], all_cells=[cell])])
+    assert len(groups) == 1 and groups[0]["values"] == [v]
+    print("OK test_value_verified_on_any_source_is_included passed")
+
+
+def test_all_unverified_cell_produces_no_groups(monkeypatch):
+    """A cell where nothing verified emits no group at all — the cell is
+    absent from Grouped Themes/Digest, present only in Provenance."""
+    monkeypatch.setattr(group_mod, "embed_batch", _fake_embed_batch)
+    cell = ExtractedCell(
+        entity="E", source_url="u", column="Recent news", value=list(_LAUNCH),
+        evidence=[SourceQuote(value=v, verified=False) for v in _LAUNCH],
+    )
+    groups = group_rows([ExtractedRow(entity="E", cells=[cell], all_cells=[cell])])
+    assert groups == []
+    print("OK test_all_unverified_cell_produces_no_groups passed")
 
 
 def test_embedding_failure_raises_clean_runtime_error(monkeypatch):

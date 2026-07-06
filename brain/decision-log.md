@@ -5,6 +5,18 @@
 
 -----
 
+## 2026-07-06 — Verified-only grouping/digest enforced (George's standing decision); LLM summary layer designed, not built
+
+**Context:** The 2026-07-05 traceability audit found the "every citation traces to a verified claim" assertion (this log, 2026-07-03) was never enforced — unverified claims appeared as theme anchors and Digest citations. Separately, Nick asked for LLM-synthesized summary prose for consultants.
+
+**Decision (George):** Unverified claims (quotes that couldn't be confirmed against the page) are excluded from grouping/digest/summary; they stay in Provenance flagged for analyst review. This is a standing decision, not per-run tuning.
+
+**Built:** `src/group.py:_display_values` filters grouping input to values with ≥1 verified evidence item ("any-verified": confirmed on one of N pages counts), applied before `GROUP_MIN_ITEMS`; `src/io_excel.py` `claim_index` anchors citations on the first *verified* Provenance occurrence; the orange Verified=False review flag was dead code (string `"FALSE"` vs bool `str()` `"False"`) and now renders. The 2026-07-03 "always a real verified claim" claim is now true by construction. 5 new tests; suite 125 passed. Consequences accepted: Digest/Grouped Themes item counts now count verified claims only (Matrix still shows unverified in its orange sections); synthesized union-list values (no matching evidence — plant-milk columns) no longer group at all.
+
+**Designed only (awaiting George):** `brain/proposals/llm-summary-layer.md` — walled-off GPT-5.5 summary layer over grouped verified claims: own AI Summary sheet, mandatory claim-ID citations, mechanical citation gate + LLM-judge faithfulness eval validated against labelled pairs (digest-lines-as-positives, programmatic corruptions, ~50 human-labelled), pre-registered ship bar, ~1,270 proxy calls per 178-run. Not to be built before sign-off.
+
+-----
+
 ## 2026-07-03 — Traceability chain shipped: claim IDs + Digest sheet + hyperlinks (summarization decision resolved: deterministic)
 
 **Context:** Nick delegated the summarization call to George; George's requirement: Advisory needs grouping and summary **traceable to claims**, ideally with hyperlinked references. That requirement settles Part 2b of `proposals/filter-and-synthesis.md`: a deterministic template digest is faithful and traceable *by construction*; LLM prose would need a faithfulness eval to earn the same trust. Deterministic chosen; LLM prose stays a written future option.

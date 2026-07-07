@@ -5,6 +5,23 @@
 
 -----
 
+## 2026-07-07 — LLM summary layer BUILT (George's green light); SUMMARY_ENABLED stays False until the pre-registered eval bar passes
+
+**Context:** All build gates cleared: George re-reviewed the Azure revision of `brain/proposals/llm-summary-layer.md` and gave the green light (which also carries Nick's Azure-direct sanction, §7 item 3); the §7 work-laptop checklist passed via `diagnostics/azure_test.py` (connectivity/key/deployment/TLS OK, seed-determinism probe `identical outputs: True`, fingerprint `fp_b7c8a4dc64` stable — §5's reduced-nondeterminism assumption CONFIRMED on this deployment). The verified-only base validated clean on 2026-07-06 (pinned replay, Matrix 100/100 identical).
+
+**Built (this session, exactly per the approved design — no design changes):**
+- `src/summarize.py` — summarizer over `diag["claim_groups"]` (grouped-scaffolding input), one Azure GPT-4.1-mini call per grouped cell at temperature=0 + `SUMMARY_SEED`, `[C####]`-tagged closed input set (members capped per theme, whole themes never dropped), Tier-1 mechanical gate inline (invented citations / uncited sentences / top-3 theme coverage → fall back to the Digest line, visibly). `system_fingerprint`, exact prompt and raw response recorded per call.
+- Claim-ID drift impossible by construction: `src/io_excel.py:build_claim_index` exposes the SAME function the Provenance writer uses, so pipeline-time citations and write-time sheets can't diverge.
+- `pipeline.py` — fail-soft hook after grouping, mirroring the GROUPING_ENABLED pattern; config block in `config.py` (`SUMMARY_ENABLED=False` default).
+- `src/io_excel.py` — "AI Summary" sheet after Digest (disclaimer in the Summary header; Faithfulness column: `not-assessed` until judged, `fallback (...)` on gate failure); DIAGNOSTICS-gated "Summary Log" audit sheet. Every pre-existing sheet byte-identical with the layer on or off.
+- `diagnostics/summary_judge.py` — Tier-2 sentence-level judge (post-run pass, semantic-verify Phase B pattern); judge failure → `not-assessed`, never a pass; uncited sentences flagged mechanically without a call.
+- `diagnostics/summary_eval.py` — the judge-validation harness: `positives` (digest lines, faithful by construction; template-arithmetic prefix excluded from judged text), `corruptions` (swap number/entity, inject fact, re-attach citations — judge-scored; delete-top-theme — Tier-1-gate-scored, as designed), `self-agreement`, `label-template`/`label-score` (George's ~50-summary sentence-level labelling).
+- Tests: 28 new, all offline/mocked; suite 161 passed.
+
+**Status / what remains before `SUMMARY_ENABLED=True` in a client-facing config (work laptop, in order):** (1) pipeline run on the 25-sample replay input with `SUMMARY_ENABLED=True` + DIAGNOSTICS → generates summaries; (2) `summary_judge.py` on that workbook; (3) eval legs: `positives` + `corruptions` (combined ≥0.90), `self-agreement` (≥0.90), `label-template` → George labels → `label-score` (≥0.80). Bar held even if the output reads well; below the bar, the Digest stands (fallback ladder §6). Cost ≈ $1–2 per full 178-run + <$5 one-off eval; quota/pricing check from the Azure portal still sizes `SUMMARY_MAX_CONCURRENT_CALLS` (currently a conservative 4).
+
+-----
+
 ## 2026-07-06 — FINDING: a populated cache does not pin the crawl — discovery/scoring re-run live every run, and cache hits use a DIFFERENT discovery path than live fetches
 
 **Context:** George's 25-sample re-run (intended to isolate the verified-only output-layer change against the 07-03 baseline) made live Firecrawl calls and selected different subpages per company, despite a fully populated cache — visible via avif scrape failures that only occur on live fetches. The prior advice ("cache intact → identical replay, zero credits") was **wrong**.

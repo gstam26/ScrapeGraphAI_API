@@ -19,6 +19,7 @@ from config import (
     GROUPING_ENABLED,
     PIPELINE_ENTITY_WORKERS,
     REQUEST_HEADERS,
+    SUMMARY_ENABLED,
 )
 from src.aggregate import aggregate_cells, _is_list_column
 from src.group import group_rows
@@ -399,5 +400,20 @@ def run_pipeline(
                 diag["claim_groups"] = claim_groups
         except Exception as exc:
             _safe_print(f"! Grouping skipped: {exc}")
+
+    # LLM summary layer (AI Summary sheet). Strictly additive and fail-soft,
+    # mirroring grouping: consumes diag["claim_groups"], never touches
+    # result.rows; any failure — missing AZURE_API_KEY, unreachable endpoint,
+    # even an ImportError from the openai package — only skips the sheet
+    # (brain/proposals/llm-summary-layer.md). Import is deliberately lazy so
+    # the module loads only when the feature is on.
+    if SUMMARY_ENABLED and diag.get("claim_groups"):
+        try:
+            from src.summarize import summarize_groups
+            cell_summaries = summarize_groups(diag["claim_groups"], rows)
+            if cell_summaries:
+                diag["cell_summaries"] = cell_summaries
+        except Exception as exc:
+            _safe_print(f"! Summarization skipped: {exc}")
 
     return PipelineResult(rows=rows), diag

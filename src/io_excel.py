@@ -1,4 +1,5 @@
 import os
+import re
 from typing import Any
 
 import pandas as pd
@@ -41,6 +42,8 @@ _TAB_COLORS = {
     "Digest": "8BC34A",
     "Provenance": "009688",
     "Grouped Themes": "8BC34A",
+    "AI Summary": "AB47BC",
+    "Summary Log": "CE93D8",
     "Acquire Log": "FF9800",
     "Crawl Candidates": "FF9800",
     "Filter Log": "2196F3",
@@ -509,6 +512,15 @@ def _make_provenance_df(
     return df, claim_index
 
 
+def build_claim_index(rows: list) -> dict[tuple[str, str, str], tuple[str, int]]:
+    """Claim IDs for a run's rows, assigned by the SAME function the
+    Provenance writer uses — so pipeline-time consumers (the summarizer,
+    src/summarize.py) and the write-time sheets can never drift apart.
+    rows is list[ExtractedRow]; the throwaway DataFrame is cheap at run scale.
+    """
+    return _make_provenance_df(PipelineResult(rows=rows), [], None)[1]
+
+
 def _group_claim_refs(group: dict, claim_index: dict) -> tuple[list[tuple[str, str]], tuple[str, int] | None]:
     """Resolve a theme's member values against the Provenance claim index.
 
@@ -643,6 +655,89 @@ def _make_digest_df(
         })
     df = pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
     return df, digest_links
+
+
+_CITED_ID_RE_TEXT = r"\[(C\d{4,})\]"
+
+# Header-suffix disclaimer on the Summary column (design §3): the
+# deterministic/synthesized boundary must be visible from the sheet itself.
+_AI_SUMMARY_NOTE = (
+    "AI-synthesized prose (Azure GPT-4.1-mini). Not verified text — every "
+    "statement cites Claim IDs; check them in Provenance."
+)
+
+
+def _make_ai_summary_df(
+    cell_summaries: list[dict],
+    digest_text: dict[tuple[str, str], str],
+) -> pd.DataFrame:
+    """AI Summary sheet: one row per summarized cell.
+
+    Rows whose summary failed the Tier-1 mechanical gate (or whose Azure call
+    failed) show the deterministic Digest line instead, with the failure named
+    in the Faithfulness column — degradation is visible, never silent.
+    Gate-passing rows start as "not-assessed"; the post-run Tier-2 judge
+    (diagnostics/summary_judge.py) overwrites that with its verdict.
+    """
+    col_names = [
+        "Entity", "Question", f"Summary — {_AI_SUMMARY_NOTE}",
+        "Claim IDs Cited", "Faithfulness", "Model",
+    ]
+    rows = []
+    for s in cell_summaries:
+        key = (s.get("entity", ""), s.get("question", ""))
+        gate = s.get("gate", "")
+        if gate == "pass":
+            text = s.get("summary", "")
+            faith = "not-assessed"
+        elif gate.startswith("call failed"):
+            text = digest_text.get(key, "(digest unavailable)")
+            faith = "fallback (call failed)"
+        else:
+            text = digest_text.get(key, "(digest unavailable)")
+            faith = "fallback (failed citation gate)"
+        # IDs cited by the text actually displayed (prose or fallback digest),
+        # so the column is always filterable against what the reader sees.
+        shown_ids = list(dict.fromkeys(re.findall(_CITED_ID_RE_TEXT, text)))
+        rows.append({
+            "Entity": key[0],
+            "Question": key[1],
+            col_names[2]: _clamp_cell_text(text),
+            "Claim IDs Cited": ", ".join(shown_ids),
+            "Faithfulness": faith,
+            "Model": s.get("model", ""),
+        })
+    return pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
+
+
+def _make_summary_log_df(cell_summaries: list[dict]) -> pd.DataFrame:
+    """Summary Log (DIAGNOSTICS-gated): full audit trail per summarizer call —
+    exact prompt, raw response, system_fingerprint, prompt_version — because
+    seeded determinism is best-effort; any workbook stays auditable
+    regardless (design §3)."""
+    col_names = [
+        "Entity", "Question", "Gate", "Cited Claim IDs", "Uncited Sentences",
+        "Input Claim IDs", "System Fingerprint", "Prompt Version",
+        "Generated At", "Duration (ms)", "Error", "Prompt", "Raw Response",
+    ]
+    rows = []
+    for s in cell_summaries:
+        rows.append({
+            "Entity": s.get("entity", ""),
+            "Question": s.get("question", ""),
+            "Gate": s.get("gate", ""),
+            "Cited Claim IDs": ", ".join(s.get("cited_ids", [])),
+            "Uncited Sentences": _clamp_cell_text(" | ".join(s.get("uncited_sentences", []))),
+            "Input Claim IDs": _clamp_cell_text(", ".join(s.get("input_claim_ids", []))),
+            "System Fingerprint": s.get("system_fingerprint") or "",
+            "Prompt Version": s.get("prompt_version", ""),
+            "Generated At": s.get("generated_at", ""),
+            "Duration (ms)": s.get("duration_ms", ""),
+            "Error": s.get("error") or "",
+            "Prompt": _clamp_cell_text(s.get("prompt", "")),
+            "Raw Response": _clamp_cell_text(s.get("raw_response", "")),
+        })
+    return pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
 
 
 # Workbook formatting
@@ -801,13 +896,31 @@ def write_output_excel(
     claim_groups = (diag or {}).get("claim_groups") or []
     theme_links: dict[int, int] = {}
     digest_links: dict[int, int] = {}
+    digest_text: dict[tuple[str, str], str] = {}
     if claim_groups:
         themes_df, theme_links = _make_grouped_themes_df(claim_groups, claim_index)
         digest_df, digest_links = _make_digest_df(claim_groups, claim_index)
         sheets.insert(2, ("Digest", digest_df))  # after Matrix, before Provenance
         sheets.append(("Grouped Themes", themes_df))
+        digest_text = {
+            (r["Entity"], r["Question"]): r["Digest"] for _, r in digest_df.iterrows()
+        }
+
+    # AI Summary is deliverable-facing like Digest (not DIAGNOSTICS-gated);
+    # it exists only when the summary layer ran (SUMMARY_ENABLED + grouping),
+    # and its gate-failed rows fall back to the deterministic Digest line.
+    cell_summaries = (diag or {}).get("cell_summaries") or []
+    if cell_summaries:
+        ai_df = _make_ai_summary_df(cell_summaries, digest_text)
+        digest_pos = next((i for i, (name, _) in enumerate(sheets) if name == "Digest"), None)
+        if digest_pos is not None:
+            sheets.insert(digest_pos + 1, ("AI Summary", ai_df))  # after Digest (§3)
+        else:
+            sheets.append(("AI Summary", ai_df))
 
     if write_diag:
+        if cell_summaries:
+            sheets.append(("Summary Log", _make_summary_log_df(cell_summaries)))
         sheets += [
             ("Acquire Log", _make_df(diag.get("acquire_log", []), acq_col_keys, acq_col_names)),
             ("Crawl Candidates", _make_df(diag.get("crawl_candidates", []), cand_col_keys, cand_col_names)),

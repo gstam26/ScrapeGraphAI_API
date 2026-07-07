@@ -287,6 +287,38 @@ GROUP_CENTER_VECTORS = True
 GROUP_SIMILARITY = 0.15
 
 # ============================================================
+# LLM SUMMARY LAYER (AI Summary sheet)
+# ============================================================
+
+# Synthesized prose per grouped cell (brain/proposals/llm-summary-layer.md,
+# approved 2026-07-07): Azure GPT-4.1-mini over the grouped-theme structure,
+# every sentence citing Provenance claim IDs. OFF by default — flips to True
+# in a client-facing config only after the pre-registered faithfulness bar
+# passes (judge >=0.90 on the corruption set, >=0.80 agreement with human
+# labels, >=0.90 self-agreement). Fails soft: any Azure failure only skips
+# the AI Summary sheet; every other sheet is byte-identical either way.
+SUMMARY_ENABLED = False
+
+# temperature=0 + this fixed seed on every summarizer/judge call reduces
+# non-determinism at source (seed honoured on this deployment — probe
+# 2026-07-07, identical outputs + stable system_fingerprint). Best-effort per
+# OpenAI docs, so each call's fingerprint is recorded in the Summary Log.
+SUMMARY_SEED = 42
+
+# Max member claims listed per theme in the prompt. Truncation is principled:
+# drop members WITHIN a theme (marked "+N more"), never whole themes.
+SUMMARY_MAX_CLAIMS_PER_THEME = 15
+
+# Per-call timeout (seconds). The OpenAI SDK adds its own retries on
+# connection errors / 408 / 429 / 5xx (default max_retries=2), so no
+# hand-rolled retry here.
+SUMMARY_TIMEOUT = 60
+
+# Concurrent summarizer calls. Size against the deployment's TPM/RPM quota
+# (work-laptop checklist item 4); extraction runs share the deployment.
+SUMMARY_MAX_CONCURRENT_CALLS = 4
+
+# ============================================================
 # AGGREGATION DIAGNOSTICS
 # ============================================================
 

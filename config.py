@@ -297,7 +297,10 @@ GROUP_SIMILARITY = 0.15
 # passes (judge >=0.90 on the corruption set, >=0.80 agreement with human
 # labels, >=0.90 self-agreement). Fails soft: any Azure failure only skips
 # the AI Summary sheet; every other sheet is byte-identical either way.
-SUMMARY_ENABLED = False
+# Env-overridable (SUMMARY_ENABLED=true in .env) for the same reason as
+# FILTER_MODE: machine-local mode choices must not live as uncommitted
+# config.py edits that block every git pull.
+SUMMARY_ENABLED = os.getenv("SUMMARY_ENABLED", "").strip().lower() in {"1", "true", "yes"}
 
 # temperature=0 + this fixed seed on every summarizer/judge call reduces
 # non-determinism at source (seed honoured on this deployment — probe

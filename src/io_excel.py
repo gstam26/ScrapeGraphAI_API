@@ -1,5 +1,4 @@
 import os
-import re
 from typing import Any
 
 import pandas as pd
@@ -657,10 +656,9 @@ def _make_digest_df(
     return df, digest_links
 
 
-_CITED_ID_RE_TEXT = r"\[(C\d{4,})\]"
-
-# Header-suffix disclaimer on the Summary column (design §3): the
-# deterministic/synthesized boundary must be visible from the sheet itself.
+# Header-suffix disclaimer on the AI Summary sheet's Entity header (design
+# §3): the deterministic/synthesized boundary must be visible from the sheet
+# itself, top-left where a reader starts.
 _AI_SUMMARY_NOTE = (
     "AI-synthesized prose (Azure GPT-4.1-mini). Not verified text — every "
     "statement cites Claim IDs; check them in Provenance."
@@ -670,44 +668,53 @@ _AI_SUMMARY_NOTE = (
 def _make_ai_summary_df(
     cell_summaries: list[dict],
     digest_text: dict[tuple[str, str], str],
-) -> pd.DataFrame:
-    """AI Summary sheet: one row per summarized cell.
+    result: PipelineResult,
+    columns: list[ColumnSpec],
+) -> tuple[pd.DataFrame, dict]:
+    """AI Summary sheet in MATRIX form — the consultant-facing presentation
+    (George, 2026-07-07: the deliverable is the matrix shape; the original
+    long format survives as the Summary Log audit surface).
 
-    Rows whose summary failed the Tier-1 mechanical gate (or whose Azure call
-    failed) show the deterministic Digest line instead, with the failure named
-    in the Faithfulness column — degradation is visible, never silent.
-    Gate-passing rows start as "not-assessed"; the post-run Tier-2 judge
-    (diagnostics/summary_judge.py) overwrites that with its verdict.
+    Entity rows × question columns, same order as the Matrix sheet. Three
+    cell regimes, each visibly distinct:
+      - gate-passed prose (with its [C####] citations);
+      - the deterministic Digest line with an explicit "[fallback: ...]"
+        marker and light-orange fill when the Tier-1 gate or the Azure call
+        failed — degradation visible, never silent;
+      - "No data found" (red fill) when the cell produced no summary at all
+        (no verified claims -> no groups -> nothing to summarize).
+    Per-cell audit detail (gate reasons, faithfulness, fingerprints) lives in
+    the Summary Log; the Tier-2 judge annotates flagged cells here post-run.
+    Returns (df, cell_fills) like the Matrix builder.
     """
-    col_names = [
-        "Entity", "Question", f"Summary — {_AI_SUMMARY_NOTE}",
-        "Claim IDs Cited", "Faithfulness", "Model",
-    ]
-    rows = []
-    for s in cell_summaries:
-        key = (s.get("entity", ""), s.get("question", ""))
-        gate = s.get("gate", "")
-        if gate == "pass":
-            text = s.get("summary", "")
-            faith = "not-assessed"
-        elif gate.startswith("call failed"):
-            text = digest_text.get(key, "(digest unavailable)")
-            faith = "fallback (call failed)"
-        else:
-            text = digest_text.get(key, "(digest unavailable)")
-            faith = "fallback (failed citation gate)"
-        # IDs cited by the text actually displayed (prose or fallback digest),
-        # so the column is always filterable against what the reader sees.
-        shown_ids = list(dict.fromkeys(re.findall(_CITED_ID_RE_TEXT, text)))
-        rows.append({
-            "Entity": key[0],
-            "Question": key[1],
-            col_names[2]: _clamp_cell_text(text),
-            "Claim IDs Cited": ", ".join(shown_ids),
-            "Faithfulness": faith,
-            "Model": s.get("model", ""),
-        })
-    return pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
+    by_cell = {(s.get("entity", ""), s.get("question", "")): s for s in cell_summaries}
+    entity_header = f"Entity — {_AI_SUMMARY_NOTE}"
+    col_order = [entity_header] + [c.name for c in columns]
+    fills: dict[tuple[int, int], str] = {}
+    out_rows = []
+    for row_idx, row in enumerate(result.rows):
+        excel_row = row_idx + 2  # 1-indexed + header
+        out_row: dict = {entity_header: row.entity}
+        for col_idx, col in enumerate(columns, start=2):
+            s = by_cell.get((row.entity, col.name))
+            if s is None:
+                out_row[col.name] = "No data found"
+                fills[(excel_row, col_idx)] = _RED_FILL
+                continue
+            gate = s.get("gate", "")
+            if gate == "pass":
+                text = s.get("summary", "")
+            else:
+                marker = "call failed" if gate.startswith("call failed") else "citation gate failed"
+                text = (
+                    digest_text.get((row.entity, col.name), "(digest unavailable)")
+                    + f"\n[fallback: deterministic digest — {marker}; see Summary Log]"
+                )
+                fills[(excel_row, col_idx)] = _LORANGE_FILL
+            out_row[col.name] = _clamp_cell_text(text)
+        out_rows.append(out_row)
+    df = pd.DataFrame(out_rows, columns=col_order) if out_rows else pd.DataFrame(columns=col_order)
+    return df, fills
 
 
 def _make_summary_log_df(cell_summaries: list[dict]) -> pd.DataFrame:
@@ -716,16 +723,25 @@ def _make_summary_log_df(cell_summaries: list[dict]) -> pd.DataFrame:
     seeded determinism is best-effort; any workbook stays auditable
     regardless (design §3)."""
     col_names = [
-        "Entity", "Question", "Gate", "Cited Claim IDs", "Uncited Sentences",
-        "Input Claim IDs", "System Fingerprint", "Prompt Version",
-        "Generated At", "Duration (ms)", "Error", "Prompt", "Raw Response",
+        "Entity", "Question", "Gate", "Faithfulness", "Cited Claim IDs",
+        "Uncited Sentences", "Input Claim IDs", "System Fingerprint",
+        "Prompt Version", "Generated At", "Duration (ms)", "Error", "Prompt",
+        "Raw Response", "Model",
     ]
     rows = []
     for s in cell_summaries:
+        gate = s.get("gate", "")
+        if gate == "pass":
+            faith = "not-assessed"  # the Tier-2 judge overwrites this
+        elif gate.startswith("call failed"):
+            faith = "fallback (call failed)"
+        else:
+            faith = "fallback (failed citation gate)"
         rows.append({
             "Entity": s.get("entity", ""),
             "Question": s.get("question", ""),
-            "Gate": s.get("gate", ""),
+            "Gate": gate,
+            "Faithfulness": faith,
             "Cited Claim IDs": ", ".join(s.get("cited_ids", [])),
             "Uncited Sentences": _clamp_cell_text(" | ".join(s.get("uncited_sentences", []))),
             "Input Claim IDs": _clamp_cell_text(", ".join(s.get("input_claim_ids", []))),
@@ -736,6 +752,7 @@ def _make_summary_log_df(cell_summaries: list[dict]) -> pd.DataFrame:
             "Error": s.get("error") or "",
             "Prompt": _clamp_cell_text(s.get("prompt", "")),
             "Raw Response": _clamp_cell_text(s.get("raw_response", "")),
+            "Model": s.get("model", ""),
         })
     return pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
 
@@ -806,7 +823,7 @@ def _style_sheet(ws, tab_color: str, matrix_fills: dict | None = None) -> None:
                 max_len = max(max_len, longest)
         ws.column_dimensions[letter].width = min(max(max_len + 2, 10), 60)
 
-    if ws.title == "Matrix":
+    if ws.title in ("Matrix", "AI Summary"):
         for row_idx in range(2, ws.max_row + 1):
             max_lines = 1
             for col in ws.iter_cols(min_row=row_idx, max_row=row_idx):
@@ -910,8 +927,9 @@ def write_output_excel(
     # it exists only when the summary layer ran (SUMMARY_ENABLED + grouping),
     # and its gate-failed rows fall back to the deterministic Digest line.
     cell_summaries = (diag or {}).get("cell_summaries") or []
+    ai_fills: dict[tuple[int, int], str] = {}
     if cell_summaries:
-        ai_df = _make_ai_summary_df(cell_summaries, digest_text)
+        ai_df, ai_fills = _make_ai_summary_df(cell_summaries, digest_text, result, columns)
         digest_pos = next((i for i, (name, _) in enumerate(sheets) if name == "Digest"), None)
         if digest_pos is not None:
             sheets.insert(digest_pos + 1, ("AI Summary", ai_df))  # after Digest (§3)
@@ -935,7 +953,7 @@ def write_output_excel(
 
     wb = load_workbook(output_path)
     for ws in wb.worksheets:
-        fills = matrix_fills if ws.title == "Matrix" else None
+        fills = {"Matrix": matrix_fills, "AI Summary": ai_fills}.get(ws.title)
         _style_sheet(ws, _TAB_COLORS.get(ws.title, _HEADER_FILL), matrix_fills=fills)
 
     # Traceability hyperlinks (applied after styling so the link font wins).

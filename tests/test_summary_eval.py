@@ -12,7 +12,10 @@ from diagnostics.summary_eval import (
     corrupt_swap_number,
     parse_prompt_themes,
 )
+import openpyxl
+
 from diagnostics.summary_judge import (
+    annotate_matrix_cell,
     build_judge_prompt,
     judge_summary,
     parse_verdicts,
@@ -105,6 +108,28 @@ def test_uncited_sentence_flagged_without_a_call():
     assert verdict_to_cell(None) == "not-assessed"
     assert verdict_to_cell({1: "faithful"}) == "faithful"
     print("OK test_uncited_sentence_flagged_without_a_call passed")
+
+
+def test_annotate_matrix_cell_flags_the_right_cell():
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "AI Summary"
+    ws.append(["Entity — AI-synthesized prose (...)", "Recent news", "R&D location"])
+    ws.append(["Acme", "Prose about Acme [C0001].", "No data found"])
+    ws.append(["Bruker", "Prose about Bruker [C0002].", "No data found"])
+
+    annotate_matrix_cell(wb, "Bruker", "Recent news", "1 flagged sentence(s)")
+
+    flagged = ws.cell(row=3, column=2)
+    assert "[faithfulness: 1 flagged sentence(s) — see Summary Log]" in flagged.value
+    assert flagged.fill.start_color.rgb.endswith("FFE0B2")
+    # Neighbours untouched.
+    assert ws.cell(row=2, column=2).value == "Prose about Acme [C0001]."
+    assert ws.cell(row=3, column=3).value == "No data found"
+    # Unknown entity/question or missing sheet: silently no-op, never raises.
+    annotate_matrix_cell(wb, "Nobody", "Recent news", "x")
+    annotate_matrix_cell(openpyxl.Workbook(), "Acme", "Recent news", "x")
+    print("OK test_annotate_matrix_cell_flags_the_right_cell passed")
 
 
 def test_parse_prompt_themes_roundtrip_with_real_prompt_builder():

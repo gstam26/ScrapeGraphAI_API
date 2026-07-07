@@ -10,15 +10,20 @@ strict-JSON verdict per sentence — "faithful" | "unsupported" |
 "contradicted". Catches what the Tier-1 mechanical gate can't: a sentence
 citing real IDs while asserting something they don't say.
 
-Verdict written back:
+Verdict written to the Summary Log's Faithfulness column (the audit surface —
+the AI Summary sheet is matrix-shaped for consultants, George 2026-07-07):
   - all sentences faithful          -> "faithful"
-  - >=1 flagged                     -> "N flagged sentence(s)"
+  - >=1 flagged                     -> "N flagged sentence(s)" + the AI
+    Summary matrix cell gets an orange fill and a visible
+    "[faithfulness: ...]" marker line
   - judge call/parse failure        -> stays "not-assessed" — NEVER a pass
     (semantic-verify principle 1: a broken judge must not look like passing).
 
-Calls are temperature=0 + SUMMARY_SEED via src.summarize.azure_chat, so
-re-runs are deterministic to the extent the deployment honours seeding
-(confirmed 2026-07-07 probe); fingerprints are printed for drift visibility.
+Needs a workbook produced with DIAGNOSTICS=True (the Summary Log carries the
+gate state and raw prose this judge reads). Calls are temperature=0 +
+SUMMARY_SEED via src.summarize.azure_chat, so re-runs are deterministic to
+the extent the deployment honours seeding (confirmed 2026-07-07 probe);
+fingerprints are printed for drift visibility.
 
 Usage (work laptop — needs AZURE_API_KEY):
     python diagnostics/summary_judge.py --workbook outputs/run.xlsx [--out judged.xlsx] [--limit N]
@@ -166,6 +171,27 @@ def verdict_to_cell(verdicts: dict[int, str] | None) -> str:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+def annotate_matrix_cell(wb, entity: str, question: str, verdict: str) -> None:
+    """Flag a judged-unfaithful summary on the consultant-facing AI Summary
+    matrix: orange fill + a visible marker line appended to the prose. The
+    judge reads the Summary Log's Raw Response, never this cell, so the
+    marker can't feed back into a re-judge."""
+    from openpyxl.styles import PatternFill
+
+    if "AI Summary" not in wb.sheetnames:
+        return
+    ws = wb["AI Summary"]
+    entity_rows = {str(ws.cell(row=r, column=1).value or ""): r
+                   for r in range(2, ws.max_row + 1)}
+    question_cols = {str(cell.value or ""): cell.column for cell in ws[1]}
+    r, c = entity_rows.get(entity), question_cols.get(question)
+    if r is None or c is None:
+        return
+    cell = ws.cell(row=r, column=c)
+    cell.value = f"{cell.value or ''}\n[faithfulness: {verdict} — see Summary Log]"
+    cell.fill = PatternFill("solid", fgColor="FFE0B2")  # io_excel._ORANGE_FILL
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--workbook", required=True)
@@ -174,39 +200,39 @@ def main() -> int:
     args = ap.parse_args()
 
     wb = openpyxl.load_workbook(args.workbook)
-    if "AI Summary" not in wb.sheetnames:
-        print("No AI Summary sheet in workbook — nothing to judge.")
-        return 0
+    if "Summary Log" not in wb.sheetnames:
+        print("No Summary Log sheet — run the pipeline with SUMMARY_ENABLED=true "
+              "and DIAGNOSTICS=True first.")
+        return 1
 
     client = make_client()
     claim_texts = load_claim_texts(wb)
 
-    ws = wb["AI Summary"]
-    c_entity = col_index(ws, "Entity")
-    c_question = col_index(ws, "Question")
-    c_summary = col_index(ws, "Summary")
-    c_faith = col_index(ws, "Faithfulness")
+    log = wb["Summary Log"]
+    cols = {name: col_index(log, name) for name in
+            ("Entity", "Question", "Gate", "Faithfulness", "Raw Response")}
 
     todo = [
-        r for r in range(2, ws.max_row + 1)
-        if str(ws.cell(row=r, column=c_faith).value or "") == NOT_ASSESSED
+        r for r in range(2, log.max_row + 1)
+        if str(log.cell(row=r, column=cols["Gate"]).value or "") == "pass"
+        and str(log.cell(row=r, column=cols["Faithfulness"]).value or "") == NOT_ASSESSED
     ]
     if args.limit is not None:
         todo = todo[: args.limit]
-    print(f"Judging {len(todo)} summaries (prompt {JUDGE_PROMPT_VERSION}, "
+    print(f"Judging {len(todo)} gate-passed summaries (prompt {JUDGE_PROMPT_VERSION}, "
           f"one call each)...")
 
     fingerprints: set[str] = set()
     counts = {"faithful": 0, "flagged": 0, "not-assessed": 0}
     for r in todo:
-        entity = str(ws.cell(row=r, column=c_entity).value or "")
-        question = str(ws.cell(row=r, column=c_question).value or "")
-        summary = str(ws.cell(row=r, column=c_summary).value or "")
+        entity = str(log.cell(row=r, column=cols["Entity"]).value or "")
+        question = str(log.cell(row=r, column=cols["Question"]).value or "")
+        summary = str(log.cell(row=r, column=cols["Raw Response"]).value or "")
         verdicts, fp, error = judge_summary(client, entity, question, summary, claim_texts)
         if fp:
             fingerprints.add(fp)
         cell_value = verdict_to_cell(verdicts)
-        ws.cell(row=r, column=c_faith).value = cell_value
+        log.cell(row=r, column=cols["Faithfulness"]).value = cell_value
         if cell_value == "faithful":
             counts["faithful"] += 1
         elif cell_value == NOT_ASSESSED:
@@ -214,6 +240,7 @@ def main() -> int:
             print(f"  ! {entity} / {question}: judge failed ({error}) — left {NOT_ASSESSED}")
         else:
             counts["flagged"] += 1
+            annotate_matrix_cell(wb, entity, question, cell_value)
             print(f"  - {entity} / {question}: {cell_value}")
 
     out_path = args.out or args.workbook

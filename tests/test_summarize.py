@@ -244,7 +244,8 @@ def test_unresolvable_members_omitted_and_uncitable_cell_skipped(monkeypatch):
 
 # ── Workbook integration ─────────────────────────────────────────────────────
 
-_COLUMNS = [ColumnSpec(name="Recent news")]
+# Second question deliberately has no summary -> exercises "No data found".
+_COLUMNS = [ColumnSpec(name="Recent news"), ColumnSpec(name="R&D location")]
 
 
 def _write_workbook(tmp_path, cell_summaries):
@@ -270,7 +271,7 @@ def _summary_record(**overrides):
     return base
 
 
-def test_ai_summary_sheet_written_after_digest(tmp_path):
+def test_ai_summary_sheet_is_matrix_shaped_after_digest(tmp_path):
     wb = _write_workbook(tmp_path, [_summary_record()])
     names = wb.sheetnames
     assert "AI Summary" in names
@@ -279,41 +280,37 @@ def test_ai_summary_sheet_written_after_digest(tmp_path):
 
     ws = wb["AI Summary"]
     header = [c.value for c in ws[1]]
-    assert header[0] == "Entity" and header[1] == "Question"
-    assert "AI-synthesized prose" in header[2]  # disclaimer suffix visible
-    row = [c.value for c in ws[2]]
-    assert row[0] == "Acme"
-    assert row[2] == _GOOD_SUMMARY
-    assert row[3] == ", ".join(f"C{i:04d}" for i in range(1, 8))
-    assert row[4] == "not-assessed"
-    assert row[5] == "gpt-4.1-mini"
-    print("OK test_ai_summary_sheet_written_after_digest passed")
+    # Matrix form: Entity column (carrying the disclaimer) + one column per question.
+    assert header[0].startswith("Entity")
+    assert "AI-synthesized prose" in header[0]
+    assert header[1] == "Recent news" and header[2] == "R&D location"
+    assert ws.max_row == 2  # one row per entity, not per (entity, question)
+    assert ws.cell(row=2, column=1).value == "Acme"
+    assert ws.cell(row=2, column=2).value == _GOOD_SUMMARY
+    # No summary for this question -> Matrix conventions.
+    assert ws.cell(row=2, column=3).value == "No data found"
+    print("OK test_ai_summary_sheet_is_matrix_shaped_after_digest passed")
 
 
-def test_gate_failed_row_falls_back_to_digest_line(tmp_path):
+def test_gate_failed_cell_shows_marked_digest_fallback(tmp_path):
     failed = _summary_record(gate="failed citation gate: 1 uncited sentence(s)")
     wb = _write_workbook(tmp_path, [failed])
 
     digest_ws = wb["Digest"]
     digest_line = digest_ws.cell(row=2, column=5).value  # Digest column
-    ws = wb["AI Summary"]
-    assert ws.cell(row=2, column=3).value == digest_line
-    assert ws.cell(row=2, column=5).value == "fallback (failed citation gate)"
-    # Cited IDs reflect the DISPLAYED text (the digest line's citations).
-    cited = ws.cell(row=2, column=4).value or ""
-    for cid in cited.split(", "):
-        if cid:
-            assert cid in digest_line
-    print("OK test_gate_failed_row_falls_back_to_digest_line passed")
+    cell = wb["AI Summary"].cell(row=2, column=2).value
+    assert cell.startswith(digest_line)
+    assert "[fallback: deterministic digest — citation gate failed; see Summary Log]" in cell
+    print("OK test_gate_failed_cell_shows_marked_digest_fallback passed")
 
 
-def test_call_failed_row_marked(tmp_path):
+def test_call_failed_cell_marked(tmp_path):
     failed = _summary_record(gate="call failed: timeout", summary="", raw_response="",
                              cited_ids=[], error="timeout")
     wb = _write_workbook(tmp_path, [failed])
-    ws = wb["AI Summary"]
-    assert ws.cell(row=2, column=5).value == "fallback (call failed)"
-    print("OK test_call_failed_row_marked passed")
+    cell = wb["AI Summary"].cell(row=2, column=2).value
+    assert "[fallback: deterministic digest — call failed; see Summary Log]" in cell
+    print("OK test_call_failed_cell_marked passed")
 
 
 def test_no_summaries_no_new_sheets(tmp_path):
@@ -329,8 +326,22 @@ def test_summary_log_audit_fields(tmp_path):
     header = [c.value for c in ws[1]]
     row = dict(zip(header, [c.value for c in ws[2]]))
     assert row["Gate"] == "pass"
+    assert row["Faithfulness"] == "not-assessed"  # judge's write target
     assert row["System Fingerprint"] == "fp_test"
     assert row["Prompt Version"] == "s1"
     assert row["Prompt"] == "PROMPT"
     assert row["Raw Response"] == _GOOD_SUMMARY
+    assert row["Model"] == "gpt-4.1-mini"
     print("OK test_summary_log_audit_fields passed")
+
+
+def test_summary_log_fallback_faithfulness_values(tmp_path):
+    records = [
+        _summary_record(gate="failed citation gate: x"),
+    ]
+    wb = _write_workbook(tmp_path, records)
+    ws = wb["Summary Log"]
+    header = [c.value for c in ws[1]]
+    row = dict(zip(header, [c.value for c in ws[2]]))
+    assert row["Faithfulness"] == "fallback (failed citation gate)"
+    print("OK test_summary_log_fallback_faithfulness_values passed")

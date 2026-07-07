@@ -10,6 +10,7 @@ from diagnostics.summary_eval import (
     corrupt_reattach_citation,
     corrupt_swap_entity,
     corrupt_swap_number,
+    digest_judgeable_text,
     parse_prompt_themes,
 )
 import openpyxl
@@ -108,6 +109,18 @@ def test_uncited_sentence_flagged_without_a_call():
     assert verdict_to_cell(None) == "not-assessed"
     assert verdict_to_cell({1: "faithful"}) == "faithful"
     print("OK test_uncited_sentence_flagged_without_a_call passed")
+
+
+def test_digest_judgeable_text_strips_all_template_arithmetic():
+    line = ('84 items across 7 themes. Top: "Anticoagulant Monitoring Inc. kit" '
+            '(19 items) [C0915]; "Blood Gas" (12 items) [C0532].')
+    judged = digest_judgeable_text(line)
+    assert judged == 'Top: "Anticoagulant Monitoring Inc. kit" [C0915]; "Blood Gas" [C0532].'
+    # No counts left anywhere — the judge must never see uncited arithmetic.
+    assert "items" not in judged
+    # Below-threshold lines (no citations) are not judgeable positives.
+    assert digest_judgeable_text("3 items (below grouping threshold — see Grouped Themes).") is None
+    print("OK test_digest_judgeable_text_strips_all_template_arithmetic passed")
 
 
 def test_annotate_matrix_cell_flags_the_right_cell():

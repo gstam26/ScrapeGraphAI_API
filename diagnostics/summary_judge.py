@@ -211,6 +211,13 @@ def main() -> int:
     log = wb["Summary Log"]
     cols = {name: col_index(log, name) for name in
             ("Entity", "Question", "Gate", "Faithfulness", "Raw Response")}
+    # Per-sentence verdict JSON — for diagnosis (summary_eval.py flags) and
+    # the label-agreement audit trail. Older workbooks lack the column.
+    try:
+        c_verdicts = col_index(log, "Judge Verdicts")
+    except ValueError:
+        c_verdicts = log.max_column + 1
+        log.cell(row=1, column=c_verdicts).value = "Judge Verdicts"
 
     todo = [
         r for r in range(2, log.max_row + 1)
@@ -233,6 +240,8 @@ def main() -> int:
             fingerprints.add(fp)
         cell_value = verdict_to_cell(verdicts)
         log.cell(row=r, column=cols["Faithfulness"]).value = cell_value
+        if verdicts is not None:
+            log.cell(row=r, column=c_verdicts).value = json.dumps(verdicts, sort_keys=True)
         if cell_value == "faithful":
             counts["faithful"] += 1
         elif cell_value == NOT_ASSESSED:

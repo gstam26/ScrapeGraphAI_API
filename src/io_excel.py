@@ -723,10 +723,10 @@ def _make_summary_log_df(cell_summaries: list[dict]) -> pd.DataFrame:
     seeded determinism is best-effort; any workbook stays auditable
     regardless (design §3)."""
     col_names = [
-        "Entity", "Question", "Gate", "Faithfulness", "Cited Claim IDs",
-        "Uncited Sentences", "Input Claim IDs", "System Fingerprint",
-        "Prompt Version", "Generated At", "Duration (ms)", "Error", "Prompt",
-        "Raw Response", "Model",
+        "Entity", "Question", "Gate", "Faithfulness", "Judge Verdicts",
+        "Cited Claim IDs", "Uncited Sentences", "Input Claim IDs",
+        "System Fingerprint", "Prompt Version", "Generated At",
+        "Duration (ms)", "Error", "Prompt", "Raw Response", "Model",
     ]
     rows = []
     for s in cell_summaries:
@@ -742,6 +742,7 @@ def _make_summary_log_df(cell_summaries: list[dict]) -> pd.DataFrame:
             "Question": s.get("question", ""),
             "Gate": gate,
             "Faithfulness": faith,
+            "Judge Verdicts": "",  # per-sentence JSON, filled by summary_judge.py
             "Cited Claim IDs": ", ".join(s.get("cited_ids", [])),
             "Uncited Sentences": _clamp_cell_text(" | ".join(s.get("uncited_sentences", []))),
             "Input Claim IDs": _clamp_cell_text(", ".join(s.get("input_claim_ids", []))),

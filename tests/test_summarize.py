@@ -126,6 +126,22 @@ def test_gate_fails_empty_summary():
     print("OK test_gate_fails_empty_summary passed")
 
 
+def test_sentence_split_merges_abbreviation_fragments():
+    # The 2026-07-07 laptop eval: "Ltd."/"U.S." split prose into citation-less
+    # fragments that failed the gate and mis-fed the judge.
+    from src.summarize import _split_sentences
+
+    text = ("Aalto Scientific Ltd. develops calibrators [C0001], [C0002]. "
+            "It ships to the U.S. and Europe [C0004].")
+    assert _split_sentences(text) == [
+        "Aalto Scientific Ltd. develops calibrators [C0001], [C0002].",
+        "It ships to the U.S. and Europe [C0004].",
+    ]
+    reasons, _, _ = mechanical_gate(text, _INPUT_IDS, _TOP_SETS)
+    assert not any("uncited" in r for r in reasons)
+    print("OK test_sentence_split_merges_abbreviation_fragments passed")
+
+
 # ── summarize_groups end-to-end (mocked Azure) ────────────────────────────────
 
 # Cites >=1 member of each of the 3 themes; every sentence cited.

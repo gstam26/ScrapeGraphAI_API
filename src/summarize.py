@@ -49,14 +49,30 @@ PROMPT_VERSION = "s1"
 
 _CITATION_RE = re.compile(r"\[(C\d{4,})\]")
 
-# Naive sentence split. Abbreviations ("approx. 40") can over-split and
-# produce a spurious "uncited sentence" — that only ever FAILS a summary to
-# its deterministic Digest line, so false positives are safe by construction.
+# Sentence split shared by the Tier-1 gate and the Tier-2 judge. Fragments
+# created by splitting after a known abbreviation are merged back into the
+# previous sentence — the 2026-07-07 laptop eval showed company names
+# ("Aalto Scientific Ltd.", "U.S.") chopping prose into citation-less
+# fragments that failed the gate and mis-fed the judge. Unknown abbreviations
+# still over-split, which only ever FAILS a summary toward its deterministic
+# Digest line — the safe direction.
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_ABBREV_END_RE = re.compile(
+    r"(?:\b(?:Inc|Ltd|Corp|Co|LLC|GmbH|No|Dr|Mr|Ms|Mrs|St|Jr|Sr|vs|approx|est)"
+    r"|\be\.g|\bi\.e|\bU\.S|\bU\.K)\.$",
+    re.IGNORECASE,
+)
 
 
 def _split_sentences(text: str) -> list[str]:
-    return [s.strip() for s in _SENTENCE_SPLIT_RE.split(text) if s.strip()]
+    parts = [s.strip() for s in _SENTENCE_SPLIT_RE.split(text) if s.strip()]
+    merged: list[str] = []
+    for part in parts:
+        if merged and _ABBREV_END_RE.search(merged[-1]):
+            merged[-1] = merged[-1] + " " + part
+        else:
+            merged.append(part)
+    return merged
 
 
 def make_client():

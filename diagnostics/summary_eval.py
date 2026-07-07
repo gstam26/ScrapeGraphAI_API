@@ -31,6 +31,9 @@ input claim IDs and exact prompts this harness replays):
                   George (blind: no judge verdicts included).
   label-score     Re-judge the labelled sentences (seeded, deterministic)
                   and report agreement with George's labels.
+  flags           Diagnosis view: print every flagged sentence of every
+                  gate-passed summary next to the claims it cites (read-only;
+                  seeded re-judge, so verdicts match summary_judge.py).
 
 A judge failure never counts in the judge's favour: failed calls score as
 misses. Usage (work laptop):
@@ -210,8 +213,26 @@ def corrupt_delete_top_sentence(record: dict) -> str | None:
 
 # ── Legs ─────────────────────────────────────────────────────────────────────
 
+def digest_judgeable_text(digest_line: str) -> str | None:
+    """The claim-derived portion of a Digest line, with ALL template
+    arithmetic removed. Only theme labels (verbatim claims) + citations
+    remain — the part that is faithful-by-construction AGAINST THE CITED
+    CLAIMS, which is the only contract the judge checks. The first laptop
+    eval (2026-07-07) judged the per-theme "(9 items)" counts and correctly
+    called them unsupported — a harness under-strip, not a judge error."""
+    top = digest_line.find("Top: ")
+    if top == -1 or not _CITATION_RE.search(digest_line):
+        return None  # below-threshold cells carry no citations to judge
+    return re.sub(r"\s*\(\d+\s+items?\)", "", digest_line[top:])
+
+
 def run_positives(wb, client, limit) -> tuple[int, int]:
-    """Digest lines are faithful by construction — the judge must agree."""
+    """Digest lines are faithful by construction — the judge must agree.
+
+    Each line is judged as ONE unit: it is a single template line, and theme
+    labels are verbatim claims that may contain abbreviation periods, so
+    sentence-splitting it produces citation-less fragments that auto-flag
+    (the Sebia 3-fragment miss, 2026-07-07)."""
     if "Digest" not in wb.sheetnames:
         raise SystemExit("Workbook has no Digest sheet.")
     claim_texts = load_claim_texts(wb)
@@ -220,26 +241,69 @@ def run_positives(wb, client, limit) -> tuple[int, int]:
 
     items = []
     for r in range(2, ws.max_row + 1):
-        text = str(ws.cell(row=r, column=c_digest).value or "")
-        top = text.find("Top: ")
-        if top == -1 or not _CITATION_RE.search(text):
-            continue  # below-threshold cells carry no citations to judge
+        judgeable = digest_judgeable_text(str(ws.cell(row=r, column=c_digest).value or ""))
+        if judgeable is None:
+            continue
         items.append((
             str(ws.cell(row=r, column=c_entity).value or ""),
             str(ws.cell(row=r, column=c_question).value or ""),
-            text[top:],
+            judgeable,
         ))
     items = items[:limit] if limit else items
     print(f"[positives] judging {len(items)} digest lines...")
 
     correct = 0
     for entity, question, line in items:
-        verdicts, _, error = judge_summary(client, entity, question, line, claim_texts)
-        ok = verdicts is not None and all(v == "faithful" for v in verdicts.values())
+        ids = _CITATION_RE.findall(line)
+        one_unit = [{
+            "n": 1,
+            "sentence": line,
+            "cited_ids": ids,
+            "claims": {cid: claim_texts.get(cid, "(claim text not found)") for cid in ids},
+        }]
+        resp = azure_chat(client, build_judge_prompt(entity, question, one_unit))
+        verdicts = None
+        if not resp.get("error") and resp.get("text") is not None:
+            verdicts = parse_verdicts(resp["text"], 1)
+        ok = verdicts == {1: "faithful"}
         correct += ok
         if not ok:
-            print(f"  MISS {entity} / {question}: {error or verdicts}")
+            print(f"  MISS {entity} / {question}: {resp.get('error') or verdicts or resp.get('text', '')[:120]!r}")
     return correct, len(items)
+
+
+def run_flags(wb, client, limit) -> None:
+    """Diagnosis view: re-judge gate-passed summaries (seeded — same verdicts
+    as summary_judge.py) and print every flagged sentence NEXT TO the claims
+    it cites, so a human can tell over-strict judging from genuinely
+    unsupported prose. Read-only; nothing is written."""
+    claim_texts = load_claim_texts(wb)
+    records = load_passed_summaries(wb)
+    records = records[:limit] if limit else records
+    print(f"[flags] re-judging {len(records)} gate-passed summaries for review...\n")
+
+    n_flagged = 0
+    for record in records:
+        verdicts, _, error = judge_summary(
+            client, record["entity"], record["question"], record["summary"], claim_texts)
+        if verdicts is None:
+            print(f"! {record['entity']} / {record['question']}: judge failed ({error})")
+            continue
+        flagged = sorted(n for n, v in verdicts.items() if v != "faithful")
+        if not flagged:
+            continue
+        n_flagged += 1
+        items = {i["n"]: i for i in sentences_with_claims(record["summary"], claim_texts)}
+        print(f"=== {record['entity']} / {record['question']} ===")
+        for n in flagged:
+            item = items.get(n)
+            if item is None:
+                continue
+            print(f"  [{verdicts[n].upper()}] sentence {n}: {item['sentence']}")
+            for cid, text in item["claims"].items():
+                print(f"      [{cid}] {text}")
+        print()
+    print(f"[flags] {n_flagged}/{len(records)} summaries have >=1 flagged sentence")
 
 
 def run_corruptions(wb, client, limit) -> tuple[int, int, dict]:
@@ -364,7 +428,7 @@ def _bar(name: str, value: float, threshold: float) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Faithfulness-eval harness (judge validation)")
     ap.add_argument("command", choices=["positives", "corruptions", "self-agreement",
-                                        "label-template", "label-score"])
+                                        "label-template", "label-score", "flags"])
     ap.add_argument("--workbook", required=True)
     ap.add_argument("--limit", type=int, default=None, help="cap summaries processed")
     ap.add_argument("--out", default="adlm-outputs/summary_labels.xlsx",
@@ -381,7 +445,9 @@ def main() -> int:
 
     client = make_client()
 
-    if args.command == "positives":
+    if args.command == "flags":
+        run_flags(wb, client, args.limit)
+    elif args.command == "positives":
         correct, total = run_positives(wb, client, args.limit)
         accuracy = correct / total if total else 0.0
         print(f"\n[positives] {correct}/{total} judged faithful — accuracy {accuracy:.3f}")

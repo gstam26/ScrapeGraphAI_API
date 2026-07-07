@@ -61,9 +61,15 @@ from diagnostics.summary_judge import (
     parse_verdicts,
     sentences_with_claims,
 )
-from src.summarize import _split_sentences, azure_chat, make_client, mechanical_gate
+from src.summarize import (
+    _split_sentences,
+    azure_chat,
+    cited_ids,
+    has_citation,
+    make_client,
+    mechanical_gate,
+)
 
-_CITATION_RE = re.compile(r"\[(C\d{4,})\]")
 _THEME_HEADER_RE = re.compile(r'^Theme "(?P<label>.*)" \(\d+ claims\):$')
 _MEMBER_RE = re.compile(r"^\[(C\d{4,})\] ")
 
@@ -172,7 +178,7 @@ def corrupt_inject_fact(record: dict, entities: list[str]) -> tuple[str, set[int
 
 def corrupt_reattach_citation(record: dict, entities: list[str]) -> tuple[str, set[int]] | None:
     sentences = _split_sentences(record["summary"])
-    cited = [(n, _CITATION_RE.findall(s)) for n, s in enumerate(sentences, start=1)]
+    cited = [(n, cited_ids(s)) for n, s in enumerate(sentences, start=1)]
     swappable = [(n, ids) for n, ids in cited if ids]
     if len(swappable) < 2 or set(swappable[0][1]) == set(swappable[1][1]):
         return None
@@ -180,8 +186,9 @@ def corrupt_reattach_citation(record: dict, entities: list[str]) -> tuple[str, s
 
     def swap(sentence: str, old: list[str], new: list[str]) -> str:
         # Replace this sentence's citation set with the other sentence's.
-        stripped = re.sub(r"\s*\[C\d{4,}\](,\s*\[C\d{4,}\])*", "", sentence)
-        tail = " " + ", ".join(f"[{i}]" for i in new)
+        # Strips single-ID, multi-ID and comma-chained brackets alike.
+        stripped = re.sub(r"\s*\[[^\[\]]*C\d{4,}[^\[\]]*\](,\s*\[[^\[\]]*C\d{4,}[^\[\]]*\])*", "", sentence)
+        tail = " [" + ", ".join(new) + "]"
         return stripped.rstrip(".").rstrip() + tail + "."
 
     sentences[n1 - 1] = swap(sentences[n1 - 1], ids1, ids2)
@@ -205,7 +212,7 @@ def corrupt_delete_top_sentence(record: dict) -> str | None:
         return None
     top_ids = themes[0][1]
     sentences = _split_sentences(record["summary"])
-    keep = [s for s in sentences if not (set(_CITATION_RE.findall(s)) & top_ids)]
+    keep = [s for s in sentences if not (set(cited_ids(s)) & top_ids)]
     if len(keep) == len(sentences) or not keep:
         return None
     return " ".join(keep)
@@ -221,7 +228,7 @@ def digest_judgeable_text(digest_line: str) -> str | None:
     eval (2026-07-07) judged the per-theme "(9 items)" counts and correctly
     called them unsupported — a harness under-strip, not a judge error."""
     top = digest_line.find("Top: ")
-    if top == -1 or not _CITATION_RE.search(digest_line):
+    if top == -1 or not has_citation(digest_line):
         return None  # below-threshold cells carry no citations to judge
     return re.sub(r"\s*\(\d+\s+items?\)", "", digest_line[top:])
 
@@ -254,7 +261,7 @@ def run_positives(wb, client, limit) -> tuple[int, int]:
 
     correct = 0
     for entity, question, line in items:
-        ids = _CITATION_RE.findall(line)
+        ids = cited_ids(line)
         one_unit = [{
             "n": 1,
             "sentence": line,

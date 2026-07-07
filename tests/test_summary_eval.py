@@ -203,8 +203,8 @@ def test_reattach_citation_swaps_first_two_citation_sets():
     corrupted, bad = corrupt_reattach_citation(_RECORD, [])
     assert bad == {1, 2}
     sentences = _split_sentences(corrupted)
-    assert "[C0004], [C0005]" in sentences[0]  # sentence 1 now carries set 2
-    assert "[C0001], [C0002]" in sentences[1]
+    assert "[C0004, C0005]" in sentences[0]  # sentence 1 now carries set 2
+    assert "[C0001, C0002]" in sentences[1]
     print("OK test_reattach_citation_swaps_first_two_citation_sets passed")
 
 

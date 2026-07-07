@@ -41,11 +41,10 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from src.extract import _strip_json_fence
-from src.summarize import _split_sentences, azure_chat, make_client
+from src.summarize import _split_sentences, azure_chat, cited_ids, make_client
 
 JUDGE_PROMPT_VERSION = "j1"
 
-_CITATION_RE = re.compile(r"\[(C\d{4,})\]")
 _VERDICTS = {"faithful", "unsupported", "contradicted"}
 NOT_ASSESSED = "not-assessed"
 
@@ -78,7 +77,7 @@ def sentences_with_claims(summary: str, claim_texts: dict[str, str]) -> list[dic
     """[{n, sentence, cited_ids, claims: {id: text}}] per sentence."""
     out = []
     for n, sentence in enumerate(_split_sentences(summary or ""), start=1):
-        ids = _CITATION_RE.findall(sentence)
+        ids = cited_ids(sentence)
         out.append({
             "n": n,
             "sentence": sentence,

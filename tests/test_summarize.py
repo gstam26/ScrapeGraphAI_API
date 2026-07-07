@@ -126,6 +126,29 @@ def test_gate_fails_empty_summary():
     print("OK test_gate_fails_empty_summary passed")
 
 
+def test_multi_id_citation_parsing():
+    # The 2026-07-07 laptop eval: the model batches IDs in one bracket, which
+    # the old single-ID regex missed -> whole sentences read as uncited.
+    from src.summarize import cited_ids, has_citation
+
+    assert cited_ids("clearances [C0183, C0184, C0185]") == ["C0183", "C0184", "C0185"]
+    assert cited_ids("chained [C0001][C0002]") == ["C0001", "C0002"]
+    assert cited_ids("single [C0042].") == ["C0042"]
+    assert cited_ids("semicolons [C0001; C0002]") == ["C0001", "C0002"]
+    assert cited_ids("no citation here") == []
+    assert has_citation("clearances [C0183, C0184]") is True
+    assert has_citation("no citation") is False
+
+    # A sentence with a multi-ID bracket must NOT count as uncited.
+    text = "Danaher advanced bioprocessing [C0183, C0184, C0185, C0189]."
+    reasons, cited, uncited = mechanical_gate(
+        text, {"C0183", "C0184", "C0185", "C0189"}, [("t", {"C0183"})])
+    assert uncited == []
+    assert cited == {"C0183", "C0184", "C0185", "C0189"}
+    assert reasons == []
+    print("OK test_multi_id_citation_parsing passed")
+
+
 def test_sentence_split_merges_abbreviation_fragments():
     # The 2026-07-07 laptop eval: "Ltd."/"U.S." split prose into citation-less
     # fragments that failed the gate and mis-fed the judge.

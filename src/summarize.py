@@ -45,9 +45,29 @@ from src.io_excel import _norm_claim, build_claim_index
 
 # Bumped whenever the prompt template changes — prose is never compared
 # across prompt versions (design §3).
-PROMPT_VERSION = "s1"
+PROMPT_VERSION = "s2"
 
-_CITATION_RE = re.compile(r"\[(C\d{4,})\]")
+# Citation parsing. The model batches IDs inside one bracket —
+# "[C0183, C0184, C0185]" — and sometimes chains brackets "[C0183][C0184]".
+# The 2026-07-07 laptop eval showed the old single-ID-per-bracket regex
+# (r"\[(C\d{4,})\]") registered every multi-ID bracket as UNCITED, failing
+# 72/89 summaries at the gate on a parser bug, not a model fault. Match any
+# bracket containing >=1 claim ID, then pull all IDs from inside it.
+_CITED_BRACKET_RE = re.compile(r"\[[^\[\]]*?C\d{4,}[^\[\]]*?\]")
+_CLAIM_ID_RE = re.compile(r"C\d{4,}")
+
+
+def cited_ids(text: str) -> list[str]:
+    """All claim IDs cited anywhere in text (multi-ID brackets expanded)."""
+    ids: list[str] = []
+    for bracket in _CITED_BRACKET_RE.findall(text or ""):
+        ids.extend(_CLAIM_ID_RE.findall(bracket))
+    return ids
+
+
+def has_citation(text: str) -> bool:
+    """True if text carries >=1 bracketed claim-ID citation."""
+    return _CITED_BRACKET_RE.search(text or "") is not None
 
 # Sentence split shared by the Tier-1 gate and the Tier-2 judge. Fragments
 # created by splitting after a known abbreviation are merged back into the
@@ -170,10 +190,15 @@ def _cell_prompt(
     instructions = (
         f"You are summarizing verified extracted claims about {entity} "
         f'for the question "{question}".\n'
-        "Claims are grouped into themes. Every statement you write MUST cite "
-        "the claim ID(s) it draws from, in square brackets, e.g. [C0042]. "
-        "Do not state anything that is not supported by a cited claim. "
-        "Write 2-4 sentences of plain prose — no headings, no bullet lists."
+        "Claims are grouped into themes. Rules (all mandatory):\n"
+        "1. Cite the claim ID(s) each statement draws from in square brackets, "
+        "e.g. [C0042] or [C0042, C0043]. EVERY sentence must end with its own "
+        "citation — do not gather all citations into the final sentence.\n"
+        "2. State only what the cited claims say. Do NOT add interpretation, "
+        "inference, or a concluding sentence (e.g. no 'this indicates', 'this "
+        "suggests', 'these locations show'). If a claim is a short label or "
+        "category, report it as-is rather than expanding its meaning.\n"
+        "3. Write 2-4 sentences of plain prose — no headings, no bullet lists."
     )
     prompt = instructions + "\n\n" + "\n\n".join(blocks)
     return prompt, input_ids, top_theme_id_sets
@@ -192,7 +217,7 @@ def mechanical_gate(
     is represented by >=1 citation from its member set.
     """
     reasons: list[str] = []
-    cited = set(_CITATION_RE.findall(text or ""))
+    cited = set(cited_ids(text))
 
     invented = cited - input_ids
     if invented:
@@ -201,7 +226,7 @@ def mechanical_gate(
     sentences = _split_sentences(text or "")
     if not sentences:
         reasons.append("empty summary")
-    uncited = [s for s in sentences if not _CITATION_RE.search(s)]
+    uncited = [s for s in sentences if not has_citation(s)]
     if uncited:
         reasons.append(f"{len(uncited)} uncited sentence(s)")
 

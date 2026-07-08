@@ -207,7 +207,7 @@ def test_parse_prompt_themes_roundtrip_with_real_prompt_builder():
 # ── Corruption generators ─────────────────────────────────────────────────────
 
 def test_swap_number_avoids_citation_digits():
-    corrupted, bad = corrupt_swap_number(_RECORD, ["Acme", "Bruker"])[0:2]
+    corrupted, bad = corrupt_swap_number(_RECORD, ["Acme", "Bruker"], _CLAIM_TEXTS)[0:2]
     assert corrupted != _SUMMARY
     assert "obtained 10 regulatory" in corrupted  # 3 + 7
     # Citation IDs untouched.
@@ -216,16 +216,28 @@ def test_swap_number_avoids_citation_digits():
     print("OK test_swap_number_avoids_citation_digits passed")
 
 
-def test_swap_entity_needs_another_entity():
-    corrupted, bad = corrupt_swap_entity(_RECORD, ["Acme", "Bruker"])
-    assert "Bruker obtained" in corrupted
+def test_swap_entity_only_when_a_cited_claim_names_the_entity():
+    # Valid corruption: sentence 1 cites a claim that NAMES the entity, so
+    # swapping it genuinely contradicts the claim.
+    record = {
+        "entity": "Acme",
+        "summary": "Acme partnered with the government [C0009]. It also grew [C0010].",
+    }
+    claims = {"C0009": "Acme partnered with the government", "C0010": "revenue growth"}
+    corrupted, bad = corrupt_swap_entity(record, ["Acme", "Bruker"], claims)
+    assert "Bruker partnered" in corrupted
     assert bad == {1}
-    assert corrupt_swap_entity(_RECORD, ["Acme"]) is None  # nothing to swap to
-    print("OK test_swap_entity_needs_another_entity passed")
+    # Invalid by construction: the only entity-bearing sentence cites a claim
+    # that does NOT name the entity (own-product tag) -> no corruption (the
+    # 2026-07-08 fix; previously this returned a mislabelled "should-catch").
+    assert corrupt_swap_entity(_RECORD, ["Acme", "Bruker"], _CLAIM_TEXTS) is None
+    # Nothing to swap to.
+    assert corrupt_swap_entity(record, ["Acme"], claims) is None
+    print("OK test_swap_entity_only_when_a_cited_claim_names_the_entity passed")
 
 
 def test_inject_fact_cites_real_id_and_flags_last_sentence():
-    corrupted, bad = corrupt_inject_fact(_RECORD, [])
+    corrupted, bad = corrupt_inject_fact(_RECORD, [], _CLAIM_TEXTS)
     sentences = _split_sentences(corrupted)
     assert bad == {len(sentences)}
     assert "$9 billion [C0001]" in sentences[-1]
@@ -238,7 +250,7 @@ def test_inject_fact_cites_real_id_and_flags_last_sentence():
 
 
 def test_reattach_citation_swaps_first_two_citation_sets():
-    corrupted, bad = corrupt_reattach_citation(_RECORD, [])
+    corrupted, bad = corrupt_reattach_citation(_RECORD, [], _CLAIM_TEXTS)
     assert bad == {1, 2}
     sentences = _split_sentences(corrupted)
     assert "[C0004, C0005]" in sentences[0]  # sentence 1 now carries set 2

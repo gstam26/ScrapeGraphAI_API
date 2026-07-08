@@ -145,7 +145,7 @@ def _sentence_of_offset(text: str, offset: int) -> int:
     return 1
 
 
-def corrupt_swap_number(record: dict, entities: list[str]) -> tuple[str, set[int]] | None:
+def corrupt_swap_number(record: dict, entities: list[str], claim_texts: dict) -> tuple[str, set[int]] | None:
     masked, found = _mask_citations(record["summary"])
     match = re.search(r"\b\d+\b", masked)
     if not match:
@@ -156,17 +156,36 @@ def corrupt_swap_number(record: dict, entities: list[str]) -> tuple[str, set[int
     return corrupted, {_sentence_of_offset(corrupted, match.start())}
 
 
-def corrupt_swap_entity(record: dict, entities: list[str]) -> tuple[str, set[int]] | None:
-    others = [e for e in entities if e and e != record["entity"]]
-    if not others or record["entity"] not in record["summary"]:
+def corrupt_swap_entity(record: dict, entities: list[str], claim_texts: dict) -> tuple[str, set[int]] | None:
+    """Swap the entity name — but ONLY in a sentence whose cited claims
+    actually NAME the entity, so the swap genuinely contradicts them.
+
+    Claims here are subject/predicate-stripped attribute values ("own-product",
+    "Lisses, France"), so most sentences cite claims that never mention the
+    entity. The judge is contracted to check each sentence against its cited
+    claims only, so swapping the entity in those sentences leaves them faithful
+    to their claims — an invalid corruption whose "should be caught" label is
+    wrong by construction (diagnosed 2026-07-08: 69/71 old swap_entity cases
+    were no-ops, dragging the bar to 0.756 after the judge-blindness fix).
+    Returns None when no cited claim names the entity."""
+    entity = record["entity"]
+    others = [e for e in entities if e and e != entity]
+    if not others:
         return None
     replacement = others[0]
-    idx = record["summary"].find(record["entity"])
-    corrupted = record["summary"].replace(record["entity"], replacement)
-    return corrupted, {_sentence_of_offset(corrupted, idx)}
+    sentences = _split_sentences(record["summary"])
+    for n, sentence in enumerate(sentences, start=1):
+        if entity not in sentence:
+            continue
+        if not any(entity.lower() in claim_texts.get(cid, "").lower()
+                   for cid in cited_ids(sentence)):
+            continue  # cited claims don't name the entity — swap wouldn't lie
+        sentences[n - 1] = sentence.replace(entity, replacement)
+        return " ".join(sentences), {n}
+    return None
 
 
-def corrupt_inject_fact(record: dict, entities: list[str]) -> tuple[str, set[int]] | None:
+def corrupt_inject_fact(record: dict, entities: list[str], claim_texts: dict) -> tuple[str, set[int]] | None:
     ids = sorted(record["input_ids"])
     if not ids:
         return None
@@ -176,7 +195,7 @@ def corrupt_inject_fact(record: dict, entities: list[str]) -> tuple[str, set[int
     return corrupted, {len(_split_sentences(corrupted))}
 
 
-def corrupt_reattach_citation(record: dict, entities: list[str]) -> tuple[str, set[int]] | None:
+def corrupt_reattach_citation(record: dict, entities: list[str], claim_texts: dict) -> tuple[str, set[int]] | None:
     sentences = _split_sentences(record["summary"])
     cited = [(n, cited_ids(s)) for n, s in enumerate(sentences, start=1)]
     swappable = [(n, ids) for n, ids in cited if ids]
@@ -323,7 +342,7 @@ def run_corruptions(wb, client, limit) -> tuple[int, int, dict]:
     by_type: dict[str, list[int]] = {}
     for record in records:
         for name, generator in _JUDGE_CORRUPTIONS.items():
-            result = generator(record, entities)
+            result = generator(record, entities, claim_texts)
             if result is None:
                 continue
             corrupted, bad_sentences = result

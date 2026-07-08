@@ -26,7 +26,7 @@ the extent the deployment honours seeding (confirmed 2026-07-07 probe);
 fingerprints are printed for drift visibility.
 
 Usage (work laptop — needs AZURE_API_KEY):
-    python diagnostics/summary_judge.py --workbook outputs/run.xlsx [--out judged.xlsx] [--limit N]
+    python diagnostics/summary_judge.py --workbook outputs/run.xlsx [--out judged.xlsx] [--limit N] [--rejudge]
 """
 import argparse
 import json
@@ -51,11 +51,15 @@ NOT_ASSESSED = "not-assessed"
 
 # ── Workbook readers (shared with diagnostics/summary_eval.py) ───────────────
 
-def col_index(ws, header_prefix: str) -> int:
+def col_index(ws, header_prefix: str, exact: bool = False) -> int:
     """1-based column whose header starts with header_prefix (the AI Summary
-    sheet's Summary header carries a disclaimer suffix)."""
+    sheet's Summary header carries a disclaimer suffix). Pass exact=True to
+    require an exact match (needed when a prefix would also match a longer
+    column name, e.g. "Claim" vs "Claim ID")."""
     for cell in ws[1]:
-        if str(cell.value or "").strip().lower().startswith(header_prefix.lower()):
+        val = str(cell.value or "").strip().lower()
+        match = val == header_prefix.lower() if exact else val.startswith(header_prefix.lower())
+        if match:
             return cell.column
     raise ValueError(f"{ws.title!r} has no column starting with {header_prefix!r}")
 
@@ -64,7 +68,7 @@ def load_claim_texts(wb) -> dict[str, str]:
     """Provenance Claim ID -> claim value text (what the summarizer saw)."""
     ws = wb["Provenance"]
     c_id = col_index(ws, "Claim ID")
-    c_claim = col_index(ws, "Claim")
+    c_claim = col_index(ws, "Claim", exact=True)
     out: dict[str, str] = {}
     for r in range(2, ws.max_row + 1):
         cid = ws.cell(row=r, column=c_id).value
@@ -170,6 +174,9 @@ def verdict_to_cell(verdicts: dict[int, str] | None) -> str:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+_MARKER_RE = re.compile(r"\n?\[faithfulness:[^\]]*\]")
+
+
 def annotate_matrix_cell(wb, entity: str, question: str, verdict: str) -> None:
     """Flag a judged-unfaithful summary on the consultant-facing AI Summary
     matrix: orange fill + a visible marker line appended to the prose. The
@@ -191,11 +198,28 @@ def annotate_matrix_cell(wb, entity: str, question: str, verdict: str) -> None:
     cell.fill = PatternFill("solid", fgColor="FFE0B2")  # io_excel._ORANGE_FILL
 
 
+def strip_matrix_annotations(wb) -> None:
+    """Remove stale [faithfulness: ...] markers and orange fills from the AI
+    Summary matrix so a --rejudge never stacks verdicts from a previous pass."""
+    from openpyxl.styles import PatternFill
+
+    if "AI Summary" not in wb.sheetnames:
+        return
+    for row in wb["AI Summary"].iter_rows(min_row=2):
+        for cell in row:
+            if isinstance(cell.value, str) and "[faithfulness:" in cell.value:
+                cell.value = _MARKER_RE.sub("", cell.value)
+                cell.fill = PatternFill()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--workbook", required=True)
     ap.add_argument("--out", default=None, help="output path (default: in place)")
     ap.add_argument("--limit", type=int, default=None, help="judge at most N summaries")
+    ap.add_argument("--rejudge", action="store_true",
+                    help="re-judge already-judged rows (overwrites stale verdicts; "
+                         "strips old matrix annotations first)")
     args = ap.parse_args()
 
     wb = openpyxl.load_workbook(args.workbook)
@@ -218,10 +242,13 @@ def main() -> int:
         c_verdicts = log.max_column + 1
         log.cell(row=1, column=c_verdicts).value = "Judge Verdicts"
 
+    if args.rejudge:
+        strip_matrix_annotations(wb)
     todo = [
         r for r in range(2, log.max_row + 1)
         if str(log.cell(row=r, column=cols["Gate"]).value or "") == "pass"
-        and str(log.cell(row=r, column=cols["Faithfulness"]).value or "") == NOT_ASSESSED
+        and (args.rejudge
+             or str(log.cell(row=r, column=cols["Faithfulness"]).value or "") == NOT_ASSESSED)
     ]
     if args.limit is not None:
         todo = todo[: args.limit]

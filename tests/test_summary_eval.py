@@ -19,8 +19,10 @@ from diagnostics.summary_judge import (
     annotate_matrix_cell,
     build_judge_prompt,
     judge_summary,
+    load_claim_texts,
     parse_verdicts,
     sentences_with_claims,
+    strip_matrix_annotations,
     verdict_to_cell,
 )
 from src.summarize import _cell_prompt, _split_sentences, mechanical_gate
@@ -143,6 +145,42 @@ def test_annotate_matrix_cell_flags_the_right_cell():
     annotate_matrix_cell(wb, "Nobody", "Recent news", "x")
     annotate_matrix_cell(openpyxl.Workbook(), "Acme", "Recent news", "x")
     print("OK test_annotate_matrix_cell_flags_the_right_cell passed")
+
+
+def test_load_claim_texts_reads_claim_column_not_claim_id():
+    # Regression: Provenance has "Claim ID" (col 1) BEFORE "Claim" (col 5);
+    # a prefix match on "Claim" hit "Claim ID" first, so every claim text
+    # loaded as its own ID and the judge flagged everything unsupported
+    # (the 12/71-faithful run, 2026-07-07).
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Provenance"
+    ws.append(["Claim ID", "Entity", "Source URL", "Question", "Claim", "Verbatim Quote"])
+    ws.append(["C0001", "Acme", "http://x", "Company type", "own-product", "quote"])
+    ws.append(["C0002", "Acme", "http://x", "R&D location", "Ettlingen, Germany", "quote"])
+
+    texts = load_claim_texts(wb)
+    assert texts == {"C0001": "own-product", "C0002": "Ettlingen, Germany"}
+    print("OK test_load_claim_texts_reads_claim_column_not_claim_id passed")
+
+
+def test_strip_matrix_annotations_reverses_annotate():
+    # --rejudge must never stack a fresh verdict on top of a stale one.
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "AI Summary"
+    ws.append(["Entity — AI-synthesized prose (...)", "Recent news"])
+    ws.append(["Acme", "Prose about Acme [C0001]."])
+    annotate_matrix_cell(wb, "Acme", "Recent news", "2 flagged sentence(s)")
+    assert "[faithfulness:" in ws.cell(row=2, column=2).value
+
+    strip_matrix_annotations(wb)
+    cell = ws.cell(row=2, column=2)
+    assert cell.value == "Prose about Acme [C0001]."
+    assert cell.fill.patternType is None  # orange fill cleared
+    # Missing sheet: silently no-op, never raises.
+    strip_matrix_annotations(openpyxl.Workbook())
+    print("OK test_strip_matrix_annotations_reverses_annotate passed")
 
 
 def test_parse_prompt_themes_roundtrip_with_real_prompt_builder():

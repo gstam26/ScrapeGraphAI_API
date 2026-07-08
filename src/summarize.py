@@ -44,8 +44,12 @@ from src.group import ALL_ITEMS_THEME
 from src.io_excel import _norm_claim, build_claim_index
 
 # Bumped whenever the prompt template changes — prose is never compared
-# across prompt versions (design §3).
-PROMPT_VERSION = "s2"
+# across prompt versions (design §3). s3 (2026-07-08, scaffolding round 2 of
+# 2, George-directed): dropped the 2-4 sentence FLOOR — it contradicted the
+# no-interpretation rule for one-tag cells (Company type), forcing the model
+# to pad ("this means the company...") or emit filler; 13/18 judge flags on
+# the 07b run were that self-inflicted pattern.
+PROMPT_VERSION = "s3"
 
 # Citation parsing. The model batches IDs inside one bracket —
 # "[C0183, C0184, C0185]" — and sometimes chains brackets "[C0183][C0184]".
@@ -197,8 +201,13 @@ def _cell_prompt(
         "2. State only what the cited claims say. Do NOT add interpretation, "
         "inference, or a concluding sentence (e.g. no 'this indicates', 'this "
         "suggests', 'these locations show'). If a claim is a short label or "
-        "category, report it as-is rather than expanding its meaning.\n"
-        "3. Write 2-4 sentences of plain prose — no headings, no bullet lists."
+        "category (e.g. 'own-product'), report it verbatim with its citation "
+        "and stop — never explain what the label means, and never add filler "
+        "such as 'no additional information is provided'.\n"
+        "3. Be brief: plain prose, at most 4 sentences, and as few as cover "
+        "the themes — for a cell with one or two short claims, ONE short "
+        "sentence is the correct answer. No headings, no bullet lists, no "
+        "padding."
     )
     prompt = instructions + "\n\n" + "\n\n".join(blocks)
     return prompt, input_ids, top_theme_id_sets

@@ -1,6 +1,8 @@
-# Proposal: Code restructure (propose-only — nothing executed)
+# Proposal: Code restructure
 
-**Status:** Written 2026-07-02 from a full read of `src/`, root modules, `tests/`, `diagnostics/`. For George's review after the validation cycle. Every item below is flagged **pure move** (behaviour-identical, import-path changes only) or **behaviour-adjacent** (could change runtime behaviour — needs its own test pass).
+**Status:** Written 2026-07-02. **Executed 2026-07-09** on George's go-ahead: R1, R2, R3, R6 done (offline suite 164 green before and after; scripts verified via `--help` from repo root). R4 and R5 remain deferred — R4 waits until the summary eval is no longer in flight, R5 until output-schema work needs it. Stale `PROJECT_STRUCTURE.md` also deleted.
+
+Original text below. Every item is flagged **pure move** (behaviour-identical, import-path changes only) or **behaviour-adjacent** (could change runtime behaviour — needs its own test pass).
 
 ## Current structure assessment
 

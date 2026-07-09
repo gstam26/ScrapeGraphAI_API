@@ -2,6 +2,16 @@
 
 Notable changes, newest first. Full rationale for each decision: `brain/decision-log.md`.
 
+## 2026-07-09
+
+### Repo restructure (executes brain/proposals/code-restructure.md R1/R2/R3/R6)
+- One-shot scripts moved off the root: `adlm_scraper.py`, `resolve_urls.py`, 4× `build_*_workbook.py` → `scripts/` (run from repo root; the two that import `src.*` gained a sys.path shim). Behaviour-identical.
+- Superseded crawl diagnostics archived: `crawl_trace.py`, `crawl_trace_embed.py`, `crawl_collect.py`, `crawl_debug.py` → `diagnostics/archive/` (per DIAGNOSTICS_INVENTORY §3).
+- Dead config flags deleted (`CRAWL_ENABLED`, `FETCH_WAIT_MS`, `ENABLE_COST_TRACKING`, `ENABLE_LATENCY_TRACKING`, `ENABLE_PROVENANCE` + unused `Config.fetch_wait_ms`); dead model aliases deleted (`EvidenceItem`, `CellContribution`). Grep-verified zero readers.
+- Stale comments fixed (audit §E): FILTER_THRESHOLD 0.35 note, FETCH_BACKEND "dev default" note, `_DEDUP_RATIO` inline contradiction (header comment was correct: 85 is intentionally below eval's AI_DEDUP_RATIO 95).
+- Stale `PROJECT_STRUCTURE.md` deleted (marked stale since 2026-07-02; history in git).
+- R4 (eval_lib promotion) and R5 (io_excel split) deliberately deferred — summary eval in flight.
+
 ## 2026-07-02
 
 ### Performance & robustness (commit 36d7272)

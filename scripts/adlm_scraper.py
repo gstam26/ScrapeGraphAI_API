@@ -43,6 +43,10 @@ import requests
 from bs4 import BeautifulSoup
 from rapidfuzz import fuzz
 
+# Lives in scripts/; make repo-root imports (src.*) resolvable. Run from repo
+# root so relative CSV paths land there.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 # Reuse the project's social/aggregator blocklist so a company's footer Twitter
 # or a directory link is never mistaken for its official site.
 from src.resolve.confidence import is_blocked, registrable_domain

@@ -10,9 +10,10 @@ stripped from names — e.g. "ALine, Inc." -> "ALine Inc.". Cosmetic only; used 
 Matrix row label and the extraction entity key.
 
 Batching (credit budgeting — Firecrawl allowance may not cover all 182 in one go):
-    python build_182_workbook.py                 # full set
-    python build_182_workbook.py --start 1 --end 70    # batch 1 -> adlm_182_input_1-70.xlsx
-    python build_182_workbook.py --start 71            # batch 2 -> adlm_182_input_71-<end>.xlsx
+Run from repo root (reads matched_official_urls.csv relative to CWD):
+    python scripts/build_182_workbook.py                 # full set
+    python scripts/build_182_workbook.py --start 1 --end 70    # batch 1 -> adlm_182_input_1-70.xlsx
+    python scripts/build_182_workbook.py --start 71            # batch 2 -> adlm_182_input_71-<end>.xlsx
 Slicing happens AFTER dedup, so ranges are stable across invocations.
 """
 import argparse

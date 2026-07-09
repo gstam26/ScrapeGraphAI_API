@@ -1,10 +1,10 @@
 """CLI: resolve company names to official URLs.
 
-Usage:
-    python resolve_urls.py input.csv
-    python resolve_urls.py input.csv -o resolved_urls.csv
-    python resolve_urls.py input.csv --fetch           # opt-in homepage fetch
-    python resolve_urls.py input.csv --limit 10 --embeddings
+Usage (from repo root):
+    python scripts/resolve_urls.py input.csv
+    python scripts/resolve_urls.py input.csv -o resolved_urls.csv
+    python scripts/resolve_urls.py input.csv --fetch           # opt-in homepage fetch
+    python scripts/resolve_urls.py input.csv --limit 10 --embeddings
 
 Input CSV columns : company, booth, description, categories
 Output CSV columns: company, resolved_url, confidence,
@@ -17,6 +17,11 @@ there is no direct-internet fallback.
 """
 
 import argparse
+import sys
+from pathlib import Path
+
+# Lives in scripts/; make repo-root imports (src.*, models, config) resolvable.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.resolve.resolver import resolve_csv
 

@@ -156,7 +156,7 @@ def aggregate_cells(
                     # Fuzzy dedup: suppress near-identical values (e.g. the same fact
                     # phrased slightly differently across multiple crawled pages) from
                     # the display list and conflict detector. Evidence is still kept for
-                    # provenance. Uses the same threshold as the eval's AI_DEDUP_RATIO.
+                    # provenance.
                     if not any(
                         fuzz.token_sort_ratio(value_key, s) >= _DEDUP_RATIO
                         for s in seen_value_norms

@@ -51,7 +51,6 @@ class Config(BaseModel):
     request_timeout: int = 30
     sgai_api_key: str | None = None
     firecrawl_api_key: str | None = None
-    fetch_wait_ms: int = 3000
     default_depth: int = 0
     crawl_min_score: float = 0.12        # BM25 relative threshold
     crawl_min_score_embed: float = 0.50  # Ollama absolute cosine threshold
@@ -72,11 +71,6 @@ class SourceQuote(BaseModel):
     char_span: tuple[int, int] | None = None
     match_type: str = "none"
     semantic_score: float | None = None
-
-
-class EvidenceItem(SourceQuote):
-    """Alias for SourceQuote."""
-    pass
 
 
 class RoutedPage(BaseModel):
@@ -101,11 +95,6 @@ class ExtractedCell(BaseModel):
     num_unique_values: int = 0
     # Structured list of distinct source URLs (aggregated cells only).
     source_urls: list[str] = Field(default_factory=list)
-
-
-class CellContribution(ExtractedCell):
-    """Alias for ExtractedCell."""
-    pass
 
 
 class ExtractedRow(BaseModel):

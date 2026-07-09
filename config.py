@@ -20,8 +20,7 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 # TOOLS
 # ============================================================
 
-# Dev default.  Change to "firecrawl" (or "sgai"/"playwright"/"requests") for
-# deployment — Firecrawl is the deployment-default candidate.
+# Deployment default. Alternatives: "sgai" | "playwright" | "requests" | "local".
 FETCH_BACKEND = "firecrawl"
 
 ACQUIRE_TOOL = FETCH_BACKEND
@@ -39,8 +38,6 @@ OUTPUT_DIR = "outputs"
 # ============================================================
 # ACQUISITION
 # ============================================================
-
-FETCH_WAIT_MS = 3000
 
 # When True, a thin-content response from Firecrawl triggers one Playwright
 # re-render attempt. Set to False for backend-comparison runs where you want
@@ -89,8 +86,6 @@ REQUEST_HEADERS = {
 # ============================================================
 # GUIDED CRAWLING
 # ============================================================
-
-CRAWL_ENABLED = False
 
 # How many link hops away from the seed URL
 CRAWL_MAX_DEPTH = 1
@@ -189,8 +184,7 @@ FILTER_MODE = os.getenv("FILTER_MODE", "threshold")
 QUERY_INCLUDES_INSTRUCTION = True
 
 # Minimum cosine similarity between page text and a question for that column
-# to be included in extraction. 0.35 keeps clearly irrelevant pages out while
-# being lenient enough not to drop borderline-relevant content.
+# to be included in extraction.
 FILTER_THRESHOLD = 0.55
 
 # Page text is split into ~this many characters per chunk (on paragraph
@@ -207,11 +201,8 @@ VERIFY_THRESHOLD_SOFT = 68
 VERIFY_LONG_QUOTE_MIN = 100
 
 # ============================================================
-# FUTURE EVALUATION SETTINGS
+# EXTRACTION
 # ============================================================
-
-ENABLE_COST_TRACKING = False
-ENABLE_LATENCY_TRACKING = False
 
 # Timeout for extractor SGAI calls (seconds). Lower to fail fast for unreliable endpoints.
 EXTRACT_TIMEOUT = 120
@@ -244,8 +235,6 @@ PIPELINE_ENTITY_WORKERS = 4
 # EXTRACT_PAGE_WORKERS x EXTRACT_MAX_WORKERS (4 x 4 x 8 = 128) simultaneous
 # calls — the LLMAPI proxy already returned a 502 under single-entity load.
 EXTRACT_MAX_CONCURRENT_CALLS = 16
-
-ENABLE_PROVENANCE = True
 
 DIAGNOSTICS = True  # True = all 7 sheets; False = Summary, Matrix, Provenance only
 

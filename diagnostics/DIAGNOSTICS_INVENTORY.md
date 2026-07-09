@@ -26,6 +26,8 @@ This inventory covers the current diagnostics, archived diagnostic outputs, and 
 
 ## 3. Outdated / duplicate / candidate for removal
 
+> **Executed 2026-07-09:** the four scripts below now live in `diagnostics/archive/` (kept as design-evolution evidence for the dissertation appendix; not maintained).
+
 | Diagnostic | Purpose | Command | Required inputs | Outputs | Answers | Current compatibility | Dissertation value | Overlap | Recommendation |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `diagnostics/crawl_trace.py` | Standalone guided crawl trace using BM25, URL/anchor boosts, per-page normalization, threshold, and top-k fallback. | `python diagnostics/crawl_trace.py` or `python diagnostics/crawl_trace.py --dry-run` | `FIRECRAWL_API_KEY`; hardcoded seed/topics. | Console trace only. | Which links the old BM25 crawler would follow/skip at each depth. | Not compatible with current production relevance philosophy. It hardcodes Oatly/sustainability topics and boosts, while current production builds query terms from questions/instructions and deliberately excludes hardcoded domain terms. | Low for current evaluation; potentially useful as historical appendix if discussing rejected designs. | Duplicates `crawl_trace_embed.py`, `crawl_collect.py`, and parts of `acquire_report.py`. | Candidate for deprecation or move to an archive folder after current diagnostics are consolidated. |

@@ -21,6 +21,12 @@ Usage:
     python diagnostics/backend_compare.py                       # default 8 entities
     python diagnostics/backend_compare.py --entities "Catachem,Bruker"
     python diagnostics/backend_compare.py --baseline path.xlsx --out out.xlsx
+    python diagnostics/backend_compare.py --backend playwright_pooled_hybrid
+
+With --backend playwright_pooled_hybrid the per-page "PW Backend" column
+records which path served each page (pooled_hybrid_static vs
+pooled_hybrid_render) and the summary reports the static-hit rate — the
+hybrid's efficiency claim, measured. Politeness is identical on both paths.
 """
 import argparse
 import os
@@ -33,10 +39,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import Config
 from src.acquire.crawler import _discover_links_from_html
-from src.acquire.fetcher import _fetch_playwright_pooled
+from src.acquire.fetcher import _fetch_playwright_pooled, _fetch_playwright_pooled_hybrid
+
+_BACKENDS = {
+    "playwright_pooled": _fetch_playwright_pooled,
+    "playwright_pooled_hybrid": _fetch_playwright_pooled_hybrid,
+}
 
 DEFAULT_BASELINE = "adlm-outputs/validation_sample_run_2026-07-02_v2.xlsx"
-DEFAULT_OUT = "adlm-outputs/backend_compare_playwright_vs_firecrawl.xlsx"
 
 # Quality-focused selection: the two zero-crawl failures (biggest potential
 # upside for a real browser), the giant-page case, and a corporate/light mix.
@@ -53,11 +63,15 @@ DEFAULT_ENTITIES = [
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="playwright_pooled vs Firecrawl baseline")
+    ap = argparse.ArgumentParser(description="self-hosted backend vs Firecrawl baseline")
     ap.add_argument("--baseline", default=DEFAULT_BASELINE)
-    ap.add_argument("--out", default=DEFAULT_OUT)
+    ap.add_argument("--out", default=None, help="output xlsx (default: adlm-outputs/backend_compare_<backend>_vs_firecrawl.xlsx)")
     ap.add_argument("--entities", default=None, help="comma-separated entity names (default: 8-entity quality mix)")
+    ap.add_argument("--backend", default="playwright_pooled", choices=sorted(_BACKENDS),
+                    help="self-hosted backend to compare against the Firecrawl baseline")
     args = ap.parse_args()
+    fetch = _BACKENDS[args.backend]
+    out_path = args.out or f"adlm-outputs/backend_compare_{args.backend}_vs_firecrawl.xlsx"
 
     entities = (
         [e.strip() for e in args.entities.split(",") if e.strip()]
@@ -68,7 +82,7 @@ def main() -> int:
     aq = pd.read_excel(xl, "Acquire Log")
     cc = pd.read_excel(xl, "Crawl Candidates")
 
-    cfg = Config(acquire_tool="playwright_pooled")
+    cfg = Config(acquire_tool=args.backend)
     rows: list[dict] = []
 
     for ent in entities:
@@ -87,10 +101,10 @@ def main() -> int:
             t0 = time.time()
             err = ""
             try:
-                text, html, prov = _fetch_playwright_pooled(url, cfg)
+                text, html, prov = fetch(url, cfg)
             except Exception as e:
                 text, html, err = "", None, f"{type(e).__name__}: {str(e)[:160]}"
-                prov = {"gate_passed": False, "gate_reason": "fetch_error"}
+                prov = {"backend": args.backend, "gate_passed": False, "gate_reason": "fetch_error"}
             ms = int((time.time() - t0) * 1000)
 
             pw_links = len(_discover_links_from_html(url, seed, 1, html)) if html else 0
@@ -103,6 +117,7 @@ def main() -> int:
 
             rows.append({
                 "Entity": ent, "Page URL": url, "PW Status": status, "PW Error": err,
+                "PW Backend": prov.get("backend", args.backend),
                 "PW Gate Reason": prov.get("gate_reason", ""),
                 "PW Chars": pw_chars, "FC Chars": fc_chars, "Chars Ratio": ratio,
                 "PW Links Discovered": pw_links, "FC Candidates": fc_cands,
@@ -136,11 +151,16 @@ def main() -> int:
         for _, r in low.iterrows():
             print(f"  x{r['Chars Ratio']} {r['Page URL'][:80]}")
 
-    os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-    with pd.ExcelWriter(args.out, engine="openpyxl") as w:
+    if args.backend == "playwright_pooled_hybrid":
+        static_n = int((df["PW Backend"] == "pooled_hybrid_static").sum())
+        print(f"\nHybrid static-hit rate: {static_n}/{len(df)} pages "
+              f"({static_n / len(df) * 100:.1f}%) served without launching the browser")
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    with pd.ExcelWriter(out_path, engine="openpyxl") as w:
         df.to_excel(w, sheet_name="Pages", index=False)
         per_ent.reset_index().to_excel(w, sheet_name="Per Entity", index=False)
-    print(f"\nWrote {args.out}")
+    print(f"\nWrote {out_path}")
     return 0
 
 

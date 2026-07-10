@@ -2,6 +2,17 @@
 
 Notable changes, newest first. Full rationale for each decision: `brain/decision-log.md`.
 
+## 2026-07-10
+
+### Hybrid self-hosted fetch backend (`ACQUIRE_TOOL=playwright_pooled_hybrid`)
+- Static-first variant of `playwright_pooled`: httpx GET → Trafilatura → full quality gate; escalates to the pooled browser render only when the static attempt fails the gate or errors. Pages that don't need JavaScript skip the browser entirely (and its 2s settle wait).
+- Politeness identical to `playwright_pooled` by construction — the static path reuses the same `robots_allows` + `wait_for_domain_slot` primitives; the render escalation takes its own domain slot (correct: it's a second request). Closes the exact gap that ruled the old `local` backend out for external use.
+- Provenance records the serving path per page: `pooled_hybrid_static` / `pooled_hybrid_render` (render_fallback=True). Render failure after a gate-failed static fetch keeps the static content with the failure recorded (`local`'s contract).
+- Crawler link discovery treats the hybrid's HTML like `playwright_pooled`'s (full DOM either way).
+- `backend_compare.py` gains `--backend playwright_pooled_hybrid` + a per-page "PW Backend" column + static-hit-rate summary, so one laptop bake-off measures both cell-population parity (bar item 1, never yet measured) and the hybrid's efficiency claim.
+- ⚠️ Off by default; same Nick sign-off + bake-off go/no-go as `playwright_pooled` (brain/proposals/firecrawl-replacement.md). Note for the bake-off writeup: the static path has a different network fingerprint (plain httpx vs Chromium), so WAF behaviour (e.g. Agilent/Akamai) may shift vs the 07-05 run — a second moving variable alongside the robots-UA fix.
+- Suite: 170 offline tests green (6 new).
+
 ## 2026-07-09
 
 ### Repo restructure (executes brain/proposals/code-restructure.md R1/R2/R3/R6)

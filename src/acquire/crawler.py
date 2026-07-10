@@ -240,14 +240,17 @@ def _discover_links(
     page_text: str | None = None,
     cfg: Config | None = None,
 ) -> list[LinkCandidate]:
-    # Firecrawl + playwright_pooled: prefer rendered HTML. Firecrawl drops some
+    # Firecrawl + pooled backends: prefer real HTML. Firecrawl drops some
     # nav/footer links (About/Contact) from both its markdown and cleaned html;
     # only raw_html keeps them. playwright_pooled hands us the real rendered DOM,
-    # which has them by construction. This re-enables the parent-element
+    # which has them by construction; the hybrid returns a full DOM either way
+    # (static page source or rendered). This re-enables the parent-element
     # ("nav-soup") context the 2026-06-16 decision moved away from — scoped to
-    # these two backends; the local backend keeps its markdown path
+    # these backends; the local backend keeps its markdown path
     # (Trafilatura include_links=True) and its ±120-char prose context.
-    if html and cfg is not None and cfg.acquire_tool in ("firecrawl", "playwright_pooled"):
+    if html and cfg is not None and cfg.acquire_tool in (
+        "firecrawl", "playwright_pooled", "playwright_pooled_hybrid",
+    ):
         return _discover_links_from_html(page_url, start_url, depth, html)
 
     # Markdown path: Firecrawl cache hits / local backend — context comes naturally.

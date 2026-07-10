@@ -17,7 +17,7 @@ from models import Config
 
 class FetchProvenance(TypedDict):
     """Provenance record returned alongside fetched content."""
-    backend: str           # "local_static" | "local_render" | "firecrawl" | "sgai" | "requests" | "playwright"
+    backend: str           # "local_static" | "local_render" | "firecrawl" | "sgai" | "requests" | "playwright" | "playwright_pooled" | "pooled_hybrid_static" | "pooled_hybrid_render"
     render_fallback: bool  # True when Playwright was used as the local-backend fallback
     gate_passed: bool | None  # None = gate was not run (cached page or non-local backend)
     gate_reason: str       # empty when passed or not run; failure reason when gate_passed=False
@@ -210,6 +210,82 @@ def _fetch_playwright_pooled(url: str, cfg: Config) -> tuple[str, str, FetchProv
     )
 
 
+def _fetch_playwright_pooled_hybrid(url: str, cfg: Config) -> tuple[str, str, FetchProvenance]:
+    """
+    Static-first variant of playwright_pooled: httpx GET -> Trafilatura -> full
+    quality gate, escalating to the pooled browser render only when the static
+    attempt fails the gate (or errors). Most pages don't need JavaScript, so
+    the browser (and its settle wait) is skipped wherever static HTML passes.
+
+    Politeness is identical to playwright_pooled: the SAME robots_allows /
+    wait_for_domain_slot primitives guard the static request, and the render
+    escalation goes through fetch_rendered_html, which takes its own domain
+    slot — correct, since the escalation is a second request to the domain.
+
+    Provenance records which path produced the content:
+    "pooled_hybrid_static" | "pooled_hybrid_render" (render_fallback=True).
+    """
+    from src.acquire.playwright_pool import (
+        RobotsDisallowed,
+        fetch_rendered_html,
+        robots_allows,
+        wait_for_domain_slot,
+    )
+
+    if not robots_allows(url):
+        return "", "", FetchProvenance(
+            backend="pooled_hybrid_static", render_fallback=False,
+            gate_passed=False, gate_reason="robots_disallowed",
+        )
+
+    static_text, static_html = "", ""
+    try:
+        wait_for_domain_slot(url)
+        r = httpx.get(
+            url,
+            headers=cfg.request_headers,
+            timeout=cfg.request_timeout,
+            follow_redirects=True,
+        )
+        r.raise_for_status()
+        static_html = r.text
+        static_text = _extract_text_from_html(static_html)
+        gate_passed, gate_reason = content_quality_gate(static_text, static_html)
+        if gate_passed:
+            return static_text, static_html, FetchProvenance(
+                backend="pooled_hybrid_static", render_fallback=False,
+                gate_passed=True, gate_reason="",
+            )
+    except Exception as e:
+        gate_reason = f"static_error={e}"
+
+    print(f"    [hybrid-gate] {gate_reason} — escalating to pooled render")
+    try:
+        html = fetch_rendered_html(url)
+    except RobotsDisallowed:
+        # Defensive only: robots was already checked (and is cached) above.
+        return "", "", FetchProvenance(
+            backend="pooled_hybrid_render", render_fallback=True,
+            gate_passed=False, gate_reason="robots_disallowed",
+        )
+    except Exception as e:
+        if static_html:
+            # Keep the gate-failed static content rather than losing it; the
+            # failure stays recorded — same contract as the local backend.
+            return static_text, static_html, FetchProvenance(
+                backend="pooled_hybrid_static", render_fallback=False,
+                gate_passed=False, gate_reason=f"{gate_reason}; render_error={e}",
+            )
+        raise
+
+    text = _extract_text_from_html(html)
+    gate_passed, gate_reason = content_quality_gate(text, html)
+    return text, html, FetchProvenance(
+        backend="pooled_hybrid_render", render_fallback=True,
+        gate_passed=gate_passed, gate_reason=gate_reason,
+    )
+
+
 def _render_page_html(url: str, cfg: Config) -> str:
     """Launch Playwright and return raw rendered HTML (no text extraction)."""
     from playwright.sync_api import sync_playwright  # type: ignore[import]
@@ -281,7 +357,7 @@ _FETCHERS = {
 }
 
 # All valid acquire_tool values including the local backend
-_VALID_BACKENDS = set(_FETCHERS) | {"local", "playwright_pooled"}
+_VALID_BACKENDS = set(_FETCHERS) | {"local", "playwright_pooled", "playwright_pooled_hybrid"}
 
 
 def fetch_page_raw(url: str, cfg: Config) -> tuple[str, str | None]:
@@ -296,6 +372,9 @@ def fetch_page_raw(url: str, cfg: Config) -> tuple[str, str | None]:
         return text, html
     if cfg.acquire_tool == "playwright_pooled":
         text, html, _ = _fetch_playwright_pooled(url, cfg)
+        return text, html
+    if cfg.acquire_tool == "playwright_pooled_hybrid":
+        text, html, _ = _fetch_playwright_pooled_hybrid(url, cfg)
         return text, html
     return _FETCHERS[cfg.acquire_tool](url, cfg), None
 
@@ -313,6 +392,9 @@ def fetch_page_with_provenance(url: str, cfg: Config) -> tuple[str, str | None, 
 
     if cfg.acquire_tool == "playwright_pooled":
         return _fetch_playwright_pooled(url, cfg)
+
+    if cfg.acquire_tool == "playwright_pooled_hybrid":
+        return _fetch_playwright_pooled_hybrid(url, cfg)
 
     if cfg.acquire_tool == "requests":
         response = requests.get(url, timeout=cfg.request_timeout, headers=cfg.request_headers)

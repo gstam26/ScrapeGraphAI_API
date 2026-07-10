@@ -45,11 +45,12 @@ OUTPUT_DIR = "outputs"
 THIN_CONTENT_FALLBACK = True
 
 # ============================================================
-# SELF-HOSTED FETCH POLITENESS (playwright_pooled backend)
-# Firecrawl fetches from ITS infrastructure; the pooled-Playwright backend
-# fetches from THIS machine's IP. Sagentia has had IPs blocked before, so
-# politeness is mandatory for the self-hosted path, not tunable-to-zero
-# in production runs.
+# SELF-HOSTED FETCH POLITENESS (playwright_pooled + playwright_pooled_hybrid)
+# Firecrawl fetches from ITS infrastructure; the pooled backends fetch from
+# THIS machine's IP. Sagentia has had IPs blocked before, so politeness is
+# mandatory for the self-hosted path, not tunable-to-zero in production runs.
+# The hybrid's static httpx path goes through the same robots.txt check and
+# per-domain delay as the browser path.
 # ============================================================
 
 # Minimum seconds between requests to the same domain (all threads combined).

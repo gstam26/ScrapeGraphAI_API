@@ -42,7 +42,7 @@ class PageDoc(BaseModel):
 
 class Config(BaseModel):
     """Runtime configuration passed to each pipeline layer."""
-    acquire_tool: str = "local"  # "local" | "requests" | "sgai" | "firecrawl" | "playwright"
+    acquire_tool: str = "local"  # "local" | "requests" | "sgai" | "firecrawl" | "playwright" | "playwright_pooled" | "playwright_pooled_hybrid"
     extract_tool: str = "sgai"
     cache_dir: str = "cache"
     request_headers: dict = Field(

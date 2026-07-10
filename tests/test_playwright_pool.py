@@ -122,6 +122,106 @@ def test_pooled_backend_is_valid_and_selectable():
     print("OK test_pooled_backend_is_valid_and_selectable passed")
 
 
+# ── hybrid backend (static-first, escalate to pooled render) ─────────────────
+
+_GOOD_HTML = ("<html><body><main>" + "<p>real content here. </p>" * 40 +
+              '</main><a href="/about">About us</a></body></html>')
+_JUNK_HTML = '<html><body><a href="/x">nav</a></body></html>'
+
+
+def _hybrid_cfg():
+    return Config(acquire_tool="playwright_pooled_hybrid")
+
+
+class _FakeStaticResponse:
+    def __init__(self, text):
+        self.text = text
+
+    def raise_for_status(self):
+        pass
+
+
+def _quiet_politeness(monkeypatch):
+    """Politeness primitives pass through instantly; behaviour covered by their own tests."""
+    monkeypatch.setattr(pp, "robots_allows", lambda url: True)
+    monkeypatch.setattr(pp, "wait_for_domain_slot", lambda url, delay_s=None: 0.0)
+
+
+def test_hybrid_static_pass_never_launches_browser(monkeypatch):
+    _quiet_politeness(monkeypatch)
+    monkeypatch.setattr(f.httpx, "get", lambda url, **kw: _FakeStaticResponse(_GOOD_HTML))
+
+    def browser_must_not_launch(url, **kw):
+        raise AssertionError("static pass must not escalate to the browser")
+    monkeypatch.setattr(pp, "fetch_rendered_html", browser_must_not_launch)
+
+    text, html, prov = f.fetch_page_with_provenance("https://static-ok.com/x", _hybrid_cfg())
+    assert prov["backend"] == "pooled_hybrid_static" and prov["render_fallback"] is False
+    assert prov["gate_passed"] is True and prov["gate_reason"] == ""
+    assert "real content here" in text and "/about" in html
+    print("OK test_hybrid_static_pass_never_launches_browser passed")
+
+
+def test_hybrid_escalates_to_render_on_gate_fail(monkeypatch):
+    _quiet_politeness(monkeypatch)
+    monkeypatch.setattr(f.httpx, "get", lambda url, **kw: _FakeStaticResponse(_JUNK_HTML))
+    monkeypatch.setattr(pp, "fetch_rendered_html", lambda url, **kw: _GOOD_HTML)
+
+    text, html, prov = f.fetch_page_with_provenance("https://js-site.com/x", _hybrid_cfg())
+    assert prov["backend"] == "pooled_hybrid_render" and prov["render_fallback"] is True
+    assert prov["gate_passed"] is True
+    assert "real content here" in text, "content must come from the rendered DOM"
+    print("OK test_hybrid_escalates_to_render_on_gate_fail passed")
+
+
+def test_hybrid_escalates_to_render_on_static_error(monkeypatch):
+    _quiet_politeness(monkeypatch)
+
+    def static_blocked(url, **kw):
+        raise OSError("connection reset")
+    monkeypatch.setattr(f.httpx, "get", static_blocked)
+    monkeypatch.setattr(pp, "fetch_rendered_html", lambda url, **kw: _GOOD_HTML)
+
+    text, html, prov = f.fetch_page_with_provenance("https://httpx-blocked.com/x", _hybrid_cfg())
+    assert prov["backend"] == "pooled_hybrid_render" and prov["gate_passed"] is True
+    assert "real content here" in text
+    print("OK test_hybrid_escalates_to_render_on_static_error passed")
+
+
+def test_hybrid_robots_disallowed_makes_no_requests(monkeypatch):
+    monkeypatch.setattr(pp, "robots_allows", lambda url: False)
+
+    def no_request_allowed(*a, **kw):
+        raise AssertionError("robots-disallowed URL must not be requested at all")
+    monkeypatch.setattr(f.httpx, "get", no_request_allowed)
+    monkeypatch.setattr(pp, "fetch_rendered_html", no_request_allowed)
+
+    text, html, prov = f.fetch_page_with_provenance("https://blocked.com/x", _hybrid_cfg())
+    assert text == "" and prov["gate_passed"] is False
+    assert prov["gate_reason"] == "robots_disallowed"
+    print("OK test_hybrid_robots_disallowed_makes_no_requests passed")
+
+
+def test_hybrid_render_failure_keeps_static_content(monkeypatch):
+    _quiet_politeness(monkeypatch)
+    monkeypatch.setattr(f.httpx, "get", lambda url, **kw: _FakeStaticResponse(_JUNK_HTML))
+
+    def render_crashes(url, **kw):
+        raise RuntimeError("browser crashed")
+    monkeypatch.setattr(pp, "fetch_rendered_html", render_crashes)
+
+    text, html, prov = f.fetch_page_with_provenance("https://render-fails.com/x", _hybrid_cfg())
+    assert prov["backend"] == "pooled_hybrid_static" and prov["gate_passed"] is False
+    assert "render_error" in prov["gate_reason"], "render failure must stay recorded"
+    assert html == _JUNK_HTML, "gate-failed static content must be kept, not lost"
+    print("OK test_hybrid_render_failure_keeps_static_content passed")
+
+
+def test_hybrid_backend_is_valid_and_selectable():
+    assert "playwright_pooled_hybrid" in f._VALID_BACKENDS
+    print("OK test_hybrid_backend_is_valid_and_selectable passed")
+
+
 if __name__ == "__main__":
     import pytest, sys
     sys.exit(pytest.main([__file__, "-q"]))

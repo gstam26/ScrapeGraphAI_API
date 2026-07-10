@@ -222,6 +222,61 @@ def test_hybrid_backend_is_valid_and_selectable():
     print("OK test_hybrid_backend_is_valid_and_selectable passed")
 
 
+# ── consent-overlay strip (2026-07-10 bake-off finding) ──────────────────────
+
+_CONSENT_DIV = (
+    '<div id="onetrust-consent-sdk"><p>'
+    "When you visit any website, it may store or retrieve information on your "
+    "browser, mostly in the form of cookies. Because we respect your right to "
+    "privacy, you can choose not to allow some types of cookies. "
+    "These cookies allow us to count visits and traffic sources so we can "
+    "measure and improve the performance of our site. </p></div>"
+)
+_OVERLAY_PAGE = ("<html><body>" + _CONSENT_DIV + "<main>" +
+                 "<p>real product content here. </p>" * 40 + "</main></body></html>")
+
+
+def test_strip_consent_overlays_removes_cmp_container():
+    stripped = f._strip_consent_overlays(_OVERLAY_PAGE)
+    assert "onetrust-consent-sdk" not in stripped
+    assert "store or retrieve information" not in stripped
+    assert "real product content here" in stripped
+    print("OK test_strip_consent_overlays_removes_cmp_container passed")
+
+
+def test_strip_consent_overlays_noop_without_cmp():
+    page = "<html><body><p>plain page, no consent manager</p></body></html>"
+    assert f._strip_consent_overlays(page) is page, \
+        "pages without a CMP fingerprint must skip the parse entirely"
+    print("OK test_strip_consent_overlays_noop_without_cmp passed")
+
+
+def test_pooled_backend_extracts_content_not_consent_overlay(monkeypatch):
+    """The bake-off failure mode: the CMP dialog is the most paragraph-like
+    block, so extraction returns the cookie policy instead of page content."""
+    monkeypatch.setattr(pp, "fetch_rendered_html", lambda url, **kw: _OVERLAY_PAGE)
+
+    text, html, prov = f.fetch_page_with_provenance("https://cmp-site.com/x", _cfg())
+    assert "real product content here" in text
+    assert "store or retrieve information" not in text, \
+        "consent text must never reach extraction"
+    assert "onetrust-consent-sdk" not in (html or "")
+    print("OK test_pooled_backend_extracts_content_not_consent_overlay passed")
+
+
+def test_hybrid_static_path_strips_consent_overlay(monkeypatch):
+    _quiet_politeness(monkeypatch)
+    monkeypatch.setattr(f.httpx, "get", lambda url, **kw: _FakeStaticResponse(_OVERLAY_PAGE))
+    monkeypatch.setattr(pp, "fetch_rendered_html",
+                        lambda url, **kw: (_ for _ in ()).throw(AssertionError("no escalation expected")))
+
+    text, html, prov = f.fetch_page_with_provenance("https://cmp-static.com/x", _hybrid_cfg())
+    assert prov["backend"] == "pooled_hybrid_static" and prov["gate_passed"] is True
+    assert "real product content here" in text
+    assert "store or retrieve information" not in text
+    print("OK test_hybrid_static_path_strips_consent_overlay passed")
+
+
 if __name__ == "__main__":
     import pytest, sys
     sys.exit(pytest.main([__file__, "-q"]))

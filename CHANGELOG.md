@@ -4,6 +4,12 @@ Notable changes, newest first. Full rationale for each decision: `brain/decision
 
 ## 2026-07-10
 
+### Consent-overlay strip (bake-off finding: CMP dialogs extracted as page content)
+- Hybrid bake-off run #1 (89 pages, 8 entities) surfaced identical char counts across different URLs — 4 Bruker pages all exactly 2,539 chars (OneTrust modal), 5 Hologic pages 651 chars (TrustArc) that **passed the quality gate**, i.e. cookie-policy text flowing to extraction as content. Root cause: the CMP dialog is the most paragraph-like block in the DOM, so Trafilatura extracts it instead of the page. Verified live on Bruker/Hologic/Metrohm: stripping the CMP container recovers real content (Hologic /cytology: consent text → "ThinPrep Pap test…").
+- Fix: `_strip_consent_overlays()` removes known CMP vendor containers (OneTrust, Cookiebot, Usercentrics, Didomi, Quantcast, TrustArc, Osano, CookieYes, Complianz, Borlabs, iubenda — vendor container IDs only, no site-specific rules; substring fast-path skips the parse when no CMP present). Applied wherever HTML feeds extraction/gating: playwright_pooled, both hybrid paths, both local paths, the one-shot Playwright fallback. Firecrawl's markdown path deliberately untouched (locked plant-milk benchmark).
+- Consequence: remaining gate failures are now honest (nav-heavy pages fail for being nav pages — their links still feed discovery). Bake-off stage 1 should be re-run; the identical-char clusters should disappear and gate-passed pages should contain real content.
+- Suite: 174 offline tests green (4 new).
+
 ### Hybrid self-hosted fetch backend (`ACQUIRE_TOOL=playwright_pooled_hybrid`)
 - Static-first variant of `playwright_pooled`: httpx GET → Trafilatura → full quality gate; escalates to the pooled browser render only when the static attempt fails the gate or errors. Pages that don't need JavaScript skip the browser entirely (and its 2s settle wait).
 - Politeness identical to `playwright_pooled` by construction — the static path reuses the same `robots_allows` + `wait_for_domain_slot` primitives; the render escalation takes its own domain slot (correct: it's a second request). Closes the exact gap that ruled the old `local` backend out for external use.

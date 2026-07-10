@@ -23,6 +23,49 @@ class FetchProvenance(TypedDict):
     gate_reason: str       # empty when passed or not run; failure reason when gate_passed=False
 
 
+# Consent-manager (CMP) overlay containers stripped from fetched HTML before
+# text extraction and gating. Rendered DOMs — and some static pages — carry the
+# CMP dialog as the most paragraph-like text block, so Trafilatura extracts the
+# cookie policy INSTEAD of the page content. Quantified on the 2026-07-10
+# hybrid bake-off: 4 Bruker pages returned an identical 2,539-char OneTrust
+# modal; 5 Hologic pages PASSED the gate with 651 chars of TrustArc text
+# (silent junk reaching extraction). Vendor container IDs only — generic and
+# deterministic, no site-specific rules.
+_CONSENT_OVERLAY_SELECTORS = [
+    "#onetrust-consent-sdk", "#onetrust-banner-sdk", "#onetrust-pc-sdk",   # OneTrust
+    "#CybotCookiebotDialog",                                               # Cookiebot
+    "#usercentrics-root", "#usercentrics-cmp-ui",                          # Usercentrics
+    "#didomi-host", "#didomi-popup",                                       # Didomi
+    ".qc-cmp2-container",                                                  # Quantcast
+    "#truste-consent-track", ".truste_box_overlay",                        # TrustArc
+    ".osano-cm-window",                                                    # Osano
+    ".cky-consent-container",                                              # CookieYes
+    "#cmplz-cookiebanner-container",                                       # Complianz
+    "#BorlabsCookieBox",                                                   # Borlabs
+    "#iubenda-cs-banner",                                                  # iubenda
+]
+
+# Cheap substring pre-check so pages without any CMP skip the BS4 parse.
+_CONSENT_FINGERPRINTS = (
+    "onetrust", "cookiebot", "usercentrics", "didomi", "qc-cmp2",
+    "truste", "osano", "cky-consent", "cmplz", "borlabscookie", "iubenda",
+)
+
+
+def _strip_consent_overlays(html: str) -> str:
+    """Remove known consent-manager containers from html; unchanged when none found."""
+    low = html.lower()
+    if not any(fp in low for fp in _CONSENT_FINGERPRINTS):
+        return html
+    soup = BeautifulSoup(html, "html.parser")
+    found = False
+    for sel in _CONSENT_OVERLAY_SELECTORS:
+        for el in soup.select(sel):
+            el.decompose()
+            found = True
+    return str(soup) if found else html
+
+
 def _html_to_text(html: str) -> str:
     """BeautifulSoup plain-text extraction (script/style stripped)."""
     soup = BeautifulSoup(html, "html.parser")
@@ -202,6 +245,7 @@ def _fetch_playwright_pooled(url: str, cfg: Config) -> tuple[str, str, FetchProv
             gate_passed=False, gate_reason="robots_disallowed",
         )
 
+    html = _strip_consent_overlays(html)
     text = _extract_text_from_html(html)
     gate_passed, gate_reason = content_quality_gate(text, html)
     return text, html, FetchProvenance(
@@ -248,7 +292,7 @@ def _fetch_playwright_pooled_hybrid(url: str, cfg: Config) -> tuple[str, str, Fe
             follow_redirects=True,
         )
         r.raise_for_status()
-        static_html = r.text
+        static_html = _strip_consent_overlays(r.text)
         static_text = _extract_text_from_html(static_html)
         gate_passed, gate_reason = content_quality_gate(static_text, static_html)
         if gate_passed:
@@ -278,6 +322,7 @@ def _fetch_playwright_pooled_hybrid(url: str, cfg: Config) -> tuple[str, str, Fe
             )
         raise
 
+    html = _strip_consent_overlays(html)
     text = _extract_text_from_html(html)
     gate_passed, gate_reason = content_quality_gate(text, html)
     return text, html, FetchProvenance(
@@ -301,7 +346,7 @@ def _render_page_html(url: str, cfg: Config) -> str:
 
 
 def _fetch_playwright(url: str, cfg: Config) -> str:
-    return _html_to_text(_render_page_html(url, cfg))
+    return _html_to_text(_strip_consent_overlays(_render_page_html(url, cfg)))
 
 
 def _fetch_local(url: str, cfg: Config) -> tuple[str, str, FetchProvenance]:
@@ -320,7 +365,7 @@ def _fetch_local(url: str, cfg: Config) -> tuple[str, str, FetchProvenance]:
         follow_redirects=True,
     )
     r.raise_for_status()
-    static_html = r.text
+    static_html = _strip_consent_overlays(r.text)
 
     text = _extract_text_from_html(static_html)
     gate_passed, gate_reason = content_quality_gate(text, static_html)
@@ -334,7 +379,7 @@ def _fetch_local(url: str, cfg: Config) -> tuple[str, str, FetchProvenance]:
     # Gate failed on static fetch — attempt Playwright re-render
     print(f"    [quality-gate] FAIL ({gate_reason}) — re-rendering with Playwright")
     try:
-        render_html = _render_page_html(url, cfg)
+        render_html = _strip_consent_overlays(_render_page_html(url, cfg))
         render_text = _extract_text_from_html(render_html)
         render_passed, render_reason = content_quality_gate(render_text, render_html)
         return render_text, render_html, FetchProvenance(

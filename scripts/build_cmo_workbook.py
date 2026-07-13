@@ -88,6 +88,11 @@ def main() -> int:
     ap.add_argument("--start", type=int, default=1,
                     help="1-based first usable entity, inclusive (after cohort filter)")
     ap.add_argument("--end", type=int, default=None, help="1-based last usable entity, inclusive")
+    ap.add_argument("--entities", default=None,
+                    help="comma-separated exact entity names — for a fixed sample "
+                         "reused across depth-sweep runs (overrides --start/--end)")
+    ap.add_argument("--out-name", default=None,
+                    help="output filename override (default derived from the slice)")
     ap.add_argument("--out-dir", default=OUT_DIR)
     args = ap.parse_args()
 
@@ -155,16 +160,29 @@ def main() -> int:
         for u, c, f in zip(usable["url"], usable["cohort"], usable["final_url"])
     ]
 
-    total = len(usable)
-    end = args.end if args.end is not None else total
-    if not (1 <= args.start <= end <= total):
-        sys.exit(f"bad slice --start {args.start} --end {end} (have {total} usable)")
-    usable = usable.iloc[args.start - 1:end].reset_index(drop=True)
-
-    out_name = (
-        "cmo_input.xlsx" if (args.start, end) == (1, total)
-        else f"cmo_input_{args.start}-{end}.xlsx"
-    )
+    if args.entities:
+        wanted = [e.strip() for e in args.entities.split(",") if e.strip()]
+        usable_by_name = usable.set_index("entity")
+        missing = [e for e in wanted if e not in usable_by_name.index]
+        if missing:
+            sys.exit(
+                f"--entities not in the usable cohort (not ok/redirected, or misspelled): "
+                f"{missing}\nUsable: {sorted(usable['entity'])}"
+            )
+        # Preserve the order given, not file order — same list, same order,
+        # every depth-sweep run, so runs are directly comparable row-for-row.
+        usable = usable_by_name.loc[wanted].reset_index()
+        out_name = args.out_name or f"cmo_input_named_depth{args.depth}.xlsx"
+    else:
+        total = len(usable)
+        end = args.end if args.end is not None else total
+        if not (1 <= args.start <= end <= total):
+            sys.exit(f"bad slice --start {args.start} --end {end} (have {total} usable)")
+        usable = usable.iloc[args.start - 1:end].reset_index(drop=True)
+        out_name = args.out_name or (
+            "cmo_input.xlsx" if (args.start, end) == (1, total)
+            else f"cmo_input_{args.start}-{end}.xlsx"
+        )
     out_path = os.path.join(args.out_dir, out_name)
 
     entities_df = pd.DataFrame({"entity": usable["entity"]})
@@ -184,9 +202,12 @@ def main() -> int:
         questions_df.to_excel(w, sheet_name="questions", index=False)
         config_df.to_excel(w, sheet_name="config", index=False)
 
-    print(f"Workbook written: {out_path} — {len(usable)} entities "
-          f"(slice {args.start}-{end} of {total} usable), depth={args.depth}, "
-          f"{len(questions)} questions, extraction=azure")
+    slice_desc = (
+        f"named: {', '.join(usable['entity'])}" if args.entities
+        else f"slice {args.start}-{end} of {total} usable"
+    )
+    print(f"Workbook written: {out_path} — {len(usable)} entities ({slice_desc}), "
+          f"depth={args.depth}, {len(questions)} questions, extraction=azure")
     return 0
 
 

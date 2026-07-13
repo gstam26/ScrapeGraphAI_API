@@ -79,7 +79,11 @@ questions_df = pd.DataFrame({
     ],
 })
 
-config_df = pd.DataFrame({"setting": ["EXTRACT_TOOL"], "value": ["llmapi"]})
+# Azure-direct extraction (GPT-4.1-mini), George's decision 2026-07-13: the
+# Power Automate llmapi proxy now serves the same model, so the extra flow
+# dependency buys nothing. Explicit row (not just the config.py default) so
+# the client-facing workbook states its own extractor.
+config_df = pd.DataFrame({"setting": ["EXTRACT_TOOL"], "value": ["azure"]})
 
 with pd.ExcelWriter(OUT, engine="openpyxl") as w:
     entities_df.to_excel(w, sheet_name="entities", index=False)

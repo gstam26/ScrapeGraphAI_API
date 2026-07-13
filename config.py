@@ -20,8 +20,12 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 # TOOLS
 # ============================================================
 
-# Deployment default. Alternatives: "sgai" | "playwright" | "requests" | "local".
-FETCH_BACKEND = "firecrawl"
+# Deployment default (Nick sign-off 2026-07-13; Firecrawl credits cover only
+# ~74/178 ADLM companies). Static-first hybrid: httpx + Trafilatura, escalating
+# to the pooled browser only on quality-gate failure; politeness (robots.txt,
+# per-domain delay, honest UA) on both paths. Alternatives: "firecrawl" |
+# "playwright_pooled" | "sgai" | "playwright" | "requests" | "local".
+FETCH_BACKEND = "playwright_pooled_hybrid"
 
 ACQUIRE_TOOL = FETCH_BACKEND
 EXTRACT_TOOL = os.getenv("EXTRACT_TOOL", "azure")
@@ -58,6 +62,24 @@ CRAWL_POLITE_DELAY_S = 2.0
 
 # Respect robots.txt (disallowed pages are skipped with an explicit reason).
 CRAWL_RESPECT_ROBOTS = True
+
+# --- Headless-render wait budget (pooled render + hybrid render escalation) ---
+# Navigation stops at domcontentloaded, then a flat paint settle. A networkidle
+# wait was trialled 2026-07-13 to recover content on JS-heavy pages but was
+# DISCONFIRMED on Hologic: the gate-failing pages there are genuine link-grid
+# category pages (link_density 0.70+), not hydration-starved SPAs — rendering
+# longer recovered no prose and added ~5 s/page. Tunable here without a code
+# change; re-add a bounded networkidle wait only with evidence of a real
+# timing-bound site.
+RENDER_GOTO_TIMEOUT_MS = 15000   # navigation (page.goto) ceiling
+RENDER_SETTLE_MS = 2000          # paint settle after load
+
+# The hybrid's static httpx probe is only a fast-path check before escalating to
+# the browser, so it uses a shorter timeout than the full request_timeout: a
+# slow/hanging static response should escalate to render quickly, not burn the
+# full 30 s (observed 2026-07-13: a 52 s FUJIFILM fetch = 30 s dead static wait
+# + render; with a 12 s cap the same page succeeds on static in 7 s).
+HYBRID_STATIC_TIMEOUT_S = 12
 
 # ============================================================
 # LOCAL-FETCH QUALITY GATE

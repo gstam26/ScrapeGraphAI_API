@@ -28,6 +28,8 @@ from config import (
     CRAWL_POLITE_DELAY_S,
     CRAWL_RESPECT_ROBOTS,
     REQUEST_HEADERS,
+    RENDER_GOTO_TIMEOUT_MS,
+    RENDER_SETTLE_MS,
 )
 
 _USER_AGENT = REQUEST_HEADERS.get("User-Agent", "entity-extraction-pipeline")
@@ -172,8 +174,17 @@ class RobotsDisallowed(Exception):
     """Raised when robots.txt forbids fetching the URL."""
 
 
-def fetch_rendered_html(url: str, timeout_ms: int = 15000, settle_ms: int = 2000) -> str:
+def fetch_rendered_html(
+    url: str,
+    timeout_ms: int = RENDER_GOTO_TIMEOUT_MS,
+    settle_ms: int = RENDER_SETTLE_MS,
+) -> str:
     """Politely fetch url with the pooled headless browser; return rendered HTML.
+
+    Navigation stops at domcontentloaded, then a flat paint settle (see
+    config.RENDER_* for tuning). A networkidle wait was trialled and disconfirmed
+    (2026-07-13): the pages that gate-fail after render are link-grid category
+    pages, not hydration-starved SPAs, so waiting longer recovered no prose.
 
     Raises RobotsDisallowed if robots.txt forbids the URL. Other Playwright
     errors propagate after the thread's browser is reset (a crashed page would

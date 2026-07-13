@@ -11,6 +11,9 @@ from config import (
     QUALITY_MAX_LINK_DENSITY,
     QUALITY_MIN_CONTENT_RATIO,
     THIN_CONTENT_FALLBACK,
+    RENDER_GOTO_TIMEOUT_MS,
+    RENDER_SETTLE_MS,
+    HYBRID_STATIC_TIMEOUT_S,
 )
 from models import Config
 
@@ -288,7 +291,7 @@ def _fetch_playwright_pooled_hybrid(url: str, cfg: Config) -> tuple[str, str, Fe
         r = httpx.get(
             url,
             headers=cfg.request_headers,
-            timeout=cfg.request_timeout,
+            timeout=HYBRID_STATIC_TIMEOUT_S,
             follow_redirects=True,
         )
         r.raise_for_status()
@@ -332,14 +335,18 @@ def _fetch_playwright_pooled_hybrid(url: str, cfg: Config) -> tuple[str, str, Fe
 
 
 def _render_page_html(url: str, cfg: Config) -> str:
-    """Launch Playwright and return raw rendered HTML (no text extraction)."""
+    """Launch Playwright and return raw rendered HTML (no text extraction).
+
+    Same wait strategy as the pooled path: domcontentloaded + flat paint settle
+    (config.RENDER_*).
+    """
     from playwright.sync_api import sync_playwright  # type: ignore[import]
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        page.goto(url, wait_until="domcontentloaded", timeout=15000)
-        page.wait_for_timeout(2000)
+        page.goto(url, wait_until="domcontentloaded", timeout=RENDER_GOTO_TIMEOUT_MS)
+        page.wait_for_timeout(RENDER_SETTLE_MS)
         html = page.content()
         browser.close()
     return html

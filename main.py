@@ -28,7 +28,7 @@ def format_elapsed(seconds: int) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Entity extraction pipeline")
-    parser.add_argument("--backend", default="", help="Override ACQUIRE_TOOL (local/firecrawl/playwright/requests)")
+    parser.add_argument("--backend", default="", help="Override ACQUIRE_TOOL (playwright_pooled_hybrid/playwright_pooled/firecrawl/local/playwright/requests)")
     args = parser.parse_args()
 
     print("=== Entity Extraction Pipeline ===\n")

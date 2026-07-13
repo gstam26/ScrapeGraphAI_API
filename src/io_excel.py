@@ -858,11 +858,17 @@ def write_output_excel(
         "entities", "seed_url", "page_url", "parent_url", "depth", "crawl_score",
         "above_threshold", "fetch_tool", "crawl_scorer", "page_length", "fetch_time_ms",
         "from_cache", "status", "skip_reason",
+        # Fetch provenance (recorded by the crawler since the pooled backends
+        # landed but previously dropped by this column list): which backend/path
+        # served the page and the quality-gate outcome — the columns per-site
+        # fetch diagnosis needs (e.g. WAF block vs gate fail vs thin static).
+        "backend", "render_fallback", "gate_passed", "gate_reason",
     ]
     acq_col_names = [
         "Entities", "Seed URL", "Page URL", "Parent URL", "Depth", "Crawl Score",
         "Above Threshold", "Fetch Tool", "Crawl Scorer", "Page Length (chars)", "Fetch Time (ms)",
         "From Cache", "Status", "Skip Reason",
+        "Backend", "Render Fallback", "Gate Passed", "Gate Reason",
     ]
 
     cand_col_keys = [

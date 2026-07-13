@@ -13,10 +13,19 @@ build/
 
 # Data files
 cache/
+# Timestamped/backend-variant cache copies made during bake-off and parity
+# runs (e.g. `Rename-Item cache cache_hybrid_2026-07-13`) don't match the
+# bare "cache/" pattern above — each is a directory of per-page hash-named
+# files, hundreds of blobs that must never be committed.
+cache_*/
 outputs/
 diagnostics/fetch_eval/
 *.xlsx
 *.csv
+
+# Case-study client data (not ADLM) — untracked by default; xlsx/csv already
+# covered by the blanket rules above, this documents the directory intent.
+cmo-inputs/
 
 # Eval fixtures — committed real data for reproducible scoring
 !diagnostics/eval_lib/fixtures/*.xlsx

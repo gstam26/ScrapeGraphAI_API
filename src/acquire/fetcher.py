@@ -285,7 +285,7 @@ def _fetch_playwright_pooled_hybrid(url: str, cfg: Config) -> tuple[str, str, Fe
             gate_passed=False, gate_reason="robots_disallowed",
         )
 
-    static_text, static_html = "", ""
+    static_text, static_html, static_reason, static_passed = "", "", "", False
     try:
         wait_for_domain_slot(url)
         r = httpx.get(
@@ -297,16 +297,16 @@ def _fetch_playwright_pooled_hybrid(url: str, cfg: Config) -> tuple[str, str, Fe
         r.raise_for_status()
         static_html = _strip_consent_overlays(r.text)
         static_text = _extract_text_from_html(static_html)
-        gate_passed, gate_reason = content_quality_gate(static_text, static_html)
-        if gate_passed:
+        static_passed, static_reason = content_quality_gate(static_text, static_html)
+        if static_passed:
             return static_text, static_html, FetchProvenance(
                 backend="pooled_hybrid_static", render_fallback=False,
                 gate_passed=True, gate_reason="",
             )
     except Exception as e:
-        gate_reason = f"static_error={e}"
+        static_reason = f"static_error={e}"
 
-    print(f"    [hybrid-gate] {gate_reason} — escalating to pooled render")
+    print(f"    [hybrid-gate] {static_reason} — escalating to pooled render")
     try:
         html = fetch_rendered_html(url)
     except RobotsDisallowed:
@@ -321,16 +321,30 @@ def _fetch_playwright_pooled_hybrid(url: str, cfg: Config) -> tuple[str, str, Fe
             # failure stays recorded — same contract as the local backend.
             return static_text, static_html, FetchProvenance(
                 backend="pooled_hybrid_static", render_fallback=False,
-                gate_passed=False, gate_reason=f"{gate_reason}; render_error={e}",
+                gate_passed=False, gate_reason=f"{static_reason}; render_error={e}",
             )
         raise
 
     html = _strip_consent_overlays(html)
     text = _extract_text_from_html(html)
-    gate_passed, gate_reason = content_quality_gate(text, html)
-    return text, html, FetchProvenance(
-        backend="pooled_hybrid_render", render_fallback=True,
-        gate_passed=gate_passed, gate_reason=gate_reason,
+    render_passed, render_reason = content_quality_gate(text, html)
+
+    # Escalation must not LOSE good static content. Some SPA pages wipe the
+    # server-rendered HTML on hydration, so the render can be far thinner than
+    # the static extraction (observed 2026-07-13: Neogen /categories static
+    # 20,346 chars -> render 1,560 -> the escalation used to ship the 1,560).
+    # Keep the render only when it passes the gate or is at least as rich as the
+    # static text; otherwise fall back to the richer static extraction. Mirrors
+    # the Firecrawl path's len() guard (_fetch_firecrawl_with_fallback).
+    if render_passed or not static_html or len(text.strip()) >= len(static_text.strip()):
+        return text, html, FetchProvenance(
+            backend="pooled_hybrid_render", render_fallback=True,
+            gate_passed=render_passed, gate_reason=render_reason,
+        )
+    return static_text, static_html, FetchProvenance(
+        backend="pooled_hybrid_static", render_fallback=False,
+        gate_passed=static_passed,
+        gate_reason=f"{static_reason}; render_thinner_{len(text.strip())}<{len(static_text.strip())}",
     )
 
 

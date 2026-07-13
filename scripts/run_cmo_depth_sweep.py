@@ -49,6 +49,18 @@ def run_one(depth: int) -> dict:
 
     print(f"\n{'=' * 60}\ndepth {depth}: {in_path}\n{'=' * 60}")
     pipeline_input = read_input(in_path)
+    # Isolate each depth's page cache. All three depths share the same seed
+    # URLs, so without this a later run's crawl hits cache for pages an
+    # earlier run already fetched — the deeper crawl reads a stale page set
+    # instead of running its own live crawl, and the depths stop being
+    # comparable (observed 2026-07-13: depth 1 and depth 2 produced
+    # byte-identical page/cell counts because depth 2 inherited depth 1's
+    # cache within the same process). A fresh dir per depth costs one extra
+    # live fetch of the shared seeds each run; correctness over speed here.
+    pipeline_input.config_overrides = {
+        **pipeline_input.config_overrides,
+        "CACHE_DIR": f"cache_cmo_depth{depth}",
+    }
 
     t0 = time.time()
     try:

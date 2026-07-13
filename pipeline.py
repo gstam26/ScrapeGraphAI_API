@@ -52,6 +52,10 @@ def _build_config(overrides: dict[str, Any] | None = None) -> Config:
         "CRAWL_MAX_PAGES": "crawl_max_pages",
         "CRAWL_SCORER": "crawl_scorer",
         "DEFAULT_DEPTH": "default_depth",
+        # Lets a caller isolate the on-disk page cache per run (e.g. a
+        # depth-sweep script comparing the same seeds at different max_depth
+        # in one process) without touching the production cache/ directory.
+        "CACHE_DIR": "cache_dir",
     }
     for key, value in (overrides or {}).items():
         attr = override_map.get(key.upper())

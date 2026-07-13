@@ -72,7 +72,16 @@ def run_one(depth: int) -> dict:
     elapsed = time.time() - t0
 
     os.makedirs(OUT_DIR, exist_ok=True)
-    write_output_excel(result, pipeline_input.columns, out_path, diag=diag)
+    try:
+        write_output_excel(result, pipeline_input.columns, out_path, diag=diag)
+    except PermissionError:
+        # Windows: the previous run's workbook is open in Excel, which locks
+        # the path. The pipeline work is already done — don't throw it away;
+        # write to a timestamped name instead and say so.
+        alt = out_path.replace(".xlsx", f"_{time.strftime('%H%M%S')}.xlsx")
+        print(f"!! {out_path} is locked (open in Excel?) — writing {alt} instead")
+        write_output_excel(result, pipeline_input.columns, alt, diag=diag)
+        out_path = alt
 
     matrix = pd.read_excel(out_path, sheet_name="Matrix").set_index("Entity")
     questions = list(matrix.columns)
@@ -105,7 +114,12 @@ def main() -> int:
 
     os.makedirs(OUT_DIR, exist_ok=True)
     csv_path = os.path.join(OUT_DIR, "depth_sweep_summary.csv")
-    summary.to_csv(csv_path, index=False)
+    try:
+        summary.to_csv(csv_path, index=False)
+    except PermissionError:
+        csv_path = csv_path.replace(".csv", f"_{time.strftime('%H%M%S')}.csv")
+        print(f"!! summary CSV locked (open in Excel?) — writing {csv_path} instead")
+        summary.to_csv(csv_path, index=False)
     print(f"\nFull per-question breakdown written: {csv_path}")
     print("Per-depth workbooks: cmo-outputs/cmo_output_depth{0,1,2}.xlsx")
     return 0 if (summary["status"] == "ok").all() else 1

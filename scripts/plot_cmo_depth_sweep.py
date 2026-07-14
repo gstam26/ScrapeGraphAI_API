@@ -38,9 +38,62 @@ def _populated(value) -> bool:
     return str(value).strip().lower() not in _EMPTY_MARKERS
 
 
+def _budget_pinned_note(depths: list[int], out_dir: str) -> str | None:
+    """Best-effort honesty check (George, 2026-07-14): at the deepest depth,
+    how many entities sit at exactly the page budget? BFS spends a binding
+    budget on shallow breadth, so depths beyond a pinned entity's cap are
+    NOT a fresh measurement for it — flat cells past that point can be a
+    budget artefact, not saturation. Returns a caption fragment, or None if
+    it can't be determined (missing config/log) rather than guessing.
+    """
+    deepest = max(depths)
+    cfg_path = os.path.join("cmo-inputs", f"cmo_input_named_depth{deepest}.xlsx")
+    wb_path = os.path.join(out_dir, f"cmo_output_depth{deepest}.xlsx")
+    if not (os.path.exists(cfg_path) and os.path.exists(wb_path)):
+        return None
+    try:
+        cfg = pd.read_excel(cfg_path, sheet_name="config")
+        row = cfg[cfg["setting"].astype(str).str.upper() == "CRAWL_MAX_PAGES"]
+        if row.empty:
+            return None
+        budget = int(row.iloc[0]["value"])
+        aq = pd.read_excel(wb_path, sheet_name="Acquire Log")
+        per_entity = aq.groupby("Entities")["Page URL"].count()
+        pinned = int((per_entity >= budget).sum())
+        total = len(per_entity)
+        if pinned == 0:
+            return f"all {total} entities exhausted their link frontier below the page budget ({budget}/entity) — flat cells past this depth reflect genuine saturation, not the budget."
+        return (f"{pinned}/{total} entities hit the page budget ({budget}/entity) by depth {deepest} — "
+                f"for them, no gain past the depth where they were first capped is expected by "
+                f"construction (BFS spends a binding budget on shallow breadth), not evidence "
+                f"of saturation.")
+    except Exception:
+        return None
+
+
+def _claims_per_depth(depths: list[int], out_dir: str) -> dict[int, int]:
+    """Provenance row count per depth — the enrichment signal populated-cell
+    counts miss entirely (George, 2026-07-14: depth1 533 -> depth2 1,290
+    claims while populated cells barely moved). Best-effort per depth."""
+    out: dict[int, int] = {}
+    for d in depths:
+        wb = os.path.join(out_dir, f"cmo_output_depth{d}.xlsx")
+        if not os.path.exists(wb):
+            continue
+        try:
+            out[d] = len(pd.read_excel(wb, sheet_name="Provenance"))
+        except Exception:
+            pass
+    return out
+
+
 def plot_depth_curve(df: pd.DataFrame, out_dir: str) -> str:
     ok = df[df["status"] == "ok"].sort_values("depth")
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.2))
+    depths = ok["depth"].astype(int).tolist()
+    claims = _claims_per_depth(depths, out_dir)
+
+    n_panels = 4 if claims else 3
+    fig, axes = plt.subplots(1, n_panels, figsize=(3.5 * n_panels + 1, 4.2))
 
     pct = ok["total_populated"] / ok["total_cells"] * 100
     axes[0].plot(ok["depth"], pct, "o-", color="#2E7D32", linewidth=2)
@@ -68,11 +121,31 @@ def plot_depth_curve(df: pd.DataFrame, out_dir: str) -> str:
     axes[2].set_xlabel("max crawl depth")
     axes[2].set_ylabel("minutes")
 
+    if claims:
+        # The enrichment signal populated-cell counts miss entirely: cells
+        # can be "done" at depth 1 yet carry far less evidence than the
+        # same cells at depth 2 (2026-07-14 finding).
+        cd = sorted(claims)
+        cv = [claims[d] for d in cd]
+        axes[3].plot(cd, cv, "D-", color="#6A1B9A", linewidth=2)
+        for d, v in zip(cd, cv):
+            axes[3].annotate(f"{v:,}", (d, v), textcoords="offset points",
+                             xytext=(0, 9), ha="center", fontsize=9)
+        axes[3].set_title("Extracted claims vs crawl depth\n(evidence volume, not just cell coverage)")
+        axes[3].set_xlabel("max crawl depth")
+        axes[3].set_ylabel("Provenance rows (claims)")
+        axes[3].set_xticks(cd)
+
     for ax in axes:
         ax.set_xticks(ok["depth"].tolist())
         ax.grid(alpha=0.3)
-    fig.suptitle("CMO case study — depth sweep (5-entity fixed sample, 15 questions)",
-                 fontsize=12, y=1.02)
+
+    title = "CMO case study — depth sweep (5-entity fixed sample, 15 questions)"
+    note = _budget_pinned_note(depths, out_dir)
+    fig.suptitle(title, fontsize=12, y=1.06)
+    if note:
+        fig.text(0.5, 0.99, note, ha="center", va="top", fontsize=8.5,
+                 wrap=True, color="#555555")
     fig.tight_layout()
     path = os.path.join(out_dir, "plot_depth_curve.png")
     fig.savefig(path, dpi=150, bbox_inches="tight")

@@ -62,11 +62,10 @@ def _budget_pinned_note(depths: list[int], out_dir: str) -> str | None:
         pinned = int((per_entity >= budget).sum())
         total = len(per_entity)
         if pinned == 0:
-            return f"all {total} entities exhausted their link frontier below the page budget ({budget}/entity) — flat cells past this depth reflect genuine saturation, not the budget."
-        return (f"{pinned}/{total} entities hit the page budget ({budget}/entity) by depth {deepest} — "
-                f"for them, no gain past the depth where they were first capped is expected by "
-                f"construction (BFS spends a binding budget on shallow breadth), not evidence "
-                f"of saturation.")
+            return (f"Note: no entity reached the {budget}-page budget — "
+                    f"flat segments are genuine saturation.")
+        return (f"Note: {pinned}/{total} entities were capped at the {budget}-page "
+                f"budget, so flat segments partly reflect the cap, not saturation.")
     except Exception:
         return None
 
@@ -87,6 +86,18 @@ def _claims_per_depth(depths: list[int], out_dir: str) -> dict[int, int]:
     return out
 
 
+def _annotate(ax, xs, ys, labels) -> None:
+    """Label points without collisions: on a flat run (repeated values) only
+    the FIRST point of the run is labelled — four identical '69 (92%)' labels
+    smashing into each other was the failure mode this replaces."""
+    prev = object()
+    for x, y, lab in zip(xs, ys, labels):
+        if lab != prev:
+            ax.annotate(lab, (x, y), textcoords="offset points",
+                        xytext=(0, 9), ha="center", fontsize=9)
+        prev = lab
+
+
 def plot_depth_curve(df: pd.DataFrame, out_dir: str) -> str:
     ok = df[df["status"] == "ok"].sort_values("depth")
     depths = ok["depth"].astype(int).tolist()
@@ -97,28 +108,22 @@ def plot_depth_curve(df: pd.DataFrame, out_dir: str) -> str:
 
     pct = ok["total_populated"] / ok["total_cells"] * 100
     axes[0].plot(ok["depth"], pct, "o-", color="#2E7D32", linewidth=2)
-    for d, p, n in zip(ok["depth"], pct, ok["total_populated"]):
-        axes[0].annotate(f"{n:.0f} ({p:.0f}%)", (d, p), textcoords="offset points",
-                         xytext=(0, 9), ha="center", fontsize=9)
-    axes[0].set_title("Answer coverage vs crawl depth")
-    axes[0].set_xlabel("max crawl depth")
+    _annotate(axes[0], ok["depth"], pct,
+              [f"{n:.0f} ({p:.0f}%)" for n, p in zip(ok["total_populated"], pct)])
+    axes[0].set_title("Answer coverage", pad=12)
     axes[0].set_ylabel(f"populated cells (% of {int(ok['total_cells'].iloc[0])})")
-    axes[0].set_ylim(0, 100)
+    axes[0].set_ylim(0, 108)
 
     axes[1].plot(ok["depth"], ok["pages_fetched"], "s-", color="#1565C0", linewidth=2)
-    for d, n in zip(ok["depth"], ok["pages_fetched"]):
-        axes[1].annotate(f"{n:.0f}", (d, n), textcoords="offset points",
-                         xytext=(0, 9), ha="center", fontsize=9)
-    axes[1].set_title("Pages fetched vs crawl depth")
-    axes[1].set_xlabel("max crawl depth")
+    _annotate(axes[1], ok["depth"], ok["pages_fetched"],
+              [f"{n:.0f}" for n in ok["pages_fetched"]])
+    axes[1].set_title("Pages fetched", pad=12)
     axes[1].set_ylabel("pages fetched")
 
     axes[2].plot(ok["depth"], ok["seconds"] / 60, "^-", color="#C62828", linewidth=2)
-    for d, s in zip(ok["depth"], ok["seconds"]):
-        axes[2].annotate(f"{s / 60:.1f}m", (d, s / 60), textcoords="offset points",
-                         xytext=(0, 9), ha="center", fontsize=9)
-    axes[2].set_title("Runtime vs crawl depth")
-    axes[2].set_xlabel("max crawl depth")
+    _annotate(axes[2], ok["depth"], ok["seconds"] / 60,
+              [f"{s / 60:.1f}m" for s in ok["seconds"]])
+    axes[2].set_title("Runtime", pad=12)
     axes[2].set_ylabel("minutes")
 
     if claims:
@@ -128,24 +133,26 @@ def plot_depth_curve(df: pd.DataFrame, out_dir: str) -> str:
         cd = sorted(claims)
         cv = [claims[d] for d in cd]
         axes[3].plot(cd, cv, "D-", color="#6A1B9A", linewidth=2)
-        for d, v in zip(cd, cv):
-            axes[3].annotate(f"{v:,}", (d, v), textcoords="offset points",
-                             xytext=(0, 9), ha="center", fontsize=9)
-        axes[3].set_title("Extracted claims vs crawl depth\n(evidence volume, not just cell coverage)")
-        axes[3].set_xlabel("max crawl depth")
+        _annotate(axes[3], cd, cv, [f"{v:,}" for v in cv])
+        axes[3].set_title("Extracted claims (evidence volume)", pad=12)
         axes[3].set_ylabel("Provenance rows (claims)")
-        axes[3].set_xticks(cd)
 
     for ax in axes:
         ax.set_xticks(ok["depth"].tolist())
+        ax.set_xlabel("max crawl depth")
         ax.grid(alpha=0.3)
+        # Headroom so point labels never collide with the panel title.
+        if ax is not axes[0]:
+            lo, hi = ax.get_ylim()
+            ax.set_ylim(lo, hi * 1.15)
 
-    title = "CMO case study — depth sweep (5-entity fixed sample, 15 questions)"
     note = _budget_pinned_note(depths, out_dir)
-    fig.suptitle(title, fontsize=12, y=1.06)
+    fig.suptitle("CMO case study — depth sweep (5-entity fixed sample, 15 questions)",
+                 fontsize=12)
     if note:
-        fig.text(0.5, 0.99, note, ha="center", va="top", fontsize=8.5,
-                 wrap=True, color="#555555")
+        # Short footnote at the bottom, out of the panels' way.
+        fig.text(0.5, -0.02, note, ha="center", va="top",
+                 fontsize=9, style="italic", color="#555555")
     fig.tight_layout()
     path = os.path.join(out_dir, "plot_depth_curve.png")
     fig.savefig(path, dpi=150, bbox_inches="tight")

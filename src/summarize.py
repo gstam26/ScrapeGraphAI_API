@@ -38,6 +38,7 @@ from config import (
     SUMMARY_MAX_CLAIMS_PER_THEME,
     SUMMARY_MAX_CONCURRENT_CALLS,
     SUMMARY_MAX_ITEMS_PER_LINE,
+    SUMMARY_MAX_LINES_PER_CELL,
     SUMMARY_SEED,
     SUMMARY_TAG_MAX_CHARS,
     SUMMARY_TIMEOUT,
@@ -58,7 +59,15 @@ from src.io_excel import _norm_claim, build_claim_index
 # gate/judge unit becomes the line for multi-line output. The s3 ship bars
 # do NOT transfer: automated eval legs must re-run on s4 output before any
 # faithfulness claim.
-PROMPT_VERSION = "s4"
+# s5 (2026-07-14, same day — George's eyeball test on real CMO output
+# failed s4 two ways): (a) "one line per theme" had no cell-level cap, so
+# an 11-theme Description cell rendered as an 11-line wall; s5 caps at
+# SUMMARY_MAX_LINES_PER_CELL covering the largest themes. (b) CMO theme
+# labels are whole verbatim claim sentences (not ADLM-style short tags),
+# and s4's "label: items" made the model ECHO the label then restate it as
+# the content; s5 has the model write a 2-5 word topic itself and
+# synthesize members instead of enumerating them.
+PROMPT_VERSION = "s5"
 
 # Citation parsing. The model batches IDs inside one bracket —
 # "[C0183, C0184, C0185]" — and sometimes chains brackets "[C0183][C0184]".
@@ -220,23 +229,28 @@ def _cell_prompt(
 
     instructions = (
         f"You are compiling verified extracted claims about {entity} "
-        f'for the question "{question}" into a compact, scannable summary '
-        "for an analyst.\n"
-        "Claims are grouped into themes. Output format (all rules mandatory):\n"
-        "1. Output exactly ONE line per theme, in the form:\n"
-        "   <theme label>: <the claims' content, compact> [claim IDs]\n"
-        "   If the claims are not grouped into themes, output one or more "
-        "compact lines in the same form, grouping related claims per line.\n"
-        "2. EVERY line must end with the claim ID(s) it draws from in square "
+        f'for the question "{question}" into a summary an analyst can scan '
+        "in five seconds.\n"
+        "Claims are grouped into themes, LARGEST FIRST. Rules (all mandatory):\n"
+        f"1. Output AT MOST {SUMMARY_MAX_LINES_PER_CELL} lines in total, "
+        "covering the largest themes (the first listed). If any theme is "
+        "left out, end the final line with '(more in Provenance)' before "
+        "its citations.\n"
+        "2. Each line has the form: <topic, 2-5 words>: <one compact "
+        "statement of what the theme's claims say> [claim IDs]. Write the "
+        "topic yourself — NEVER copy a whole claim as the topic, and NEVER "
+        "repeat the theme's header text as the content.\n"
+        "3. Synthesize, don't enumerate: merge near-duplicate claims into "
+        "one statement instead of listing each variant. Only genuinely "
+        "list-like answers (e.g. locations, certifications) are listed, at "
+        f"most {SUMMARY_MAX_ITEMS_PER_LINE} distinct items.\n"
+        "4. EVERY line must end with the claim ID(s) it draws from in square "
         "brackets, e.g. [C0042] or [C0042, C0043].\n"
-        "3. State only what the cited claims say. No interpretation, no "
+        "5. State only what the cited claims say. No interpretation, no "
         "inference, no concluding line, no filler. A short label or category "
         "claim (e.g. 'own-product') is reported verbatim — never explain "
         "what it means.\n"
-        f"4. List at most {SUMMARY_MAX_ITEMS_PER_LINE} items on a line; when "
-        "a theme has more, end the item list with '(more in Provenance)' "
-        "before the citations.\n"
-        "5. Plain lines only: no headings, no bullet markers, no blank "
+        "6. Plain lines only: no headings, no bullet markers, no blank "
         "lines, no prose paragraphs."
     )
     prompt = instructions + "\n\n" + "\n\n".join(blocks)

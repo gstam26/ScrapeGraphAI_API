@@ -340,11 +340,18 @@ SUMMARY_SEED = 42
 # drop members WITHIN a theme (marked "+N more"), never whole themes.
 SUMMARY_MAX_CLAIMS_PER_THEME = 15
 
-# s4 compact format (brain/proposals/summary-compact-format.md, George
-# 2026-07-14): one line per theme, "label: items [cites]". Cap on items
+# s4/s5 compact format (brain/proposals/summary-compact-format.md, George
+# 2026-07-14): compact cited lines, "topic: synthesis [cites]". Cap on items
 # listed per line — themes with more end the list with a visible
 # "(more in Provenance)" marker, nothing dropped silently.
 SUMMARY_MAX_ITEMS_PER_LINE = 8
+
+# Hard ceiling on lines per cell (s5). s4 said "one line per theme" with no
+# cell-level cap — CMO Description cells have 11 themes, so the "compact"
+# summary was an 11-line wall (George, 2026-07-14). Three lines covers the
+# top-3 themes the Tier-1 coverage gate checks; omitted themes are marked
+# "(more in Provenance)".
+SUMMARY_MAX_LINES_PER_CELL = 3
 
 # Cells whose citable input is a single claim no longer than this render
 # deterministically ("own-product [C0201]") with no LLM call — compact by

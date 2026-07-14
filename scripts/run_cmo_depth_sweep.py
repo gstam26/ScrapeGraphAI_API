@@ -31,7 +31,7 @@ from pipeline import run_pipeline
 
 IN_DIR = "cmo-inputs"
 OUT_DIR = "cmo-outputs"
-DEPTHS = [0, 1, 2]
+DEFAULT_DEPTHS = "0,1,2"
 _EMPTY_MARKERS = {"", "no data found"}
 
 
@@ -104,7 +104,19 @@ def run_one(depth: int) -> dict:
 
 
 def main() -> int:
-    rows = [run_one(d) for d in DEPTHS]
+    import argparse
+    ap = argparse.ArgumentParser(description="run the CMO depth-sweep workbooks and compare")
+    ap.add_argument("--depths", default=DEFAULT_DEPTHS,
+                    help=f"comma-separated depths to run, each needing its "
+                         f"cmo_input_named_depth<N>.xlsx (default {DEFAULT_DEPTHS}). "
+                         f"NOTE for depths >= 2: build ALL compared workbooks with the "
+                         f"same raised --max-pages — at the default budget, BFS fills "
+                         f"the page cap with shallow links and deeper levels never run "
+                         f"(measured 2026-07-13: zero depth-2 pages at budget 15).")
+    args = ap.parse_args()
+    depths = [int(d) for d in args.depths.split(",") if d.strip() != ""]
+
+    rows = [run_one(d) for d in depths]
     summary = pd.DataFrame(rows)
 
     print(f"\n{'=' * 60}\nSUMMARY\n{'=' * 60}")
@@ -121,7 +133,7 @@ def main() -> int:
         print(f"!! summary CSV locked (open in Excel?) — writing {csv_path} instead")
         summary.to_csv(csv_path, index=False)
     print(f"\nFull per-question breakdown written: {csv_path}")
-    print("Per-depth workbooks: cmo-outputs/cmo_output_depth{0,1,2}.xlsx")
+    print(f"Per-depth workbooks: cmo-outputs/cmo_output_depth{{{args.depths}}}.xlsx")
     return 0 if (summary["status"] == "ok").all() else 1
 
 

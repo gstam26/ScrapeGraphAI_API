@@ -165,6 +165,58 @@ def test_sentence_split_merges_abbreviation_fragments():
     print("OK test_sentence_split_merges_abbreviation_fragments passed")
 
 
+def test_split_multiline_s4_output_by_line():
+    # s4 compact format: one line per theme. Multi-line text splits on
+    # newlines (bullet markers stripped defensively — the prompt forbids
+    # them); items separated by commas/periods within a line must NOT be
+    # sub-split.
+    from src.summarize import _join_units, _split_sentences
+
+    text = ("R&D sites: U.S., Germany, France (more in Provenance) [C0001, C0002]\n"
+            "• Focus areas: cytology, molecular diagnostics [C0004]")
+    units = _split_sentences(text)
+    assert units == [
+        "R&D sites: U.S., Germany, France (more in Provenance) [C0001, C0002]",
+        "Focus areas: cytology, molecular diagnostics [C0004]",
+    ]
+    # Gate operates per line: both cited, top themes covered.
+    reasons, cited, uncited = mechanical_gate(text, _INPUT_IDS, _TOP_SETS)
+    assert reasons == [] and uncited == []
+    assert cited == {"C0001", "C0002", "C0004"}
+    # Round-trip preserves shape for the corruption legs.
+    assert _join_units(units, text) == "\n".join(units)
+    assert _join_units(["a [C1].", "b [C2]."], "a [C1]. b [C2].") == "a [C1]. b [C2]."
+    print("OK test_split_multiline_s4_output_by_line passed")
+
+
+def test_tag_only_cell_routed_deterministically(monkeypatch):
+    # A cell whose citable input is a single short claim renders without any
+    # LLM call — make_client must not even be constructed (it would raise
+    # here: no key in the test env, and _patch_azure is deliberately absent).
+    tag_cell = ExtractedCell(
+        entity="Acme", source_url="https://a.example.com", column="Company type",
+        value=["own-product"],
+        evidence=[SourceQuote(value="own-product", quote="own-product",
+                              source_url="https://a.example.com", verified=True)],
+    )
+    rows = [ExtractedRow(entity="Acme", cells=[tag_cell], all_cells=[tag_cell])]
+    groups = [{"entity": "Acme", "question": "Company type", "theme": ALL_ITEMS_THEME,
+               "n_items": 1, "values": ["own-product"], "sources": 1}]
+
+    monkeypatch.setattr(summarize_mod, "make_client",
+                        lambda: (_ for _ in ()).throw(AssertionError("LLM client built for tag-only cell")))
+    out = summarize_groups(groups, rows)
+
+    assert len(out) == 1
+    s = out[0]
+    assert s["summary"] == "own-product [C0001]"
+    assert s["gate"] == "pass"
+    assert s["model"] == "deterministic-tag"
+    assert s["cited_ids"] == ["C0001"] and s["input_claim_ids"] == ["C0001"]
+    assert s["prompt_version"] == summarize_mod.PROMPT_VERSION
+    print("OK test_tag_only_cell_routed_deterministically passed")
+
+
 # ── summarize_groups end-to-end (mocked Azure) ────────────────────────────────
 
 # Cites >=1 member of each of the 3 themes; every sentence cited.

@@ -324,6 +324,18 @@ SUMMARY_SEED = 42
 # drop members WITHIN a theme (marked "+N more"), never whole themes.
 SUMMARY_MAX_CLAIMS_PER_THEME = 15
 
+# s4 compact format (brain/proposals/summary-compact-format.md, George
+# 2026-07-14): one line per theme, "label: items [cites]". Cap on items
+# listed per line — themes with more end the list with a visible
+# "(more in Provenance)" marker, nothing dropped silently.
+SUMMARY_MAX_ITEMS_PER_LINE = 8
+
+# Cells whose citable input is a single claim no longer than this render
+# deterministically ("own-product [C0201]") with no LLM call — compact by
+# construction, zero faithfulness risk, and removes the s3-era gloss/filler
+# failure mode on tag cells instead of prompting around it.
+SUMMARY_TAG_MAX_CHARS = 80
+
 # Per-call timeout (seconds). The OpenAI SDK adds its own retries on
 # connection errors / 408 / 429 / 5xx (default max_retries=2), so no
 # hand-rolled retry here.

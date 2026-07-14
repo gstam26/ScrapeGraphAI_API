@@ -37,19 +37,28 @@ from config import (
     AZURE_ENDPOINT,
     SUMMARY_MAX_CLAIMS_PER_THEME,
     SUMMARY_MAX_CONCURRENT_CALLS,
+    SUMMARY_MAX_ITEMS_PER_LINE,
     SUMMARY_SEED,
+    SUMMARY_TAG_MAX_CHARS,
     SUMMARY_TIMEOUT,
 )
 from src.group import ALL_ITEMS_THEME
 from src.io_excel import _norm_claim, build_claim_index
 
-# Bumped whenever the prompt template changes — prose is never compared
+# Bumped whenever the prompt template changes — output is never compared
 # across prompt versions (design §3). s3 (2026-07-08, scaffolding round 2 of
 # 2, George-directed): dropped the 2-4 sentence FLOOR — it contradicted the
 # no-interpretation rule for one-tag cells (Company type), forcing the model
 # to pad ("this means the company...") or emit filler; 13/18 judge flags on
 # the 07b run were that self-inflicted pattern.
-PROMPT_VERSION = "s3"
+# s4 (2026-07-14, George reopened the 07-08 format decision — compact
+# analyst format, brain/proposals/summary-compact-format.md): render the
+# themes instead of narrating them — one line per theme,
+# "label: items [cites]", capped items with a visible overflow marker; the
+# gate/judge unit becomes the line for multi-line output. The s3 ship bars
+# do NOT transfer: automated eval legs must re-run on s4 output before any
+# faithfulness claim.
+PROMPT_VERSION = "s4"
 
 # Citation parsing. The model batches IDs inside one bracket —
 # "[C0183, C0184, C0185]" — and sometimes chains brackets "[C0183][C0184]".
@@ -73,10 +82,13 @@ def has_citation(text: str) -> bool:
     """True if text carries >=1 bracketed claim-ID citation."""
     return _CITED_BRACKET_RE.search(text or "") is not None
 
-# Sentence split shared by the Tier-1 gate and the Tier-2 judge. Fragments
-# created by splitting after a known abbreviation are merged back into the
-# previous sentence — the 2026-07-07 laptop eval showed company names
-# ("Aalto Scientific Ltd.", "U.S.") chopping prose into citation-less
+# Unit split shared by the Tier-1 gate, the Tier-2 judge and the eval legs.
+# s4 output is one line per theme, so multi-line text splits on newlines
+# (defensively stripping bullet markers the prompt forbids); single-line
+# text keeps the s3-era sentence split, so older workbooks re-judge
+# unchanged. Sentence fragments created by splitting after a known
+# abbreviation are merged back — the 2026-07-07 laptop eval showed company
+# names ("Aalto Scientific Ltd.", "U.S.") chopping prose into citation-less
 # fragments that failed the gate and mis-fed the judge. Unknown abbreviations
 # still over-split, which only ever FAILS a summary toward its deterministic
 # Digest line — the safe direction.
@@ -86,9 +98,16 @@ _ABBREV_END_RE = re.compile(
     r"|\be\.g|\bi\.e|\bU\.S|\bU\.K)\.$",
     re.IGNORECASE,
 )
+_BULLET_PREFIX_RE = re.compile(r"^[•\-\*]\s+")
 
 
 def _split_sentences(text: str) -> list[str]:
+    if "\n" in (text or "").strip():
+        return [
+            _BULLET_PREFIX_RE.sub("", line.strip())
+            for line in text.splitlines()
+            if line.strip()
+        ]
     parts = [s.strip() for s in _SENTENCE_SPLIT_RE.split(text) if s.strip()]
     merged: list[str] = []
     for part in parts:
@@ -97,6 +116,14 @@ def _split_sentences(text: str) -> list[str]:
         else:
             merged.append(part)
     return merged
+
+
+def _join_units(units: list[str], like: str) -> str:
+    """Rejoin units split by _split_sentences, preserving the original shape:
+    newline-joined when the source was multi-line (s4), space-joined
+    otherwise (s3 prose). Used by the eval corruption legs so a corrupted
+    multi-line summary stays multi-line and unit indices stay aligned."""
+    return ("\n" if "\n" in (like or "").strip() else " ").join(units)
 
 
 def make_client():
@@ -192,22 +219,25 @@ def _cell_prompt(
         blocks.append("\n".join(lines))
 
     instructions = (
-        f"You are summarizing verified extracted claims about {entity} "
-        f'for the question "{question}".\n'
-        "Claims are grouped into themes. Rules (all mandatory):\n"
-        "1. Cite the claim ID(s) each statement draws from in square brackets, "
-        "e.g. [C0042] or [C0042, C0043]. EVERY sentence must end with its own "
-        "citation — do not gather all citations into the final sentence.\n"
-        "2. State only what the cited claims say. Do NOT add interpretation, "
-        "inference, or a concluding sentence (e.g. no 'this indicates', 'this "
-        "suggests', 'these locations show'). If a claim is a short label or "
-        "category (e.g. 'own-product'), report it verbatim with its citation "
-        "and stop — never explain what the label means, and never add filler "
-        "such as 'no additional information is provided'.\n"
-        "3. Be brief: plain prose, at most 4 sentences, and as few as cover "
-        "the themes — for a cell with one or two short claims, ONE short "
-        "sentence is the correct answer. No headings, no bullet lists, no "
-        "padding."
+        f"You are compiling verified extracted claims about {entity} "
+        f'for the question "{question}" into a compact, scannable summary '
+        "for an analyst.\n"
+        "Claims are grouped into themes. Output format (all rules mandatory):\n"
+        "1. Output exactly ONE line per theme, in the form:\n"
+        "   <theme label>: <the claims' content, compact> [claim IDs]\n"
+        "   If the claims are not grouped into themes, output one or more "
+        "compact lines in the same form, grouping related claims per line.\n"
+        "2. EVERY line must end with the claim ID(s) it draws from in square "
+        "brackets, e.g. [C0042] or [C0042, C0043].\n"
+        "3. State only what the cited claims say. No interpretation, no "
+        "inference, no concluding line, no filler. A short label or category "
+        "claim (e.g. 'own-product') is reported verbatim — never explain "
+        "what it means.\n"
+        f"4. List at most {SUMMARY_MAX_ITEMS_PER_LINE} items on a line; when "
+        "a theme has more, end the item list with '(more in Provenance)' "
+        "before the citations.\n"
+        "5. Plain lines only: no headings, no bullet markers, no blank "
+        "lines, no prose paragraphs."
     )
     prompt = instructions + "\n\n" + "\n\n".join(blocks)
     return prompt, input_ids, top_theme_id_sets
@@ -258,10 +288,10 @@ def summarize_groups(claim_groups: list[dict], rows: list) -> list[dict]:
     io_excel renders non-pass rows as their Digest line with the failure
     visible in the Faithfulness column.
 
-    Raises only on a missing AZURE_API_KEY (before any call); run_pipeline
-    wraps this call so that only skips the sheet.
+    Raises only on a missing AZURE_API_KEY (before any LLM call, and only
+    when at least one cell actually needs the LLM); run_pipeline wraps this
+    call so that only skips the sheet.
     """
-    client = make_client()
     # Same function the Provenance writer uses, so the IDs cited here are
     # exactly the IDs the workbook will carry.
     claim_index = build_claim_index(rows)
@@ -271,14 +301,55 @@ def summarize_groups(claim_groups: list[dict], rows: list) -> list[dict]:
         key = (group.get("entity", ""), group.get("question", ""))
         cells.setdefault(key, []).append(group)
 
+    generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    deterministic: list[dict] = []
     jobs = []
     for (entity, question), groups in cells.items():
         prompt, input_ids, top_sets = _cell_prompt(entity, question, groups, claim_index)
         if not input_ids:
             # Nothing citable — no summary row, mirroring "no group, no row".
             continue
+
+        # Tag-only route (s4): a cell whose entire citable input is one short
+        # claim renders deterministically — "own-product [C0201]" — with no
+        # LLM call. Compact by construction, nothing to hallucinate, and it
+        # removes the s3-era gloss/filler failure mode on tag cells instead
+        # of prompting around it.
+        if len(input_ids) == 1:
+            only_id = next(iter(input_ids))
+            values = [
+                str(v).strip()
+                for g in groups for v in g.get("values", [])
+                if claim_index.get((entity, question, _norm_claim(v)))
+            ]
+            if values and len(values[0]) <= SUMMARY_TAG_MAX_CHARS:
+                deterministic.append({
+                    "entity": entity,
+                    "question": question,
+                    "summary": f"{values[0]} [{only_id}]",
+                    "cited_ids": [only_id],
+                    "uncited_sentences": [],
+                    "input_claim_ids": [only_id],
+                    "gate": "pass",
+                    "model": "deterministic-tag",
+                    "prompt_version": PROMPT_VERSION,
+                    "generated_at": generated_at,
+                    "system_fingerprint": None,
+                    "prompt": "",
+                    "raw_response": "",
+                    "duration_ms": 0,
+                    "error": None,
+                })
+                continue
+
         jobs.append((entity, question, prompt, input_ids, top_sets))
 
+    if deterministic:
+        print(f"  -> {len(deterministic)} tag-only cell(s) rendered deterministically (no LLM call)")
+    if not jobs:
+        return deterministic
+
+    client = make_client()
     print(f"  -> Summarizing {len(jobs)} grouped cells via Azure ({AZURE_DEPLOYMENT})...")
     # max_workers doubles as the global concurrency cap — these are the only
     # Azure calls this layer makes (EXTRACT_MAX_CONCURRENT_CALLS pattern).
@@ -288,8 +359,7 @@ def summarize_groups(claim_groups: list[dict], rows: list) -> list[dict]:
         for fut in as_completed(futures):
             responses[futures[fut]] = fut.result()
 
-    generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    out: list[dict] = []
+    out: list[dict] = list(deterministic)
     for (entity, question, prompt, input_ids, top_sets), resp in zip(jobs, responses):
         text = resp.get("text")
         if resp.get("error") is not None or text is None:

@@ -62,6 +62,7 @@ from diagnostics.summary_judge import (
     sentences_with_claims,
 )
 from src.summarize import (
+    _join_units,
     _split_sentences,
     azure_chat,
     cited_ids,
@@ -181,7 +182,7 @@ def corrupt_swap_entity(record: dict, entities: list[str], claim_texts: dict) ->
                    for cid in cited_ids(sentence)):
             continue  # cited claims don't name the entity — swap wouldn't lie
         sentences[n - 1] = sentence.replace(entity, replacement)
-        return " ".join(sentences), {n}
+        return _join_units(sentences, record["summary"]), {n}
     return None
 
 
@@ -189,9 +190,12 @@ def corrupt_inject_fact(record: dict, entities: list[str], claim_texts: dict) ->
     ids = sorted(record["input_ids"])
     if not ids:
         return None
-    fabricated = (f" It also completed a full acquisition of its largest "
+    fabricated = (f"It also completed a full acquisition of its largest "
                   f"competitor for $9 billion [{ids[0]}].")
-    corrupted = record["summary"].rstrip() + fabricated
+    # Append as a new unit in the summary's own shape: a new line for
+    # multi-line (s4) output, a new sentence for prose (s3-era workbooks).
+    sep = "\n" if "\n" in record["summary"].strip() else " "
+    corrupted = record["summary"].rstrip() + sep + fabricated
     return corrupted, {len(_split_sentences(corrupted))}
 
 
@@ -212,7 +216,7 @@ def corrupt_reattach_citation(record: dict, entities: list[str], claim_texts: di
 
     sentences[n1 - 1] = swap(sentences[n1 - 1], ids1, ids2)
     sentences[n2 - 1] = swap(sentences[n2 - 1], ids2, ids1)
-    return " ".join(sentences), {n1, n2}
+    return _join_units(sentences, record["summary"]), {n1, n2}
 
 
 _JUDGE_CORRUPTIONS = {
@@ -234,7 +238,7 @@ def corrupt_delete_top_sentence(record: dict) -> str | None:
     keep = [s for s in sentences if not (set(cited_ids(s)) & top_ids)]
     if len(keep) == len(sentences) or not keep:
         return None
-    return " ".join(keep)
+    return _join_units(keep, record["summary"])
 
 
 # ── Legs ─────────────────────────────────────────────────────────────────────

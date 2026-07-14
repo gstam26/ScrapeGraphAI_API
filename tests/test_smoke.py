@@ -693,6 +693,24 @@ def test_thin_content_gate_below_and_above_threshold():
     print("OK test_thin_content_gate_below_and_above_threshold passed")
 
 
+def test_parse_depth_accepts_any_nonnegative_int():
+    # The old {0,1,2} whitelist was an implicit assumption that crashed the
+    # first depth-3 experiment (CMO sweep, 2026-07-14). Depth is budget-safe
+    # at any value (CRAWL_MAX_PAGES bounds total volume), so only negatives
+    # are rejected.
+    import pytest
+    from src.io_excel import _parse_depth
+    assert _parse_depth(3) == 3
+    assert _parse_depth(5) == 5
+    assert _parse_depth("4") == 4
+    assert _parse_depth(None) == 0
+    with pytest.raises(ValueError):
+        _parse_depth(-1)
+    with pytest.raises(ValueError):
+        _parse_depth("abc")
+    print("OK test_parse_depth_accepts_any_nonnegative_int passed")
+
+
 def test_firecrawl_good_content_no_fallback(monkeypatch):
     from src.acquire import fetcher as f
     monkeypatch.setattr(f, "_fetch_firecrawl_doc", lambda url, cfg: ("x" * 300, None))

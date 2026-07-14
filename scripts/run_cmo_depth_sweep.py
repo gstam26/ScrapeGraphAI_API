@@ -42,6 +42,19 @@ def _populated(value) -> bool:
 
 
 def run_one(depth: int) -> dict:
+    # Whole body guarded: ANY per-depth failure (bad workbook, pipeline error,
+    # scoring error) must mark this depth FAILED and let the sweep continue —
+    # a depth-3 ValueError from read_input killed a completed 0-2 sweep on
+    # 2026-07-14 because only the pipeline call was wrapped.
+    try:
+        return _run_one_inner(depth)
+    except Exception:
+        print(f"!! depth {depth} FAILED:")
+        traceback.print_exc()
+        return {"depth": depth, "status": "FAILED"}
+
+
+def _run_one_inner(depth: int) -> dict:
     in_path = os.path.join(IN_DIR, f"cmo_input_named_depth{depth}.xlsx")
     out_path = os.path.join(OUT_DIR, f"cmo_output_depth{depth}.xlsx")
     if not os.path.exists(in_path):
@@ -63,12 +76,7 @@ def run_one(depth: int) -> dict:
     }
 
     t0 = time.time()
-    try:
-        result, diag = run_pipeline(pipeline_input)
-    except Exception:
-        print(f"!! depth {depth} FAILED:")
-        traceback.print_exc()
-        return {"depth": depth, "status": "FAILED", "seconds": round(time.time() - t0, 1)}
+    result, diag = run_pipeline(pipeline_input)
     elapsed = time.time() - t0
 
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -126,6 +134,20 @@ def main() -> int:
 
     os.makedirs(OUT_DIR, exist_ok=True)
     csv_path = os.path.join(OUT_DIR, "depth_sweep_summary.csv")
+    # Merge, don't overwrite: rows for depths NOT in this run are preserved,
+    # so `--depths 3,4,5` extends an earlier 0-2 sweep's CSV into one
+    # plottable file instead of wiping it. Rows for re-run depths are
+    # replaced. Delete the CSV manually to start a fresh table (e.g. when
+    # the budget changes and old rows are no longer comparable).
+    if os.path.exists(csv_path):
+        try:
+            prev = pd.read_csv(csv_path)
+            keep = prev[~prev["depth"].isin(summary["depth"])]
+            if len(keep):
+                print(f"(preserving {len(keep)} depth row(s) from the existing CSV)")
+            summary = pd.concat([keep, summary], ignore_index=True).sort_values("depth")
+        except Exception as e:
+            print(f"(could not merge existing CSV, overwriting: {e})")
     try:
         summary.to_csv(csv_path, index=False)
     except PermissionError:

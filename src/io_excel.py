@@ -102,8 +102,13 @@ def _parse_depth(value: Any) -> int:
         depth = int(float(value))
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Depth must be an integer, got {value!r}") from exc
-    if depth not in {0, 1, 2}:
-        raise ValueError(f"Depth must be 0, 1, or 2, got {depth!r}")
+    # Negative is nonsense; there is no upper cap. The old {0,1,2} whitelist
+    # predated depth experiments (first hit 2026-07-14 by the CMO depth sweep
+    # at depth 3) — an implicit "nobody crawls deeper than 2" assumption in a
+    # validator, not a real constraint. Total crawl volume is bounded by
+    # CRAWL_MAX_PAGES regardless of depth, so deep values are budget-safe.
+    if depth < 0:
+        raise ValueError(f"Depth must be a non-negative integer, got {depth!r}")
     return depth
 
 

@@ -91,6 +91,11 @@ def main() -> int:
     ap.add_argument("--entities", default=None,
                     help="comma-separated exact entity names — for a fixed sample "
                          "reused across depth-sweep runs (overrides --start/--end)")
+    ap.add_argument("--max-pages", type=int, default=None,
+                    help="CRAWL_MAX_PAGES override written to the workbook config sheet. "
+                         "The 2026-07-13 sweep showed the default budget (15/entity) fills "
+                         "entirely with depth-1 pages (BFS), so depth 2 never runs — raise "
+                         "this to make depth>=2 measurable at all.")
     ap.add_argument("--out-name", default=None,
                     help="output filename override (default derived from the slice)")
     ap.add_argument("--out-dir", default=OUT_DIR)
@@ -194,7 +199,10 @@ def main() -> int:
         "question": questions,
         "instructions": [""] * len(questions),  # baseline: no instructions yet
     })
-    config_df = pd.DataFrame({"setting": ["EXTRACT_TOOL"], "value": ["azure"]})
+    config_rows = [("EXTRACT_TOOL", "azure")]
+    if args.max_pages is not None:
+        config_rows.append(("CRAWL_MAX_PAGES", args.max_pages))
+    config_df = pd.DataFrame(config_rows, columns=["setting", "value"])
 
     with pd.ExcelWriter(out_path, engine="openpyxl") as w:
         entities_df.to_excel(w, sheet_name="entities", index=False)

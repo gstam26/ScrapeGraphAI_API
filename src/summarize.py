@@ -67,7 +67,13 @@ from src.io_excel import _norm_claim, build_claim_index
 # and s4's "label: items" made the model ECHO the label then restate it as
 # the content; s5 has the model write a 2-5 word topic itself and
 # synthesize members instead of enumerating them.
-PROMPT_VERSION = "s5"
+# s6 (2026-07-14, from the s5 review): two observed over-reach patterns
+# banned explicitly. (a) Range-blending: claims {80, 330, 3000} employees
+# (different DECADES, from a /history page) became "between 80 and 3,000
+# employees" — a statement no source makes. (b) Absence assertions: "No
+# evidence X manufactures in China" is an inference about the corpus, not
+# a claim's content. Both are cited-but-unsupported — the worst kind.
+PROMPT_VERSION = "s6"
 
 # Citation parsing. The model batches IDs inside one bracket —
 # "[C0183, C0184, C0185]" — and sometimes chains brackets "[C0183][C0184]".
@@ -250,7 +256,12 @@ def _cell_prompt(
         "inference, no concluding line, no filler. A short label or category "
         "claim (e.g. 'own-product') is reported verbatim — never explain "
         "what it means.\n"
-        "6. Plain lines only: no headings, no bullet markers, no blank "
+        "6. When cited values conflict (different numbers, yes vs no), "
+        "report each value with its own citation — NEVER merge them into a "
+        "range, average, or single verdict no source states.\n"
+        "7. Never state that evidence is absent, lacking, or not found — "
+        "simply omit what the claims do not say.\n"
+        "8. Plain lines only: no headings, no bullet markers, no blank "
         "lines, no prose paragraphs."
     )
     prompt = instructions + "\n\n" + "\n\n".join(blocks)

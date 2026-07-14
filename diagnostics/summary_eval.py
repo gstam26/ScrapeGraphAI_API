@@ -192,10 +192,16 @@ def corrupt_inject_fact(record: dict, entities: list[str], claim_texts: dict) ->
         return None
     fabricated = (f"It also completed a full acquisition of its largest "
                   f"competitor for $9 billion [{ids[0]}].")
-    # Append as a new unit in the summary's own shape: a new line for
-    # multi-line (s4) output, a new sentence for prose (s3-era workbooks).
-    sep = "\n" if "\n" in record["summary"].strip() else " "
-    corrupted = record["summary"].rstrip() + sep + fabricated
+    # Append as a NEW unit in the summary's own shape. A space only works
+    # when the summary ends with sentence punctuation (s3 prose); compact
+    # one-liners like "yes [C0102]" have no terminal period, so a space
+    # MERGES the fabrication into the same unit — the judge then sees one
+    # half-supported half-fabricated unit instead of a clean planted lie
+    # (2026-07-14 CMO s5 run: inject_fact misses clustered exactly on the
+    # one-line tag cells for this reason — harness artefact, not judge).
+    s = record["summary"].rstrip()
+    sep = " " if ("\n" not in s and s.endswith((".", "!", "?"))) else "\n"
+    corrupted = s + sep + fabricated
     return corrupted, {len(_split_sentences(corrupted))}
 
 

@@ -214,6 +214,9 @@ def test_tag_only_cell_routed_deterministically(monkeypatch):
     assert s["model"] == "deterministic-tag"
     assert s["cited_ids"] == ["C0001"] and s["input_claim_ids"] == ["C0001"]
     assert s["prompt_version"] == summarize_mod.PROMPT_VERSION
+    # The judge/eval legs read Raw Response — empty made tag cells
+    # unjudgeable (13 "no sentences" on the 2026-07-14 CMO run).
+    assert s["raw_response"] == "own-product [C0001]"
     print("OK test_tag_only_cell_routed_deterministically passed")
 
 

@@ -348,10 +348,11 @@ def summarize_groups(claim_groups: list[dict], rows: list) -> list[dict]:
                 if claim_index.get((entity, question, _norm_claim(v)))
             ]
             if values and len(values[0]) <= SUMMARY_TAG_MAX_CHARS:
+                rendered = f"{values[0]} [{only_id}]"
                 deterministic.append({
                     "entity": entity,
                     "question": question,
-                    "summary": f"{values[0]} [{only_id}]",
+                    "summary": rendered,
                     "cited_ids": [only_id],
                     "uncited_sentences": [],
                     "input_claim_ids": [only_id],
@@ -361,7 +362,13 @@ def summarize_groups(claim_groups: list[dict], rows: list) -> list[dict]:
                     "generated_at": generated_at,
                     "system_fingerprint": None,
                     "prompt": "",
-                    "raw_response": "",
+                    # The judge and the eval legs read the Summary Log's Raw
+                    # Response column (never the possibly-annotated sheet
+                    # cell). An empty string here made every tag cell
+                    # unjudgeable — 13 "no sentences" failures and 5 auto-miss
+                    # corruptions on the 2026-07-14 CMO s6 run. The rendered
+                    # line IS this deterministic path's raw response.
+                    "raw_response": rendered,
                     "duration_ms": 0,
                     "error": None,
                 })

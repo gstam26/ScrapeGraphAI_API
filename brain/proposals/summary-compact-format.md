@@ -1,0 +1,76 @@
+# AI Summary: compact analyst format (s4)
+
+**Status:** PROPOSED 2026-07-14 — George reopened the 2026-07-08 "ship the
+floor" format decision (his to reopen: the CMO case study makes an
+analyst-facing deliverable the point, so readability is now a requirement,
+not polish). Not built; awaiting George's format approval + one Nick check.
+
+## What George asked for
+
+"More compact and grouped — kind of what aggregate is doing but taking it a
+step further. The most simple readable way that the analyst would understand
+it. COMPACT."
+
+## Design: render the themes, don't narrate them
+
+The summarizer's input is ALREADY the grouped-theme structure (aggregate one
+step further = grouping, which is built and calibrated). The s3 prompt asks
+the model to weave themes into prose — that's where the comma-run sentences
+and citation clutter come from. s4 instead renders **one line per theme**:
+
+    <theme label>: <compact synthesis of that theme's claims> [cites]
+
+**Before (s3 prose, real shape of the Hologic R&D cell):**
+
+> Hologic conducts research and development in the United States, Germany,
+> France, Costa Rica, Canada, the United Kingdom, ... (25 locations welded
+> into one sentence) [C0102]. The company also maintains...
+
+**After (s4 compact):**
+
+> • R&D sites: US, Germany, France, Costa Rica (+21 more — see Provenance) [C0102, C0110]
+> • Focus areas: cytology, molecular diagnostics [C0088, C0093]
+
+Rules (s4 prompt): one line per theme, `label: items` shape, hard cap on
+items per line with an explicit `(+N more — see Provenance)` overflow marker
+(nothing hidden silently — same contract as MATRIX_MAX_DISPLAY_ITEMS),
+citations clustered at end of line, no interpretive sentences, no filler.
+
+## Tag-only cells: skip the LLM entirely
+
+The unspent 2026-07-08 idea, now directly serving compactness: cells whose
+grouped structure is a single short tag (Company type = one "own-product"
+claim) render deterministically as `own-product [C0201]` — no model call.
+Zero faithfulness risk, ~30% fewer summarizer calls, and maximally compact
+by construction. The s3-era failure mode on these cells (gloss/filler) was
+OUR floor rule forcing prose where none exists; deterministic routing
+removes the possibility instead of prompting around it.
+
+## Eval implications (the honest part)
+
+The three passed ship bars (corruptions 0.972, self-agr 0.996, label 0.928)
+were measured on s3 outputs. s4 changes sentence structure, so:
+
+- **Judge contract unchanged** (every line must be supported by its cited
+  claims) — the judge and Tier-1 gate work on lines exactly as on sentences;
+  the gate's citation check applies per line.
+- **Re-run required (automated, cheap):** corruptions + self-agreement legs
+  on a fresh s4 workbook. Same pre-registered bars (0.90/0.90).
+- **Label bar:** full ~50-label re-collection is overkill for a format
+  change; proposal = George spot-labels ~20 s4 lines; if binary agreement
+  holds ≥0.80 the bar stands. If it dips, full re-label before shipping.
+- prompt_version bumps s3→s4 in the Summary Log; fingerprints recorded as
+  before. The deterministic tag-route needs no eval (no model output).
+
+## The one Nick check
+
+LLM prose was Nick's original ask. Compact theme-lines are still an "AI
+summary" (synthesis within each theme is model-written), but the register
+changes from narrative to scan-optimized. One-line confirmation from Nick
+that this serves the client deliverable before it ships client-facing.
+
+## Decisions needed
+
+- **George:** approve the line format + overflow cap default (proposed: 8
+  items/line) + the deterministic tag-route; spot-label ~20 lines post-build.
+- **Nick:** confirm compact register is what the deliverable wants.

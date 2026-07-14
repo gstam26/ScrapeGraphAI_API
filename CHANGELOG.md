@@ -2,6 +2,27 @@
 
 Notable changes, newest first. Full rationale for each decision: `brain/decision-log.md`.
 
+## 2026-07-13/14
+
+### Hybrid fetch backend promoted to production default (Nick sign-off 2026-07-13)
+- `FETCH_BACKEND = "playwright_pooled_hybrid"` — Firecrawl credits cover only ~74/178 ADLM companies; the hybrid fetches free from our IP with politeness by construction. Firecrawl remains available per-workbook and as the proposed vendor fallback for denied sites.
+- **Stage-2 parity measured** (the never-before-run bar item 1): replay of the pinned 25-entity page set through hybrid + `diagnostics/matrix_parity.py` (new tool: populated-cell retention vs a pinned baseline; warns when extract tools differ between runs). Result: Company type 100%, Diagnostics type 92% (bar 0.95) — losses = Agilent + Aladdin.
+- **Attribution run separated fetch from model**: cache-served replay (Firecrawl text, new extractor) scored 100% on all four questions → the extractor change is blameless; every lost cell is fetch-side. Live probes then diagnosed each: Agilent = hard Akamai 403 (only a vendor can fetch it); Nova = Cloudflare beaten by our render; Neogen = our own escalation bug (fixed below); Aniara = gate over-flag (content still reaches extraction); Monobind = commerce template with no extractable text.
+- **Hybrid escalation fix**: the static→render escalation shipped the render unconditionally; SPA pages that wipe server-rendered HTML on hydration made the render far thinner than the static extraction (Neogen: 20,346 chars static → 1,560 rendered → pipeline got the 1,560). Escalation now keeps whichever extraction is richer. Verified live.
+- **Static-probe timeout cap** (`HYBRID_STATIC_TIMEOUT_S=12`): the hybrid's static attempt is a fast-path check, not a full fetch — a hanging response now escalates in 12 s instead of burning the full 30 s (FUJIFILM: 52 s → 7 s). A trialled networkidle render wait was **disconfirmed** (link-grid pages are genuinely thin when rendered; longer waits recover nothing) and reverted — negative result documented in `config.py`.
+- Acquire Log now carries fetch provenance columns (Backend / Render Fallback / Gate Passed / Gate Reason) — recorded by the crawler since the pooled backends landed but previously dropped by the sheet writer.
+- Proposal: `brain/proposals/vendor-fallback.md` — condition-triggered Firecrawl escalation for protocol-level denials (401/403/429/503 + failed render). The exception list is an output of each run (Acquire Log pivot), never a hardcoded site list. Awaiting review + Nick's spend approval.
+
+### Extraction switched to Azure-direct GPT-4.1-mini
+- The Power Automate proxy no longer serves GPT-5.5 (credit burn) — it now runs the same GPT-4.1-mini as the Azure-direct deployment, so the extra flow dependency buys nothing. `build_182_workbook.py` and the committed 182 workbook now set `EXTRACT_TOOL=azure`. Attribution run above doubles as the extractor's population-parity validation (100%).
+- Caveat recorded: the 07-06b replay baseline is GPT-5.5-extracted and no new run can match it — future diffs against it conflate extractor and whatever else changed.
+
+### CMO case study (real advisory input, second task)
+- `scripts/build_cmo_workbook.py`: converts the client sheet (dirty real input: duplicate company rows, URLs with embedded newlines, scheme-less URLs, dead deep links) into the pipeline schema; `--check` probes every URL and writes a cohort inventory (measured: 91 unique entities, 29 usable seeds, 38 missing, 24 broken). `--entities` fixes a named sample across runs; `--max-pages` writes a `CRAWL_MAX_PAGES` override. Client data stays untracked.
+- `scripts/run_cmo_depth_sweep.py` + `scripts/plot_cmo_depth_sweep.py`: one-command depth sweep (isolated per-depth caches, Excel-lock resilient, merging summary CSV) and presentation-ready plots (saturation curve, per-question heatmap, per-entity coverage).
+- **Findings so far**: depth 2 adds ~1 cell over depth 1 at equal budget — the win was page budget, not depth; per-entity coverage exposed dead seeds (2 of 5 sample entities) as the real ceiling; the depth-1 no-instructions baseline is the pre-registered number the instructions run must beat.
+- Fixed en route: depth-sweep cache contamination (per-run `CACHE_DIR` override in `_build_config`); `_parse_depth`'s hardcoded `{0,1,2}` whitelist (first depth-3 run ever attempted crashed on a validator assumption); `.gitignore` missing `cache_*/` variants (706 untracked cache blobs in VS Code).
+
 ## 2026-07-10
 
 ### Consent-overlay strip (bake-off finding: CMP dialogs extracted as page content)

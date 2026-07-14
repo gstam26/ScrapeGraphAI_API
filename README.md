@@ -50,9 +50,9 @@ Layers are separable by design: tools are swapped via `config.py` / workbook con
 These are IT-policy constraints, not preferences — the pipeline is built around them:
 
 - **No HuggingFace** (model downloads blocked). Embeddings come **only** from the internal Ollama server (`nomic-embed-text` at `OLLAMA_HOST`, reachable on Science Group WiFi/VPN only). Off VPN, the pipeline degrades gracefully: BM25 crawl scoring, route-all filtering, no semantic scores.
-- **No direct external LLM APIs on-network.** Production extraction uses GPT-5.5 via an approved **Power Automate proxy** (`EXTRACT_TOOL=llmapi`, `LLM_API_URL` in `.env`). The direct Claude/Azure paths exist for off-network spot checks only.
-- **Polite crawling.** Firecrawl (the default fetcher) proxies requests through its own infrastructure. Do not point a self-hosted fetcher at external sites without rate limiting — see `brain/proposals/firecrawl-replacement.md`.
-- Corporate TLS interception can break the Firecrawl API call itself (`SSL: CERTIFICATE_VERIFY_FAILED`) — a known on-network failure mode.
+- **Production extraction is Azure-direct GPT-4.1-mini** (`EXTRACT_TOOL=azure`, Nick-sanctioned 2026-07). The Power Automate proxy (`llmapi`) remains as a legacy path — it now serves the same model, so it buys nothing but an extra dependency. Claude direct is off-network spot checks only.
+- **Polite crawling.** The default fetcher (`playwright_pooled_hybrid`) runs from THIS machine's IP, so politeness is enforced by construction: robots.txt respected, ≥2 s per-domain delay, honest User-Agent. Sagentia has had IPs blocked before — do not weaken these.
+- Corporate TLS interception can break vendor API calls (e.g. Firecrawl `SSL: CERTIFICATE_VERIFY_FAILED`) — a known on-network failure mode.
 
 ## Installation
 
@@ -64,9 +64,9 @@ playwright install chromium   # only needed for the playwright/local backends
 `.env` in the project root (only the keys for the backends you use):
 
 ```env
-FIRECRAWL_API_KEY=...   # default fetch backend
-LLM_API_URL=...         # Power Automate flow (EXTRACT_TOOL=llmapi)
-AZURE_API_KEY=...       # optional: EXTRACT_TOOL=azure
+AZURE_API_KEY=...       # production extraction (EXTRACT_TOOL=azure)
+FIRECRAWL_API_KEY=...   # optional: ACQUIRE_TOOL=firecrawl (vendor fetch, credits)
+LLM_API_URL=...         # legacy: Power Automate flow (EXTRACT_TOOL=llmapi)
 CLAUDE_API_KEY=...      # optional: EXTRACT_TOOL=claude (off-network only)
 ```
 
@@ -83,20 +83,20 @@ Prompts for an input workbook path and an output filename; everything else comes
 | Sheet | Columns | Notes |
 |---|---|---|
 | `entities` | `entity` | Row labels of the output Matrix |
-| `urls` | `url`, `depth` (0–2), `entities` | Blank `entities` = applies to all; comma-separated otherwise |
+| `urls` | `url`, `depth` (any int ≥ 0), `entities` | Blank `entities` = applies to all; comma-separated otherwise |
 | `questions` | `question`, `instructions` | Instruction text is appended to the extraction prompt |
 | `config` (optional) | `setting`, `value` | Per-run overrides, see below |
 
-Workbook-overridable settings: `ACQUIRE_TOOL`, `EXTRACT_TOOL`, `CRAWL_MIN_SCORE`, `CRAWL_MIN_SCORE_EMBED`, `CRAWL_SCORER`, `CRAWL_MAX_PAGES`, `DEFAULT_DEPTH`. **`FILTER_MODE` is NOT workbook-overridable** — passthrough runs require editing `config.py`.
+Workbook-overridable settings: `ACQUIRE_TOOL`, `EXTRACT_TOOL`, `CRAWL_MIN_SCORE`, `CRAWL_MIN_SCORE_EMBED`, `CRAWL_SCORER`, `CRAWL_MAX_PAGES`, `DEFAULT_DEPTH`. `FILTER_MODE` is not workbook-overridable but IS env-overridable (`FILTER_MODE=passthrough` in `.env`), as is `SUMMARY_ENABLED`.
 
-Sample: `samples/test_smoke.xlsx`. Builders for the ADLM engagement: `build_*_workbook.py`.
+Sample: `samples/test_smoke.xlsx`. Workbook builders (ADLM, CMO): `scripts/build_*_workbook.py`.
 
 ### Key config (`config.py`)
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `ACQUIRE_TOOL` | `firecrawl` | Fetcher: `firecrawl` / `local` / `playwright` / `requests` (`sgai` exists but is dropped) |
-| `EXTRACT_TOOL` | `azure` (env-overridable) | Extractor: use `llmapi` for production runs |
+| `ACQUIRE_TOOL` | `playwright_pooled_hybrid` | Fetcher: hybrid / `playwright_pooled` / `firecrawl` / `local` / `playwright` / `requests` |
+| `EXTRACT_TOOL` | `azure` (env-overridable) | Extractor: Azure GPT-4.1-mini is production; `llmapi` legacy |
 | `FILTER_MODE` | `threshold` | `passthrough` routes everything (scores still logged) |
 | `FILTER_THRESHOLD` | `0.55` | Cosine gate for question routing |
 | `CRAWL_MAX_PAGES` | `15` | Page budget per entity |
@@ -108,8 +108,8 @@ Sample: `samples/test_smoke.xlsx`. Builders for the ADLM engagement: `build_*_wo
 
 ### The two fetch backends that matter
 
-- **`firecrawl`** (default): best content quality and discovery in the five-backend comparison; requests raw HTML so nav/footer links survive into link discovery; requires the paid API key; fetches from Firecrawl's IPs.
-- **`local`** (privacy option): httpx + Trafilatura with a three-rule quality gate and Playwright re-render fallback; keeps all traffic on the local network; weaker on JS-heavy sites.
+- **`playwright_pooled_hybrid`** (default): static-first (httpx + Trafilatura + quality gate), escalating to a pooled headless Chromium render only on gate failure — and keeping whichever extraction is richer. Free, polite by construction (robots.txt, per-domain delay, honest UA), full-DOM link discovery. Measured parity vs the Firecrawl baseline: 100% on Company type, 92% on Diagnostics type (the losses are WAF-denied sites — see `brain/proposals/vendor-fallback.md`).
+- **`firecrawl`** (vendor, credits): fetches from Firecrawl's anti-bot infrastructure, so it reaches sites that deny us (e.g. Akamai 403s). Kept for per-workbook use and as the proposed automatic fallback for protocol-level denials.
 
 ## Output workbook
 

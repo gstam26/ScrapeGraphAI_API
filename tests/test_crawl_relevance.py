@@ -258,6 +258,65 @@ def test_locale_key_released_after_fetch_failure(monkeypatch):
     print("OK test_locale_key_released_after_fetch_failure passed")
 
 
+def test_best_first_frontier_spends_budget_on_score_not_breadth(monkeypatch):
+    """CRAWL_STRATEGY=best_first pops the highest-scoring frontier link
+    regardless of depth. Motivating measurement (CMO depth sweep,
+    2026-07-14): with a binding page budget, BFS provably spent the whole
+    budget on the shallow frontier — depth-3+ links were discovered but
+    never dequeued — while depth-2 pages carried 2.4x the extracted claims.
+
+    Scenario: budget of 3 pages, seed + high-scoring branch A (0.9) whose
+    child A1 scores 0.8, vs low-scoring shallow sibling B (0.2).
+      BFS        : seed, A, B   (breadth first — A1 never fetched)
+      best_first : seed, A, A1  (the deep-but-relevant page wins the budget)
+    """
+    import src.acquire.crawler as crawler_mod
+    from models import Config, PageDoc
+
+    monkeypatch.setattr(crawler_mod, "SCORER_TOOL", "bm25")
+    monkeypatch.setattr(crawler_mod, "CRAWL_LOCALE_DEDUP", False)
+
+    seed = "https://x.com"
+    scores = {"https://x.com/a": 0.9, "https://x.com/b": 0.2, "https://x.com/a/deep": 0.8}
+
+    def fake_discover(page_url, start_url, depth, html=None, page_text=None, cfg=None):
+        if page_url == seed:
+            return [LinkCandidate(url=u, anchor_text=u, depth=depth, context="")
+                    for u in ("https://x.com/a", "https://x.com/b")]
+        if page_url == "https://x.com/a":
+            return [LinkCandidate(url="https://x.com/a/deep", anchor_text="deep", depth=depth, context="")]
+        return []
+
+    def fake_score(candidates, query):
+        for c in candidates:
+            c.score = scores.get(c.url, 0.0)
+        return sorted(candidates, key=lambda c: c.score, reverse=True)
+
+    fetch_order: list[str] = []
+
+    def fake_acquire(url, cfg):
+        fetch_order.append(url)
+        return PageDoc(url=url, text="content", html=None)
+
+    monkeypatch.setattr(crawler_mod, "_discover_links", fake_discover)
+    monkeypatch.setattr(crawler_mod, "score_links", fake_score)
+    monkeypatch.setattr(crawler_mod, "_acquire_page_cfg", fake_acquire)
+
+    cfg = Config(acquire_tool="requests", crawl_min_score=0.0, crawl_max_pages=3)
+    columns = [ColumnSpec(name="anything")]
+
+    monkeypatch.setattr(crawler_mod, "CRAWL_STRATEGY", "bfs")
+    fetch_order.clear()
+    crawler_mod.crawl_entity(seed, columns, cfg, max_depth=2)
+    assert fetch_order == [seed, "https://x.com/a", "https://x.com/b"], fetch_order
+
+    monkeypatch.setattr(crawler_mod, "CRAWL_STRATEGY", "best_first")
+    fetch_order.clear()
+    crawler_mod.crawl_entity(seed, columns, cfg, max_depth=2)
+    assert fetch_order == [seed, "https://x.com/a", "https://x.com/a/deep"], fetch_order
+    print("OK test_best_first_frontier_spends_budget_on_score_not_breadth passed")
+
+
 def test_discovery_no_longer_truncates_before_scoring():
     """The CRAWL_MAX_LINKS_PER_PAGE cap must not be applied at discovery time —
     a footer About link past the 30th anchor has to reach the scorer."""

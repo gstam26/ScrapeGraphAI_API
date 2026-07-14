@@ -1,3 +1,5 @@
+import heapq
+import itertools
 import re
 import time
 from collections import deque
@@ -11,6 +13,7 @@ from config import (
     CRAWL_MAX_DEPTH,
     CRAWL_MAX_LINKS_PER_PAGE,
     CRAWL_MIN_SCORE_EMBED,
+    CRAWL_STRATEGY,
     SCORER_TOOL,
 )
 from models import ColumnSpec, Config, PageDoc
@@ -307,18 +310,37 @@ def crawl_entity(
         visited_locale_keys.add(_locale_key(_normalise_url(start_url)))
     selected_pages = []
 
-    queue = deque([
-        LinkCandidate(
-            url=_normalise_url(start_url),
-            anchor_text="start page",
-            depth=0,
-            score=1.0,
-            parent_url=None,
-        )
-    ])
+    # Frontier discipline (config.CRAWL_STRATEGY). BFS = FIFO deque, the
+    # validated default. best_first = max-heap on link score: the next page
+    # fetched is the best-scoring candidate anywhere in the frontier,
+    # regardless of depth — so a binding page budget is spent on relevance
+    # rather than shallowness. The itertools counter is the heap tiebreak:
+    # equal scores pop in discovery (FIFO) order, keeping runs deterministic.
+    best_first = (CRAWL_STRATEGY or "bfs").strip().lower() == "best_first"
+    frontier = [] if best_first else deque()
+    _seq = itertools.count()
 
-    while queue and len(selected_pages) < _max_pages:
-        current = queue.popleft()
+    def _push(cand: LinkCandidate) -> None:
+        if best_first:
+            heapq.heappush(frontier, (-cand.score, next(_seq), cand))
+        else:
+            frontier.append(cand)
+
+    def _pop() -> LinkCandidate:
+        if best_first:
+            return heapq.heappop(frontier)[2]
+        return frontier.popleft()
+
+    _push(LinkCandidate(
+        url=_normalise_url(start_url),
+        anchor_text="start page",
+        depth=0,
+        score=1.0,
+        parent_url=None,
+    ))
+
+    while frontier and len(selected_pages) < _max_pages:
+        current = _pop()
 
         if current.url in visited:
             continue
@@ -492,6 +514,6 @@ def crawl_entity(
                     # out not to actually be fetched — see the threshold-skip
                     # and except-Exception release points above.
                     visited_locale_keys.add(_locale_key(child.url))
-                queue.append(child)
+                _push(child)
 
     return EntityDoc(start_url=start_url, pages=selected_pages)

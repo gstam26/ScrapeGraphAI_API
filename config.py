@@ -131,6 +131,22 @@ CRAWL_MIN_SCORE_EMBED = 0.50  # used by Ollama embedding scorer
 # 30th anchor is no longer silently dropped before the scorer sees it.
 CRAWL_MAX_LINKS_PER_PAGE = 30
 
+# Frontier discipline for the guided crawler.
+# "bfs" (default, all validation to date): explore in depth waves — every
+#   chosen depth-1 link before any depth-2 link. When the page budget binds
+#   before the frontier exhausts, BFS spends the whole budget on shallow
+#   breadth BY CONSTRUCTION (measured, CMO 2026-07-14: 3/5 entities pinned
+#   at budget with depth-3+ links discovered but never dequeued, while
+#   depth-2 pages carried 2.4x the extracted claims of depth-1).
+# "best_first": pop the highest-scoring queued link regardless of depth —
+#   the budget flows to the most answer-relevant pages and depth becomes an
+#   outcome rather than a knob (max_depth remains a discovery cutoff).
+#   Amplifies the link scorer in both directions: weak queries (questions
+#   without instructions) give fuzzy priorities; instruction-aware queries
+#   should target well. A/B before adopting anywhere validated.
+# Env-overridable so comparison runs don't need config edits.
+CRAWL_STRATEGY = os.getenv("CRAWL_STRATEGY", "bfs")  # "bfs" | "best_first"
+
 # Collapse locale/language variants of the same page during link discovery
 # (e.g. /fr.html, /de.html, /ko_kr.html, /de/de) so the crawl budget is not
 # spent re-fetching translated copies of pages already visited. Generic

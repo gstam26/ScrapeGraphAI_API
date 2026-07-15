@@ -13,6 +13,28 @@ Real-input hygiene handled here (all observed in the actual file):
   - deep division links are KEPT as given (carclo.co.uk/our-businesses/... points
     at the CMO division; root-normalising would crawl the parent plc instead)
 
+George's EDIT sheet (2026-07-15) adds an UNTITLED column right of Website with
+his manual URL research. Recognised row edits (case-insensitive keywords, URL
+extracted from the same cell where present):
+  - a bare URL (incl. "In_english <url>")  -> adopt as the seed, overriding
+    the client Website column (his find is the verified one)
+  - REPEAT                 -> duplicate of another row, DROP (cross-name dupes
+                              like "Rosti"/"Rosti Group" vs "Rosti A/S" that
+                              the name-level consolidation cannot see)
+  - ACQUIRED [BY] <url>    -> seed the acquirer's site; acquisition itself is
+                              Q2 evidence (2026-07-14 reframe: dead/absorbed
+                              companies are findings, not URL-chase targets)
+  - NOW_IS <url>           -> renamed/successor site, seed it
+  - NO_ACCESS / UNKNOWN    -> no usable site per George's manual check —
+                              excluded from the crawl, kept in the inventory
+                              as a finding
+  - RANDOM LANDING PAGE    -> the client URL technically opens but lands on
+                              junk; excluded (overrides a passing probe)
+  - MAYBE <url>            -> uncertain match, excluded by default (candidate
+                              URL preserved in the inventory notes)
+Unnamed columns are never treated as question columns. Everything lands in
+the inventory CSV: george_note (verbatim cell) + seed_source (client/george).
+
 --check probes every cleaned URL (GET, honest UA, 10 s timeout, one request
 per domain so no politeness concern) and classifies each entity into a cohort:
   ok / redirected (records the final URL) / http_<status> / unreachable / missing
@@ -31,6 +53,7 @@ Usage (from repo root):
 """
 import argparse
 import os
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
@@ -42,6 +65,46 @@ ENTITY_COL = "CMO"
 URL_COL = "Website"
 HEADER_ROW = 3
 OUT_DIR = "cmo-inputs"
+
+# George's edit cells mix keywords and URLs ("ACQUIRED BY:  https://...").
+_EDIT_URL_RE = re.compile(r"(https?://\S+|www\.[^\s,]+)", re.IGNORECASE)
+
+# Edit kinds that adopt the cell's URL as the seed / that exclude the row.
+_EDIT_SEED_KINDS = {"found", "acquired", "renamed"}
+_EDIT_EXCLUDE_KINDS = {"no_access", "unknown", "bad_landing", "maybe"}
+
+
+def parse_edit(raw) -> tuple[str, str]:
+    """Classify one edit-column cell -> (kind, cleaned_url).
+
+    kind: "" (empty) / repeat / found / acquired / renamed / no_access /
+    unknown / bad_landing / maybe / note (unrecognised text, surfaced in the
+    inventory rather than silently dropped). Keyword checks run before the
+    bare-URL fallback so "ACQUIRED BY <url>" classifies as acquired, not found.
+    """
+    text = " ".join(str(raw or "").split())
+    if not text or text.lower() == "nan":
+        return "", ""
+    upper = text.upper()
+    m = _EDIT_URL_RE.search(text)
+    url = clean_url(m.group(1)) if m else ""
+    if "REPEAT" in upper:
+        return "repeat", url
+    if "NO_ACCESS" in upper:
+        return "no_access", url
+    if "UNKNOWN" in upper:
+        return "unknown", url
+    if "ACQUIRED" in upper:
+        return "acquired", url
+    if "NOW_IS" in upper:
+        return "renamed", url
+    if "RANDOM" in upper and "LANDING" in upper:
+        return "bad_landing", url
+    if "MAYBE" in upper:
+        return "maybe", url
+    if url:
+        return "found", url
+    return "note", ""
 
 
 def clean_entity(name: str) -> str:
@@ -96,6 +159,13 @@ def main() -> int:
                          "The 2026-07-13 sweep showed the default budget (15/entity) fills "
                          "entirely with depth-1 pages (BFS), so depth 2 never runs — raise "
                          "this to make depth>=2 measurable at all.")
+    ap.add_argument("--include-blocked", action="store_true",
+                    help="also include entities whose probe hit http_4xx/unreachable — "
+                         "the plain-httpx probe is weaker than the production hybrid "
+                         "fetcher (browser render passed Cloudflare on Nova, 2026-07-13; "
+                         "SSL trust and WAF blocks differ per client). Fail-soft: rows "
+                         "the pipeline can't reach either stay empty and the Acquire "
+                         "Log records why — itself baseline evidence.")
     ap.add_argument("--out-name", default=None,
                     help="output filename override (default derived from the slice)")
     ap.add_argument("--out-dir", default=OUT_DIR)
@@ -107,9 +177,49 @@ def main() -> int:
             sys.exit(f"expected column {col!r} not found — got {list(df.columns)}")
     df = df[df[ENTITY_COL].notna()].reset_index(drop=True)
 
-    questions = [c for c in df.columns if c not in (ENTITY_COL, URL_COL)]
+    # Untitled columns are George's edit/notes columns (EDIT sheet), never
+    # questions — without this exclusion "Unnamed: 17" would ship to the
+    # extractor as a 16th question.
+    edit_cols = [c for c in df.columns if str(c).startswith("Unnamed")]
+    questions = [c for c in df.columns if c not in (ENTITY_COL, URL_COL) and c not in edit_cols]
     df["entity"] = df[ENTITY_COL].map(clean_entity)
     df["url"] = df[URL_COL].map(clean_url)
+
+    # ── George's edit column (found URLs + row dispositions) ────────────────
+    df["george_note"] = ""
+    df["seed_source"] = ["client" if u else "" for u in df["url"]]
+    df["george_kind"] = ""
+    if edit_cols:
+        joined = df[edit_cols].apply(
+            lambda r: " ".join(str(v) for v in r if pd.notna(v)), axis=1)
+        parsed = joined.map(parse_edit)
+        df["george_kind"] = [k for k, _ in parsed]
+        df["george_url"] = [u for _, u in parsed]
+        df["george_note"] = [" ".join(str(v).split()) for v in joined]
+
+        repeats = df["george_kind"] == "repeat"
+        if repeats.any():
+            print(f"Dropping {int(repeats.sum())} row(s) George marked REPEAT: "
+                  + ", ".join(df.loc[repeats, "entity"]))
+            df = df[~repeats].reset_index(drop=True)
+
+        adopt = df["george_kind"].isin(_EDIT_SEED_KINDS) & (df["george_url"] != "")
+        df.loc[adopt, "url"] = df.loc[adopt, "george_url"]
+        df.loc[adopt, "seed_source"] = "george"
+        if adopt.any():
+            print(f"Adopted {int(adopt.sum())} George-found URL(s) "
+                  f"({(df['george_kind'][adopt] == 'acquired').sum()} acquired, "
+                  f"{(df['george_kind'][adopt] == 'renamed').sum()} renamed)")
+
+        # George's manual verdict overrides a technically-passing probe
+        # (e.g. Sedat: the client URL opens but lands on a random page).
+        exclude = df["george_kind"].isin(_EDIT_EXCLUDE_KINDS)
+        df.loc[exclude, "url"] = ""
+        df.loc[exclude, "seed_source"] = ""
+        if exclude.any():
+            print(f"Excluded {int(exclude.sum())} row(s) per George's notes: "
+                  + ", ".join(f"{e} ({k})" for e, k in
+                              zip(df.loc[exclude, 'entity'], df.loc[exclude, 'george_kind'])))
 
     # The client list repeats some companies (observed: Flextronics x3,
     # Partnertech x3, ...), with at most one URL among the copies. Consolidate
@@ -145,9 +255,16 @@ def main() -> int:
         df["cohort"] = ["missing" if u == "" else "unchecked" for u in df["url"]]
         df["final_url"] = ""
 
+    # Rows George manually ruled out are findings, not gaps — label them by
+    # his verdict so the coverage split reports "no site exists / can't be
+    # found" separately from "we never had a URL" (Q2 evidence reframe).
+    georged = df["george_kind"].isin(_EDIT_EXCLUDE_KINDS)
+    df.loc[georged, "cohort"] = "george_" + df.loc[georged, "george_kind"]
+
     os.makedirs(args.out_dir, exist_ok=True)
     inv_path = os.path.join(args.out_dir, "cmo_url_inventory.csv")
-    df[["entity", "url", "cohort", "final_url"]].to_csv(inv_path, index=False)
+    df[["entity", "url", "cohort", "final_url", "seed_source", "george_note"]].to_csv(
+        inv_path, index=False)
 
     print(f"\n{len(df)} entities, {len(questions)} questions")
     print(df["cohort"].value_counts().to_string())
@@ -155,6 +272,13 @@ def main() -> int:
 
     # ── Pipeline workbook for the usable cohort ─────────────────────────────
     usable_cohorts = {"ok", "redirected", "unchecked"}
+    if args.include_blocked:
+        blocked = df["cohort"].str.startswith(("http_", "unreachable"))
+        if blocked.any():
+            print(f"--include-blocked: adding {int(blocked.sum())} probe-blocked "
+                  "entities (hybrid fetch may still reach them): "
+                  + ", ".join(df.loc[blocked, "entity"]))
+            usable_cohorts |= set(df.loc[blocked, "cohort"])
     usable = df[df["cohort"].isin(usable_cohorts)].reset_index(drop=True)
     if usable.empty:
         print("No usable entities — resolve URLs first (scripts/resolve_urls.py).")

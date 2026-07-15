@@ -22,6 +22,9 @@ Design choices worth knowing:
   * The summary layer is turned OFF by default (before config import) — the
     eval reads only the Provenance sheet, so summarising would burn Azure
     calls for nothing. Pass --with-summary to leave it as configured.
+  * Scoring uses generic_eval's semantic matching (nomic-embed) — needs Ollama
+    reachable, the same dependency the pipeline already has. If Ollama is down,
+    generic_eval prints a warning and falls back to lexical-only automatically.
 
 Usage (from repo root, on the machine with keys/VPN):
   python diagnostics/run_eval_suite.py

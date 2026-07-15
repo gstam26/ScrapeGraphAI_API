@@ -86,6 +86,26 @@ QUOTE_W = 0.35
 MATCH_THRESHOLD  = 0.65   # >= this -> auto_match
 REVIEW_THRESHOLD = 0.45   # >= this -> review (still counted as TP for F1)
 
+# Fuzzy near-duplicate collapse of AI claims before scoring precision — the
+# same constant/idea as the plant-milk evaluator (eval_lib/metrics.py):
+# "Geneva, Switzerland" / "Geneva" / "based in Geneva" are ONE claim, not
+# three, so redundant phrasings don't each count as a hallucination.
+AI_DEDUP_RATIO = 95
+
+# Semantic value matching. Pure lexical overlap (token_sort_ratio) scores a
+# correct paraphrase — "Enable universal access to knowledge" vs "empower
+# people worldwide to collect, develop and share knowledge" — as BOTH a
+# recall miss AND a hallucination (observed on task1 Wikimedia, 2026-07-15).
+# We add embedding cosine (nomic-embed, the pipeline's own embedder) as a
+# second value signal and take the MAX of lexical and semantic, so a
+# lexically-distant but meaning-equivalent pair is rescued. Cosine and
+# token_sort_ratio/100 share the 0..1 scale, so the existing thresholds
+# apply unchanged. A pair whose lexical score is below REVIEW but whose
+# semantic score clears it is a "semantic rescue" — counted and reported so
+# the change is auditable, never silent. Degrades gracefully: if Ollama is
+# unreachable the evaluator falls back to lexical-only with a warning.
+SEMANTIC_MIN = 0.60   # cosine floor for a semantic rescue to be believed
+
 _NULL_SENTINEL = "none (not disclosed)"
 
 
@@ -126,7 +146,8 @@ class PairResult:
     value_score: float
     quote_score: float
     combined: float
-    verdict: str   # auto_match | review | auto_miss | null_match | no_ai_data
+    verdict: str   # auto_match | review | semantic_review | auto_miss | null_match | no_ai_data
+    semantic: float = 0.0
 
 
 @dataclass
@@ -135,7 +156,8 @@ class CellResult:
     question: str
     is_list: bool
     gt_pairs: list[PairResult]
-    ai_only: list[AIRow]    # AI claims not matched to any GT
+    ai_only: list[AIRow]              # AI claims not matched to any GT (FP)
+    redundant: list[AIRow] = field(default_factory=list)  # restatements of a credited claim (not FP)
 
 
 @dataclass
@@ -165,24 +187,75 @@ def _token_f1(a: str, b: str) -> float:
     return 0.0 if inter == 0 else 2 * inter / (len(ta) + len(tb))
 
 
-def _pair_score(gt: GTRow, ai: AIRow) -> tuple[float, float, float]:
-    """Return (value_score, quote_score, combined)."""
-    vs = fuzz.token_sort_ratio(_norm(gt.value), _norm(ai.value)) / 100.0
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(x * x for x in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def embed_values(texts: list[str]) -> Optional[dict[str, list[float]]]:
+    """Batch-embed distinct texts with the pipeline's nomic-embed, mean-centred.
+
+    Returns {text: centred_vector} or None if embeddings are unavailable
+    (Ollama down / not installed) — the caller then falls back to lexical-only.
+    Mean-centring removes the large shared component that makes every raw
+    nomic cosine sit in a narrow high band (the same anisotropy fix group.py
+    applies before clustering); without it semantic "similarity" is
+    uninformative and would over-match.
+    """
+    uniq = sorted({t for t in texts if t.strip()})
+    if len(uniq) < 3:
+        return None  # too few to estimate a meaningful mean
+    try:
+        from config import OLLAMA_DOC_PREFIX
+        from src.embed import embed_batch
+        vecs = embed_batch([OLLAMA_DOC_PREFIX + t for t in uniq])
+    except Exception as e:  # noqa: BLE001 — graceful lexical fallback
+        print(f"  [semantic matching OFF] embeddings unavailable ({type(e).__name__}: {e})")
+        print("  -> falling back to lexical matching only.")
+        return None
+    dim = len(vecs[0])
+    n = len(vecs)
+    mean = [sum(v[i] for v in vecs) / n for i in range(dim)]
+    return {t: [x - m for x, m in zip(v, mean)] for t, v in zip(uniq, vecs)}
+
+
+def _pair_score(
+    gt: GTRow, ai: AIRow, emb: Optional[dict[str, list[float]]] = None,
+) -> tuple[float, float, float, float]:
+    """Return (value_score, quote_score, combined_lexical, semantic_cos).
+
+    value_score is the MAX of lexical token_sort_ratio and semantic cosine
+    (for display); combined_lexical is the lexical-only score the confident
+    auto_match / review bands are judged on; semantic_cos rescues otherwise
+    missed pairs into the flagged semantic_review band (see _verdict)."""
+    vs_lex = fuzz.token_sort_ratio(_norm(gt.value), _norm(ai.value)) / 100.0
     qs = 0.0
     quote_available = bool(gt.verbatim_quote.strip()) and bool(ai.quote.strip())
     if quote_available:
         qs = _token_f1(gt.verbatim_quote, ai.quote)
-        combined = CLAIM_W * vs + QUOTE_W * qs
+        combined = CLAIM_W * vs_lex + QUOTE_W * qs
     else:
-        combined = vs
-    return vs, qs, combined
+        combined = vs_lex
+
+    sem = 0.0
+    if emb is not None and gt.value in emb and ai.value in emb:
+        sem = _cosine(emb[gt.value], emb[ai.value])
+
+    return max(vs_lex, sem), qs, combined, sem
 
 
-def _verdict(combined: float) -> str:
-    if combined >= MATCH_THRESHOLD:
+def _verdict(combined_lexical: float, semantic: float) -> str:
+    """Lexical drives the confident bands; semantic only rescues an otherwise
+    missed pair into a flagged review (never a silent auto_match on an
+    unvalidated cosine threshold)."""
+    if combined_lexical >= MATCH_THRESHOLD:
         return "auto_match"
-    if combined >= REVIEW_THRESHOLD:
+    if combined_lexical >= REVIEW_THRESHOLD:
         return "review"
+    if semantic >= SEMANTIC_MIN:
+        return "semantic_review"
     return "auto_miss"
 
 
@@ -296,19 +369,33 @@ def read_pipeline_output(filepath: str) -> list[AIRow]:
 # Dedup AI claims per cell (keep best provenance per normalised value)
 # ---------------------------------------------------------------------------
 def _dedup_ai(ai: list[AIRow]) -> list[AIRow]:
+    """Collapse near-duplicate AI claims to one representative each, keeping the
+    best-provenance member. Near-duplicate = token_sort_ratio >= AI_DEDUP_RATIO
+    (not just exact-string): "Geneva, Switzerland" and "based in Geneva" are the
+    same claim and must not each count as a hallucination on the precision side
+    (the plant-milk evaluator's rule, eval_lib/metrics.py)."""
     rank = {"exact": 3, "fuzzy": 2, "fuzzy_soft": 1, "none": 0}
-    best: dict[str, AIRow] = {}
+
+    def _better(a: AIRow, b: AIRow) -> AIRow:
+        ar = (a.verified, rank.get(a.match_type, 0))
+        br = (b.verified, rank.get(b.match_type, 0))
+        return a if ar > br else b
+
+    reps: list[AIRow] = []
+    rep_norms: list[str] = []
     for a in ai:
         key = _norm(a.value)
-        cur = best.get(key)
-        if cur is None:
-            best[key] = a
+        hit = None
+        for i, rn in enumerate(rep_norms):
+            if key == rn or fuzz.token_sort_ratio(key, rn) >= AI_DEDUP_RATIO:
+                hit = i
+                break
+        if hit is None:
+            reps.append(a)
+            rep_norms.append(key)
         else:
-            a_rank = (a.verified, rank.get(a.match_type, 0))
-            c_rank = (cur.verified, rank.get(cur.match_type, 0))
-            if a_rank > c_rank:
-                best[key] = a
-    return list(best.values())
+            reps[hit] = _better(reps[hit], a)
+    return reps
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +405,7 @@ def _align_cell(
     gt_rows: list[GTRow],
     ai_rows: list[AIRow],
     is_list: bool,
+    emb: Optional[dict[str, list[float]]] = None,
 ) -> CellResult:
     entity   = gt_rows[0].entity if gt_rows else (ai_rows[0].entity if ai_rows else "?")
     question = gt_rows[0].question if gt_rows else (ai_rows[0].question if ai_rows else "?")
@@ -335,21 +423,24 @@ def _align_cell(
 
     # ── real-claim greedy 1:1 matching ──────────────────────────────────────
     if gt_real and ai_real:
-        S: list[list[tuple[float, float, float]]] = [
-            [_pair_score(g, a) for a in ai_real]
+        # S[i][j] = (value_score, quote_score, combined_lexical, semantic)
+        S: list[list[tuple[float, float, float, float]]] = [
+            [_pair_score(g, a, emb) for a in ai_real]
             for g in gt_real
         ]
         candidates = []
         for i in range(len(gt_real)):
             for j in range(len(ai_real)):
-                vs, qs, comb = S[i][j]
-                if comb >= REVIEW_THRESHOLD:
-                    candidates.append((comb, i, j))
+                vs, qs, comb, sem = S[i][j]
+                # Assignable by a confident lexical score OR a semantic rescue.
+                strength = max(comb, sem if sem >= SEMANTIC_MIN else 0.0)
+                if comb >= REVIEW_THRESHOLD or sem >= SEMANTIC_MIN:
+                    candidates.append((strength, i, j))
         candidates.sort(reverse=True)
 
         used_gt: set[int] = set()
         group_to_ai: dict[int, int] = {}
-        for comb, i, j in candidates:
+        for strength, i, j in candidates:
             if i in used_gt or j in used_ai:
                 continue
             group_to_ai[i] = j
@@ -360,11 +451,12 @@ def _align_cell(
             if i in group_to_ai:
                 j = group_to_ai[i]
                 a = ai_real[j]
-                vs, qs, comb = S[i][j]
+                vs, qs, comb, sem = S[i][j]
                 pairs.append(PairResult(
                     gt_value=g.value, ai_value=a.value,
                     value_score=round(vs, 4), quote_score=round(qs, 4),
-                    combined=round(comb, 4), verdict=_verdict(comb),
+                    combined=round(comb, 4), verdict=_verdict(comb, sem),
+                    semantic=round(sem, 4),
                 ))
             else:
                 pairs.append(PairResult(
@@ -399,11 +491,30 @@ def _align_cell(
                 verdict="no_ai_data" if no_ai_at_all else "auto_miss",
             ))
 
-    # ── AI-only leftovers ────────────────────────────────────────────────────
+    # ── AI-only leftovers: separate genuine extras (FP) from restatements ────
+    # A leftover AI claim that is a near-duplicate (lexical >= AI_DEDUP_RATIO)
+    # or a semantic match (cosine >= SEMANTIC_MIN) of an ALREADY-CREDITED AI
+    # claim in this cell is a redundant restatement, not a new false claim —
+    # e.g. "Geneva" alongside a matched "Geneva, Switzerland". It is dropped
+    # from the precision denominator (the plant-milk "redundant" category),
+    # not counted as a hallucination.
+    matched_real = [ai_real[j] for j in used_ai]
+
+    def _is_restatement(a: AIRow) -> bool:
+        for m in matched_real:
+            if fuzz.token_sort_ratio(_norm(a.value), _norm(m.value)) >= AI_DEDUP_RATIO:
+                return True
+            if emb is not None and a.value in emb and m.value in emb:
+                if _cosine(emb[a.value], emb[m.value]) >= SEMANTIC_MIN:
+                    return True
+        return False
+
     ai_only: list[AIRow] = []
+    redundant: list[AIRow] = []
     for j, a in enumerate(ai_real):
-        if j not in used_ai:
-            ai_only.append(a)
+        if j in used_ai:
+            continue
+        (redundant if _is_restatement(a) else ai_only).append(a)
     # AI null claims that don't match any GT null are also precision-side
     for j, a in enumerate(ai_null):
         if j not in used_null_ai:
@@ -415,14 +526,25 @@ def _align_cell(
 
     return CellResult(
         entity=entity, question=question, is_list=is_list,
-        gt_pairs=pairs, ai_only=ai_only,
+        gt_pairs=pairs, ai_only=ai_only, redundant=redundant,
     )
 
 
 # ---------------------------------------------------------------------------
 # Full evaluation
 # ---------------------------------------------------------------------------
-def evaluate(gt: list[GTRow], ai: list[AIRow]) -> EvalResult:
+def evaluate(gt: list[GTRow], ai: list[AIRow], semantic: bool = True) -> EvalResult:
+    # Embed every real (non-null) GT and AI value ONCE for the whole run — one
+    # Ollama batch, then O(1) lookups during alignment. None => lexical-only.
+    emb: Optional[dict[str, list[float]]] = None
+    if semantic:
+        texts = [g.value for g in gt if not g.is_null]
+        texts += [a.value for a in ai if not _is_null(a.value)]
+        emb = embed_values(texts)
+        if emb is not None:
+            print(f"  [semantic matching ON] embedded {len(emb)} distinct values "
+                  f"(mean-centred nomic-embed)")
+
     # Build cell index
     cells: dict[tuple[str, str], dict] = {}
     for g in gt:
@@ -465,16 +587,15 @@ def evaluate(gt: list[GTRow], ai: list[AIRow]) -> EvalResult:
     for key, slot in cells.items():
         if not slot["gt"] and not slot["ai"]:
             continue
-        results.append(_align_cell(slot["gt"], slot["ai"], slot["is_list"]))
+        results.append(_align_cell(slot["gt"], slot["ai"], slot["is_list"], emb))
 
     results.sort(key=lambda c: (c.entity, c.question))
 
     # ── aggregate metrics ─────────────────────────────────────────────────
+    _TP_VERDICTS = ("auto_match", "review", "semantic_review", "null_match")
+
     def _cell_counts(cell: CellResult) -> tuple[int, int, int]:
-        tp = sum(
-            1 for p in cell.gt_pairs
-            if p.verdict in ("auto_match", "review", "null_match")
-        )
+        tp = sum(1 for p in cell.gt_pairs if p.verdict in _TP_VERDICTS)
         fn = sum(
             1 for p in cell.gt_pairs
             if p.verdict in ("auto_miss", "no_ai_data")
@@ -518,6 +639,10 @@ def evaluate(gt: list[GTRow], ai: list[AIRow]) -> EvalResult:
     overall = _metrics(total_tp, total_fn, total_fp)
     overall["cells"] = len(results)
     overall["entities"] = len({c.entity for c in results})
+    overall["semantic_rescues"] = sum(
+        1 for c in results for p in c.gt_pairs if p.verdict == "semantic_review"
+    )
+    overall["redundant_dropped"] = sum(len(c.redundant) for c in results)
 
     return EvalResult(cells=results, per_question=pq_metrics, overall=overall)
 
@@ -544,6 +669,13 @@ def print_report(result: EvalResult, verbose: bool = False) -> None:
           f"{o['F1']:6.3f}  {o['hallucination_rate']:6.3f}  "
           f"{o['cells']} cells / {o['entities']} entities")
     print(f"  TP={o['TP']}  FN={o['FN']}  FP={o['FP']}")
+    if o.get("semantic_rescues"):
+        print(f"  ({o['semantic_rescues']} of those TP were semantic rescues — "
+              f"lexically missed, matched by meaning; verdict 'semantic_review', "
+              f"inspect in the Detail sheet)")
+    if o.get("redundant_dropped"):
+        print(f"  ({o['redundant_dropped']} AI claim(s) dropped as redundant "
+              f"restatements of a credited claim — not counted as hallucination)")
 
     if verbose:
         print()
@@ -555,9 +687,10 @@ def print_report(result: EvalResult, verbose: bool = False) -> None:
             print(f"\n  [{cell.entity} / {cell.question}]  ({q_type})")
             for p in cell.gt_pairs:
                 ai_str = repr(p.ai_value[:50]) if p.ai_value else "(none)"
-                print(f"    [{p.verdict:10}] GT {repr(p.gt_value[:45])}")
+                print(f"    [{p.verdict:15}] GT {repr(p.gt_value[:45])}")
                 print(f"               -> AI {ai_str}  "
-                      f"V={p.value_score:.2f} Q={p.quote_score:.2f} C={p.combined:.2f}")
+                      f"V={p.value_score:.2f} Q={p.quote_score:.2f} "
+                      f"C={p.combined:.2f} S={p.semantic:.2f}")
             for a in cell.ai_only:
                 ver = "✓" if a.verified else "✗"
                 print(f"    [ai_only   ] {ver} AI {repr(a.value[:50])}")
@@ -594,15 +727,24 @@ def write_report_excel(result: EvalResult, output_path: str) -> None:
                 "is_list": cell.is_list,
                 "gt_value": p.gt_value, "ai_value": p.ai_value or "",
                 "value_score": p.value_score, "quote_score": p.quote_score,
-                "combined": p.combined, "verdict": p.verdict,
+                "semantic": p.semantic, "combined": p.combined,
+                "verdict": p.verdict,
             })
         for a in cell.ai_only:
             detail_rows.append({
                 "entity": cell.entity, "question": cell.question,
                 "is_list": cell.is_list,
                 "gt_value": "", "ai_value": a.value,
-                "value_score": 0, "quote_score": 0, "combined": 0,
+                "value_score": 0, "quote_score": 0, "semantic": 0, "combined": 0,
                 "verdict": "ai_only",
+            })
+        for a in cell.redundant:
+            detail_rows.append({
+                "entity": cell.entity, "question": cell.question,
+                "is_list": cell.is_list,
+                "gt_value": "", "ai_value": a.value,
+                "value_score": 0, "quote_score": 0, "semantic": 0, "combined": 0,
+                "verdict": "redundant",
             })
 
     with pd.ExcelWriter(output_path, engine="openpyxl") as w:
@@ -624,6 +766,8 @@ def main() -> None:
     parser.add_argument("--output", help="Optional path for Excel report output")
     parser.add_argument("--verbose", action="store_true",
                         help="Print cell-level alignment detail")
+    parser.add_argument("--no-semantic", action="store_true",
+                        help="Disable embedding-based semantic matching (lexical only)")
     args = parser.parse_args()
 
     print(f"GT      : {args.ground_truth}")
@@ -633,7 +777,7 @@ def main() -> None:
     ai  = read_pipeline_output(args.pipeline_output)
     print(f"Loaded  : {len(gt)} GT rows, {len(ai)} AI claims")
 
-    result = evaluate(gt, ai)
+    result = evaluate(gt, ai, semantic=not args.no_semantic)
     print_report(result, verbose=args.verbose)
 
     if args.output:

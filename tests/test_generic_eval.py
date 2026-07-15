@@ -113,6 +113,21 @@ def test_semantic_never_upgrades_to_confident_auto_match(monkeypatch):
     print("OK test_semantic_never_upgrades_to_confident_auto_match passed")
 
 
+def test_semantic_disabled_on_list_items(monkeypatch):
+    # Distinct named list items (Firefox / Thunderbird / Common Voice) embed to
+    # nearly one axis; semantic must NOT credit one project for another. On a
+    # list cell a lexically-distinct AI item leaves the GT item a miss.
+    _inject_embeddings(monkeypatch, [["firefox", "thunderbird", "common voice", "webmaker"]])
+    gt = [_gt("Mozilla", "Main projects", "Firefox", is_list=True),
+          _gt("Mozilla", "Main projects", "Thunderbird", is_list=True)]
+    ai = [_ai("Mozilla", "Main projects", "Common Voice"),
+          _ai("Mozilla", "Main projects", "Webmaker")]
+    r = evaluate(gt, ai, semantic=True)
+    # No semantic rescue: both GT items miss, both AI items are FP (real extras).
+    assert r.overall["TP"] == 0 and r.overall["semantic_rescues"] == 0
+    print("OK test_semantic_disabled_on_list_items passed")
+
+
 # ── Redundant restatements ───────────────────────────────────────────────────
 
 def test_redundant_restatements_not_counted_as_hallucination(monkeypatch):

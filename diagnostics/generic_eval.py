@@ -428,13 +428,22 @@ def _align_cell(
             [_pair_score(g, a, emb) for a in ai_real]
             for g in gt_real
         ]
+        # Semantic rescue is for single-answer PROSE cells (missions,
+        # descriptions), where a paraphrase is the same answer. It is DISABLED
+        # for list cells: named list items need identity, not similarity —
+        # mean-centred nomic embeddings put all short proper nouns (Firefox,
+        # Thunderbird, Common Voice) on nearly one axis, so cosine ~1 between
+        # DISTINCT items would falsely credit one project for another
+        # (observed on task1 Mozilla, 2026-07-15).
+        sem_allowed = not is_list
+
         candidates = []
         for i in range(len(gt_real)):
             for j in range(len(ai_real)):
                 vs, qs, comb, sem = S[i][j]
-                # Assignable by a confident lexical score OR a semantic rescue.
-                strength = max(comb, sem if sem >= SEMANTIC_MIN else 0.0)
-                if comb >= REVIEW_THRESHOLD or sem >= SEMANTIC_MIN:
+                sem_ok = sem_allowed and sem >= SEMANTIC_MIN
+                strength = max(comb, sem if sem_ok else 0.0)
+                if comb >= REVIEW_THRESHOLD or sem_ok:
                     candidates.append((strength, i, j))
         candidates.sort(reverse=True)
 
@@ -455,7 +464,8 @@ def _align_cell(
                 pairs.append(PairResult(
                     gt_value=g.value, ai_value=a.value,
                     value_score=round(vs, 4), quote_score=round(qs, 4),
-                    combined=round(comb, 4), verdict=_verdict(comb, sem),
+                    combined=round(comb, 4),
+                    verdict=_verdict(comb, sem if sem_allowed else 0.0),
                     semantic=round(sem, 4),
                 ))
             else:
@@ -504,7 +514,9 @@ def _align_cell(
         for m in matched_real:
             if fuzz.token_sort_ratio(_norm(a.value), _norm(m.value)) >= AI_DEDUP_RATIO:
                 return True
-            if emb is not None and a.value in emb and m.value in emb:
+            # Semantic "same claim" only for single-answer cells — on lists it
+            # would wrongly merge distinct named items (see the matching note).
+            if not is_list and emb is not None and a.value in emb and m.value in emb:
                 if _cosine(emb[a.value], emb[m.value]) >= SEMANTIC_MIN:
                     return True
         return False

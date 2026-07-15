@@ -353,10 +353,14 @@ SUMMARY_MAX_ITEMS_PER_LINE = 8
 # "(more in Provenance)".
 SUMMARY_MAX_LINES_PER_CELL = 3
 
-# Cells whose citable input is a single claim no longer than this render
-# deterministically ("own-product [C0201]") with no LLM call — compact by
-# construction, zero faithfulness risk, and removes the s3-era gloss/filler
-# failure mode on tag cells instead of prompting around it.
+# Cells whose citable values are ALL no longer than this render
+# deterministically with no LLM call (src/summarize.py deterministic_answer,
+# 2026-07-15 — generalized from the single-tag s4 route): bare yes/no/true/
+# false claims collapse to one cited verdict ("Yes [C0046, C0089]"), every
+# other short value renders verbatim ("MIL-STD 810 testing [C0037]"),
+# '; '-joined and capped at SUMMARY_MAX_ITEMS_PER_LINE. Compact by
+# construction, zero faithfulness risk; the LLM only sees cells with
+# prose-length claims, where synthesis earns its risk.
 SUMMARY_TAG_MAX_CHARS = 80
 
 # Per-call timeout (seconds). The OpenAI SDK adds its own retries on

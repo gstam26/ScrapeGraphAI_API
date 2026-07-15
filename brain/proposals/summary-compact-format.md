@@ -74,3 +74,42 @@ that this serves the client deliverable before it ships client-facing.
 - **George:** approve the line format + overflow cap default (proposed: 8
   items/line) + the deterministic tag-route; spot-label ~20 lines post-build.
 - **Nick:** confirm compact register is what the deliverable wants.
+
+## 2026-07-15 addendum: deterministic answer route (routing v2, prompt stays s6)
+
+George's direction after hand-labelling the CMO s6 output (41 rows, all three
+ship bars passed on CMO data): an analyst wants the ANSWER — Yes/No, a number,
+a list — not prose about the answer, and Provenance already carries the
+audit depth. The cells that read worst (EOL "confirms having end-of-line
+testing capability"; the "8 items across 6 themes" digest fallback) were all
+short-tag cells pushed through a prose prompt.
+
+Change (src/summarize.py `deterministic_answer`): the s4 single-tag route now
+covers EVERY cell whose citable values are all <= SUMMARY_TAG_MAX_CHARS:
+
+- bare yes/y/true and no/n/false claims collapse to ONE cited verdict:
+  "Yes [C0046, C0089]". A genuine split renders both sides, never a merged
+  verdict: "Conflicting: Yes [C0046] / No [C0091]".
+- every other short value renders verbatim: "MIL-STD 810 testing [C0037]",
+  '; '-joined, capped at SUMMARY_MAX_ITEMS_PER_LINE with the standard
+  "(more in Provenance)" overflow marker.
+- one prose-length value anywhere -> whole cell keeps the LLM path (never
+  mix verbatim and synthesized text inside one cell).
+
+Consequences: binary/numeric/categorical/list questions never touch the LLM
+(no hallucination surface, no gate failures, no digest fallbacks, fewer Azure
+calls); the s6 prompt is UNCHANGED and stays reserved for prose cells
+(Description, news, independence) where its 3-line synthesis passed George's
+eyeball and the bars. Model column reads "deterministic-answer".
+
+Eval implications: prompt unchanged -> no scaffolding round spent, no
+re-label session owed. Next fresh workbook: re-run judge + corruptions +
+self-agreement legs (automated) to confirm the population shift; judge is
+already certified on two domains, so spot-checks suffice for the new
+deterministic renders (faithful by construction — every token is a verified
+claim or a citation).
+
+NOT done (deliberate): no question-type metadata/config — claim-shape routing
+needs none for the baseline; week-2 instructions can add per-question format
+directives to the extractor AND (if still wanted) per-cell prompt directives,
+measured as one before/after. Grouping/aggregate untouched (locked chain).

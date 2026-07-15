@@ -17,16 +17,19 @@ from src.summarize import mechanical_gate, summarize_groups
 
 
 # ── Fixture data: one entity/question cell, 8 verified claims -> C0001-C0008 ──
+# Values are deliberately prose-length (> SUMMARY_TAG_MAX_CHARS): the
+# 2026-07-15 deterministic answer route diverts all-short-value cells away
+# from the LLM, and these fixtures exercise the LLM path.
 
 _VALUES = [
-    "Regulatory clearance for assay Z",
-    "Regulatory approval in Europe",
-    "Regulatory approval for kit A",
-    "Launch of product line A",
-    "New product launch in Japan",
-    "Partnership with Acme Corp",
-    "Global partnership deal signed",
-    "Opened new facility in Kyoto",
+    "Regulatory clearance for assay Z was granted by the FDA following an expedited review of the submission",
+    "Regulatory approval in Europe was confirmed by the EMA for the full diagnostic product family this spring",
+    "Regulatory approval for kit A was announced alongside an expanded reimbursement agreement in three markets",
+    "Launch of product line A took place at the annual industry congress with immediate availability in the US",
+    "New product launch in Japan followed local registration and a distribution partnership with a Tokyo firm",
+    "Partnership with Acme Corp was signed to co-develop companion diagnostics over an initial five-year term",
+    "Global partnership deal signed with a major pharmaceutical group covering biomarker discovery worldwide",
+    "Opened new facility in Kyoto to expand regional manufacturing capacity and shorten delivery lead times",
 ]
 
 
@@ -211,13 +214,101 @@ def test_tag_only_cell_routed_deterministically(monkeypatch):
     s = out[0]
     assert s["summary"] == "own-product [C0001]"
     assert s["gate"] == "pass"
-    assert s["model"] == "deterministic-tag"
+    assert s["model"] == "deterministic-answer"
     assert s["cited_ids"] == ["C0001"] and s["input_claim_ids"] == ["C0001"]
     assert s["prompt_version"] == summarize_mod.PROMPT_VERSION
     # The judge/eval legs read Raw Response — empty made tag cells
     # unjudgeable (13 "no sentences" on the 2026-07-14 CMO run).
     assert s["raw_response"] == "own-product [C0001]"
     print("OK test_tag_only_cell_routed_deterministically passed")
+
+
+# ── Deterministic answer route (2026-07-15, George's analyst format) ─────────
+
+def _short_value_fixture(values: list[str], question: str = "EOL testing?"):
+    cell = ExtractedCell(
+        entity="Acme", source_url="https://a.example.com", column=question,
+        value=list(values),
+        evidence=[SourceQuote(value=v, quote=v, source_url="https://a.example.com",
+                              verified=True) for v in values],
+    )
+    rows = [ExtractedRow(entity="Acme", cells=[cell], all_cells=[cell])]
+    groups = [{"entity": "Acme", "question": question, "theme": ALL_ITEMS_THEME,
+               "n_items": len(values), "values": list(values), "sources": 1}]
+    return groups, rows
+
+
+def test_binary_consensus_collapses_to_one_verdict(monkeypatch):
+    # The George-pasted EOL cell: {MIL-STD 810 testing, Yes, True} previously
+    # went to the LLM ("Benchmark Electronics confirms having end-of-line
+    # testing capability") — now a verbatim verdict + evidence line, no call.
+    groups, rows = _short_value_fixture(["MIL-STD 810 testing", "Yes", "True"])
+    monkeypatch.setattr(summarize_mod, "make_client",
+                        lambda: (_ for _ in ()).throw(AssertionError("LLM built for short-value cell")))
+    out = summarize_groups(groups, rows)
+
+    assert len(out) == 1
+    s = out[0]
+    assert s["summary"] == "Yes [C0002, C0003]; MIL-STD 810 testing [C0001]"
+    assert s["model"] == "deterministic-answer" and s["gate"] == "pass"
+    assert s["raw_response"] == s["summary"]
+    assert s["cited_ids"] == ["C0001", "C0002", "C0003"]
+    print("OK test_binary_consensus_collapses_to_one_verdict passed")
+
+
+def test_binary_conflict_never_merges_verdicts(monkeypatch):
+    groups, rows = _short_value_fixture(["Yes", "No"])
+    monkeypatch.setattr(summarize_mod, "make_client",
+                        lambda: (_ for _ in ()).throw(AssertionError("LLM built for short-value cell")))
+    out = summarize_groups(groups, rows)
+    assert out[0]["summary"] == "Conflicting: Yes [C0001] / No [C0002]"
+    print("OK test_binary_conflict_never_merges_verdicts passed")
+
+
+def test_short_value_list_capped_with_provenance_marker(monkeypatch):
+    from config import SUMMARY_MAX_ITEMS_PER_LINE
+
+    values = [f"Site {chr(65 + i)}, Country {i}" for i in range(SUMMARY_MAX_ITEMS_PER_LINE + 2)]
+    groups, rows = _short_value_fixture(values, question="Manufacturing locations")
+    monkeypatch.setattr(summarize_mod, "make_client",
+                        lambda: (_ for _ in ()).throw(AssertionError("LLM built for short-value cell")))
+    out = summarize_groups(groups, rows)
+
+    s = out[0]
+    assert s["summary"].startswith("Site A, Country 0 [C0001]; ")
+    assert s["summary"].endswith("(more in Provenance)")
+    assert s["summary"].count(";") == SUMMARY_MAX_ITEMS_PER_LINE - 1  # 8 shown
+    # All claims stay in the input set even when not all are rendered.
+    assert len(s["input_claim_ids"]) == len(values)
+    print("OK test_short_value_list_capped_with_provenance_marker passed")
+
+
+def test_one_long_value_sends_whole_cell_to_llm(monkeypatch):
+    long_claim = ("The company confirmed end-of-line testing capability across "
+                  "all three manufacturing campuses following the 2024 audit cycle")
+    assert len(long_claim) > 80
+    groups, rows = _short_value_fixture(["Yes", long_claim])
+    prompts = _patch_azure(monkeypatch, text="EOL testing: confirmed [C0001, C0002]")
+    out = summarize_groups(groups, rows)
+
+    assert len(prompts) == 1  # LLM path taken
+    assert out[0]["model"] != "deterministic-answer"
+    print("OK test_one_long_value_sends_whole_cell_to_llm passed")
+
+
+def test_deterministic_answer_unit_rules():
+    from src.summarize import deterministic_answer
+
+    # Case/punctuation-insensitive verdicts; tight vocabulary.
+    assert deterministic_answer([("C0001", "TRUE"), ("C0002", "yes.")]) == "Yes [C0001, C0002]"
+    assert deterministic_answer([("C0001", "False")]) == "No [C0001]"
+    # Qualified answers are NOT verdicts — verbatim like any short claim.
+    assert deterministic_answer([("C0001", "Yes, via subcontractors")]) == \
+        "Yes, via subcontractors [C0001]"
+    # Any long value -> None (LLM path).
+    assert deterministic_answer([("C0001", "x" * 81)]) is None
+    assert deterministic_answer([]) is None
+    print("OK test_deterministic_answer_unit_rules passed")
 
 
 # ── summarize_groups end-to-end (mocked Azure) ────────────────────────────────
@@ -279,7 +370,11 @@ def test_summarize_groups_missing_key_raises(monkeypatch):
 
 def test_prompt_member_cap_marks_overflow_and_hides_ids(monkeypatch):
     n = SUMMARY_MAX_CLAIMS_PER_THEME + 3
-    values = [f"Distinct verified claim number {i}" for i in range(n)]
+    values = [
+        f"Distinct verified claim number {i} describing a separate regulatory "
+        "clearance for one of the company's diagnostic assay product lines"
+        for i in range(n)
+    ]
     cell = ExtractedCell(
         entity="Big", source_url="u", column="Q", value=list(values),
         evidence=[SourceQuote(value=v, quote=v, verified=True) for v in values],
@@ -300,7 +395,10 @@ def test_prompt_member_cap_marks_overflow_and_hides_ids(monkeypatch):
 
 
 def test_all_items_cell_prompt_has_no_theme_label(monkeypatch):
-    values = ["alpha corp", "beta gmbh"]
+    values = [
+        "alpha corp operates as an original equipment manufacturer serving hospital laboratory customers",
+        "beta gmbh operates as a contract developer of reagents and consumables for point-of-care testing",
+    ]
     cell = ExtractedCell(
         entity="S", source_url="u", column="Company type", value=list(values),
         evidence=[SourceQuote(value=v, quote=v, verified=True) for v in values],

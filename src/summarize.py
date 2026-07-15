@@ -73,6 +73,13 @@ from src.io_excel import _norm_claim, build_claim_index
 # employees" — a statement no source makes. (b) Absence assertions: "No
 # evidence X manufactures in China" is an inference about the corpus, not
 # a claim's content. Both are cited-but-unsupported — the worst kind.
+# 2026-07-15 ROUTING change (prompt unchanged, version stays s6): the
+# deterministic route below now covers every all-short-values cell, not just
+# single-tag cells — binary verdicts, numbers, categories and location-style
+# lists render verbatim with per-value citations and no LLM call (George's
+# analyst-format direction: "Yes/No, a number, a list — easy on the eye";
+# Provenance carries the depth). The LLM path is reserved for cells with
+# prose-length claims, where synthesis actually adds something.
 PROMPT_VERSION = "s6"
 
 # Citation parsing. The model batches IDs inside one bracket —
@@ -139,6 +146,75 @@ def _join_units(units: list[str], like: str) -> str:
     otherwise (s3 prose). Used by the eval corruption legs so a corrupted
     multi-line summary stays multi-line and unit indices stay aligned."""
     return ("\n" if "\n" in (like or "").strip() else " ").join(units)
+
+
+# Boolean claim vocabulary for the deterministic answer route. Deliberately
+# tight: only bare yes/no/true/false (any case, trailing punctuation ignored)
+# count as verdicts. Anything else — "Yes, via subcontractors", "No details
+# disclosed" — is NOT a verdict and renders verbatim like any other claim.
+_BOOL_TRUE = {"yes", "y", "true"}
+_BOOL_FALSE = {"no", "n", "false"}
+_TRAILING_PUNCT_RE = re.compile(r"[\s.,;:!]+$")
+
+
+def _bool_class(value: str) -> str | None:
+    v = _TRAILING_PUNCT_RE.sub("", str(value)).strip().lower()
+    if v in _BOOL_TRUE:
+        return "Yes"
+    if v in _BOOL_FALSE:
+        return "No"
+    return None
+
+
+def deterministic_answer(pairs: list[tuple[str, str]]) -> str | None:
+    """Render a cell's citable (claim_id, value) pairs as a compact verbatim
+    answer line, or return None when the cell needs the LLM.
+
+    Applies only when EVERY value is tag-length (<= SUMMARY_TAG_MAX_CHARS):
+    binary questions, numbers, categories, location/certification lists —
+    the cells where uninstructed extraction emits short values and an analyst
+    wants the value itself, not prose about it (George, 2026-07-15). One long
+    value anywhere sends the whole cell to the LLM: mixing verbatim rendering
+    with synthesis inside one cell would blur which text is which.
+
+    Rendering rules, all mechanical:
+      - bare yes/true and no/false claims collapse into ONE leading verdict
+        with their citations merged: "Yes [C0046, C0089]". A genuine split
+        renders both sides, never a merged verdict no source states:
+        "Conflicting: Yes [C0046] / No [C0091]".
+      - every other value renders verbatim as "value [Cid]", '; '-joined,
+        capped at SUMMARY_MAX_ITEMS_PER_LINE with the standard visible
+        "(more in Provenance)" overflow marker (nothing dropped silently).
+
+    Faithful by construction — every rendered token is a verified claim or a
+    citation — so there is nothing for the citation gate or judge to catch;
+    rows still carry the rendered line as raw_response so both remain able
+    to check it (the 2026-07-14 lesson).
+    """
+    if not pairs or any(len(v) > SUMMARY_TAG_MAX_CHARS for _, v in pairs):
+        return None
+
+    yes_ids = [cid for cid, v in pairs if _bool_class(v) == "Yes"]
+    no_ids = [cid for cid, v in pairs if _bool_class(v) == "No"]
+    others = [(cid, v) for cid, v in pairs if _bool_class(v) is None]
+
+    parts: list[str] = []
+    if yes_ids and no_ids:
+        parts.append(
+            f"Conflicting: Yes [{', '.join(yes_ids)}] / No [{', '.join(no_ids)}]"
+        )
+    elif yes_ids:
+        parts.append(f"Yes [{', '.join(yes_ids)}]")
+    elif no_ids:
+        parts.append(f"No [{', '.join(no_ids)}]")
+
+    shown = others[: SUMMARY_MAX_ITEMS_PER_LINE]
+    parts.extend(f"{v} [{cid}]" for cid, v in shown)
+
+    line = "; ".join(parts)
+    if len(others) > len(shown):
+        line += " (more in Provenance)"
+    return line
 
 
 def make_client():
@@ -335,49 +411,55 @@ def summarize_groups(claim_groups: list[dict], rows: list) -> list[dict]:
             # Nothing citable — no summary row, mirroring "no group, no row".
             continue
 
-        # Tag-only route (s4): a cell whose entire citable input is one short
-        # claim renders deterministically — "own-product [C0201]" — with no
-        # LLM call. Compact by construction, nothing to hallucinate, and it
-        # removes the s3-era gloss/filler failure mode on tag cells instead
-        # of prompting around it.
-        if len(input_ids) == 1:
-            only_id = next(iter(input_ids))
-            values = [
-                str(v).strip()
-                for g in groups for v in g.get("values", [])
-                if claim_index.get((entity, question, _norm_claim(v)))
-            ]
-            if values and len(values[0]) <= SUMMARY_TAG_MAX_CHARS:
-                rendered = f"{values[0]} [{only_id}]"
-                deterministic.append({
-                    "entity": entity,
-                    "question": question,
-                    "summary": rendered,
-                    "cited_ids": [only_id],
-                    "uncited_sentences": [],
-                    "input_claim_ids": [only_id],
-                    "gate": "pass",
-                    "model": "deterministic-tag",
-                    "prompt_version": PROMPT_VERSION,
-                    "generated_at": generated_at,
-                    "system_fingerprint": None,
-                    "prompt": "",
-                    # The judge and the eval legs read the Summary Log's Raw
-                    # Response column (never the possibly-annotated sheet
-                    # cell). An empty string here made every tag cell
-                    # unjudgeable — 13 "no sentences" failures and 5 auto-miss
-                    # corruptions on the 2026-07-14 CMO s6 run. The rendered
-                    # line IS this deterministic path's raw response.
-                    "raw_response": rendered,
-                    "duration_ms": 0,
-                    "error": None,
-                })
-                continue
+        # Deterministic answer route (2026-07-15, generalizing the s4
+        # tag-only route): a cell whose citable values are ALL tag-length
+        # renders verbatim with per-value citations and no LLM call —
+        # "Yes [C0046, C0089]; MIL-STD 810 testing [C0037]". Covers binary,
+        # numeric, categorical and location-list cells; nothing to
+        # hallucinate, and short-tag cells were exactly where LLM prose read
+        # worst (s3 gloss/filler; s6 "confirms having..." verbosity). Pairs
+        # are collected across ALL groups uncapped — the per-theme prompt cap
+        # exists for the LLM's context, not for a verbatim render.
+        pairs: list[tuple[str, str]] = []
+        seen_ids: set[str] = set()
+        for g in groups:
+            for v in g.get("values", []):
+                hit = claim_index.get((entity, question, _norm_claim(v)))
+                if hit and hit[0] not in seen_ids:
+                    seen_ids.add(hit[0])
+                    pairs.append((hit[0], str(v).strip()))
+        rendered = deterministic_answer(pairs)
+        if rendered is not None:
+            cited = cited_ids(rendered)
+            deterministic.append({
+                "entity": entity,
+                "question": question,
+                "summary": rendered,
+                "cited_ids": sorted(set(cited)),
+                "uncited_sentences": [],
+                "input_claim_ids": sorted(cid for cid, _ in pairs),
+                "gate": "pass",
+                "model": "deterministic-answer",
+                "prompt_version": PROMPT_VERSION,
+                "generated_at": generated_at,
+                "system_fingerprint": None,
+                "prompt": "",
+                # The judge and the eval legs read the Summary Log's Raw
+                # Response column (never the possibly-annotated sheet
+                # cell). An empty string here made every tag cell
+                # unjudgeable — 13 "no sentences" failures and 5 auto-miss
+                # corruptions on the 2026-07-14 CMO s6 run. The rendered
+                # line IS this deterministic path's raw response.
+                "raw_response": rendered,
+                "duration_ms": 0,
+                "error": None,
+            })
+            continue
 
         jobs.append((entity, question, prompt, input_ids, top_sets))
 
     if deterministic:
-        print(f"  -> {len(deterministic)} tag-only cell(s) rendered deterministically (no LLM call)")
+        print(f"  -> {len(deterministic)} short-value cell(s) rendered deterministically (no LLM call)")
     if not jobs:
         return deterministic
 

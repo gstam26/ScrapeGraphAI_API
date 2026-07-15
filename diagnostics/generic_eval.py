@@ -244,12 +244,15 @@ def read_pipeline_output(filepath: str) -> list[AIRow]:
     df = pd.read_excel(xls, sheet_name=prov_sheet)
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
 
-    # Normalise column aliases
+    # Normalise column aliases. The Provenance schema was renamed after this
+    # evaluator was first written (2026-07-07): the question column is now
+    # "Question" (was "Column") and the quote column is "Verbatim Quote" (was
+    # "Quote"). Both spellings are accepted so old and new workbooks evaluate.
     col_map = {
         "claim":    ["claim"],
-        "column":   ["column"],
+        "column":   ["column", "question"],
         "entity":   ["entity"],
-        "quote":    ["quote"],
+        "quote":    ["verbatim_quote", "quote"],
         "verified": ["verified"],
         "match_type": ["match_type", "match type"],
         "source_url": ["source_url", "source url"],

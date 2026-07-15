@@ -265,35 +265,114 @@ def test_binary_conflict_never_merges_verdicts(monkeypatch):
     print("OK test_binary_conflict_never_merges_verdicts passed")
 
 
-def test_short_value_list_capped_with_provenance_marker(monkeypatch):
+def test_multi_value_cell_routes_to_llm_merge(monkeypatch):
+    # George's s6c review: "Tempe, Arizona [C..]; Tempe, AZ [C..]" repeats the
+    # same fact under variant spellings — semantic dedup is the LLM's job.
+    values = ["Tempe, Arizona", "Tempe, AZ", "U.S."]
+    groups, rows = _short_value_fixture(values, question="HQ Location(s)?")
+    prompts = _patch_azure(monkeypatch, text="Tempe, AZ [C0001, C0002]; U.S. [C0003]")
+    out = summarize_groups(groups, rows)
+
+    assert len(prompts) == 1
+    p = prompts[0]
+    assert "[C0001] Tempe, Arizona" in p and "[C0002] Tempe, AZ" in p
+    assert "Merge values that say the same thing" in p
+    s = out[0]
+    assert s["gate"] == "pass"
+    assert s["model"] != "deterministic-answer"
+    assert s["summary"] == "Tempe, AZ [C0001, C0002]; U.S. [C0003]"
+    # Readable degradation ready if the gate had failed: the verbatim render.
+    assert s["fallback_text"] == "Tempe, Arizona [C0001]; Tempe, AZ [C0002]; U.S. [C0003]"
+    print("OK test_multi_value_cell_routes_to_llm_merge passed")
+
+
+def test_merge_route_prompt_uncapped_fallback_capped(monkeypatch):
     from config import SUMMARY_MAX_ITEMS_PER_LINE
 
     values = [f"Site {chr(65 + i)}, Country {i}" for i in range(SUMMARY_MAX_ITEMS_PER_LINE + 2)]
     groups, rows = _short_value_fixture(values, question="Manufacturing locations")
-    monkeypatch.setattr(summarize_mod, "make_client",
-                        lambda: (_ for _ in ()).throw(AssertionError("LLM built for short-value cell")))
+    prompts = _patch_azure(monkeypatch, text="uncited")  # gate will fail
     out = summarize_groups(groups, rows)
 
+    # The model sees every value (merging may collapse them below the cap)...
+    assert all(f"[C{i + 1:04d}] {v}" in prompts[0] for i, v in enumerate(values))
     s = out[0]
-    assert s["summary"].startswith("Site A, Country 0 [C0001]; ")
-    assert s["summary"].endswith("(more in Provenance)")
-    assert s["summary"].count(";") == SUMMARY_MAX_ITEMS_PER_LINE - 1  # 8 shown
-    # All claims stay in the input set even when not all are rendered.
+    assert s["gate"].startswith("failed citation gate")
+    # ...while the deterministic fallback stays capped and marked.
+    assert s["fallback_text"].endswith("(more in Provenance)")
+    assert s["fallback_text"].count(";") == SUMMARY_MAX_ITEMS_PER_LINE - 1
     assert len(s["input_claim_ids"]) == len(values)
-    print("OK test_short_value_list_capped_with_provenance_marker passed")
+    print("OK test_merge_route_prompt_uncapped_fallback_capped passed")
 
 
-def test_one_long_value_sends_whole_cell_to_llm(monkeypatch):
+def test_mixed_cell_verdict_prepended_and_booleans_kept_from_prompt(monkeypatch):
+    # Prose route: bare booleans render as a deterministic verdict line; the
+    # LLM never sees them, so a '"True" (2 items)' top theme can no longer
+    # fail the coverage gate (3 of 6 gate failures on the s6c CMO run).
     long_claim = ("The company confirmed end-of-line testing capability across "
                   "all three manufacturing campuses following the 2024 audit cycle")
     assert len(long_claim) > 80
-    groups, rows = _short_value_fixture(["Yes", long_claim])
-    prompts = _patch_azure(monkeypatch, text="EOL testing: confirmed [C0001, C0002]")
+    groups, rows = _short_value_fixture(["Yes", "True", long_claim])
+    prompts = _patch_azure(monkeypatch, text="EOL capability: confirmed across campuses [C0003]")
     out = summarize_groups(groups, rows)
 
-    assert len(prompts) == 1  # LLM path taken
-    assert out[0]["model"] != "deterministic-answer"
-    print("OK test_one_long_value_sends_whole_cell_to_llm passed")
+    assert len(prompts) == 1
+    assert "[C0003]" in prompts[0]
+    assert "C0001" not in prompts[0] and "C0002" not in prompts[0]  # booleans excluded
+    s = out[0]
+    assert s["gate"] == "pass"
+    assert s["summary"] == ("Yes [C0001, C0002]\n"
+                            "EOL capability: confirmed across campuses [C0003]")
+    assert s["raw_response"] == s["summary"]  # judge/eval see the verdict line too
+    assert s["cited_ids"] == ["C0001", "C0002", "C0003"]
+    assert s["input_claim_ids"] == ["C0001", "C0002", "C0003"]
+    print("OK test_mixed_cell_verdict_prepended_and_booleans_kept_from_prompt passed")
+
+
+def test_gate_exempts_trailing_provenance_marker():
+    # s6c: the model placed "(more in Provenance)" after the final period of
+    # single-line output; the fragment must not count as an uncited sentence.
+    text = "Tecan acts as an OEM partner [C0001]. Helps with regulation [C0002]. (more in Provenance)"
+    reasons, _, uncited = mechanical_gate(text, {"C0001", "C0002"}, [])
+    assert uncited == [] and reasons == []
+    # A genuinely uncited sentence still fails.
+    reasons, _, uncited = mechanical_gate(
+        "Cited [C0001]. Totally uncited claim here.", {"C0001"}, [])
+    assert uncited == ["Totally uncited claim here."]
+    print("OK test_gate_exempts_trailing_provenance_marker passed")
+
+
+def test_theme_fallback_renders_medoid_claims_not_bookkeeping():
+    from src.summarize import _theme_fallback
+
+    values = list(_VALUES)
+    cell = ExtractedCell(
+        entity="Acme", source_url="u", column="Recent news", value=values,
+        evidence=[SourceQuote(value=v, quote=v, verified=True) for v in values],
+    )
+    rows = [ExtractedRow(entity="Acme", cells=[cell], all_cells=[cell])]
+    index = build_claim_index(rows)
+    groups = [
+        {"entity": "Acme", "question": "Recent news", "theme": _VALUES[0],
+         "n_items": 3, "values": _VALUES[0:3], "sources": 1},
+        # A pure-boolean theme must be skipped, not rendered as "True [C...]".
+        {"entity": "Acme", "question": "Recent news", "theme": "True",
+         "n_items": 2, "values": [], "sources": 1},
+        {"entity": "Acme", "question": "Recent news", "theme": _VALUES[3],
+         "n_items": 2, "values": _VALUES[3:5], "sources": 1},
+        {"entity": "Acme", "question": "Recent news", "theme": _VALUES[5],
+         "n_items": 2, "values": _VALUES[5:7], "sources": 1},
+        {"entity": "Acme", "question": "Recent news", "theme": _VALUES[7],
+         "n_items": 1, "values": [_VALUES[7]], "sources": 1},
+    ]
+    fb = _theme_fallback("Acme", "Recent news", groups, index)
+    lines = fb.splitlines()
+    assert len(lines) == 3  # SUMMARY_MAX_LINES_PER_CELL
+    assert lines[0] == f"{_VALUES[0]} [C0001, C0002, C0003]"
+    assert lines[1] == f"{_VALUES[3]} [C0004, C0005]"
+    assert lines[2].endswith("(more in Provenance)")  # theme 5 omitted
+    assert "True" not in fb
+    print("OK test_theme_fallback_renders_medoid_claims_not_bookkeeping passed")
 
 
 def test_deterministic_answer_unit_rules():
@@ -387,10 +466,10 @@ def test_prompt_member_cap_marks_overflow_and_hides_ids(monkeypatch):
     out = summarize_groups(groups, rows)
 
     assert "(+3 more claims in this theme, not shown)" in prompts[0]
-    # Hidden members' IDs are NOT part of the closed input set.
-    shown = [f"C{i:04d}" for i in range(1, SUMMARY_MAX_CLAIMS_PER_THEME + 1)]
-    assert out[0]["input_claim_ids"] == shown
+    # Hidden members' IDs never appear in the prompt (the gate's closed set);
+    # the record's input_claim_ids lists the whole cell since s7.
     assert f"C{n:04d}" not in prompts[0]
+    assert out[0]["input_claim_ids"] == [f"C{i:04d}" for i in range(1, n + 1)]
     print("OK test_prompt_member_cap_marks_overflow_and_hides_ids passed")
 
 
@@ -494,6 +573,21 @@ def test_gate_failed_cell_shows_marked_digest_fallback(tmp_path):
     assert cell.startswith(digest_line)
     assert "[fallback: deterministic digest — citation gate failed; see Summary Log]" in cell
     print("OK test_gate_failed_cell_shows_marked_digest_fallback passed")
+
+
+def test_gate_failed_cell_with_fallback_text_shows_verbatim_claims(tmp_path):
+    # s7: records carrying fallback_text degrade to readable verbatim claims,
+    # not the "N items across M themes" digest bookkeeping (George, s6c).
+    failed = _summary_record(
+        gate="failed citation gate: 1 uncited sentence(s)",
+        fallback_text="Launch of product line A [C0004, C0005]",
+    )
+    wb = _write_workbook(tmp_path, [failed])
+    cell = wb["AI Summary"].cell(row=2, column=2).value
+    assert cell.startswith("Launch of product line A [C0004, C0005]")
+    assert "[fallback: verbatim claims — citation gate failed; see Summary Log]" in cell
+    assert "items across" not in cell
+    print("OK test_gate_failed_cell_with_fallback_text_shows_verbatim_claims passed")
 
 
 def test_call_failed_cell_marked(tmp_path):

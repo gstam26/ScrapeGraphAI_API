@@ -711,10 +711,19 @@ def _make_ai_summary_df(
                 text = s.get("summary", "")
             else:
                 marker = "call failed" if gate.startswith("call failed") else "citation gate failed"
-                text = (
-                    digest_text.get((row.entity, col.name), "(digest unavailable)")
-                    + f"\n[fallback: deterministic digest — {marker}; see Summary Log]"
-                )
+                # s7 records carry an analyst-readable fallback (verbatim
+                # values / theme medoid claims); the digest bookkeeping line
+                # remains only for pre-s7 workbooks re-written offline.
+                if s.get("fallback_text"):
+                    text = (
+                        s["fallback_text"]
+                        + f"\n[fallback: verbatim claims — {marker}; see Summary Log]"
+                    )
+                else:
+                    text = (
+                        digest_text.get((row.entity, col.name), "(digest unavailable)")
+                        + f"\n[fallback: deterministic digest — {marker}; see Summary Log]"
+                    )
                 fills[(excel_row, col_idx)] = _LORANGE_FILL
             out_row[col.name] = _clamp_cell_text(text)
         out_rows.append(out_row)

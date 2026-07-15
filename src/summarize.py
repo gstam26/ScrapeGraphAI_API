@@ -80,7 +80,18 @@ from src.io_excel import _norm_claim, build_claim_index
 # analyst-format direction: "Yes/No, a number, a list — easy on the eye";
 # Provenance carries the depth). The LLM path is reserved for cells with
 # prose-length claims, where synthesis actually adds something.
-PROMPT_VERSION = "s6"
+# s7 (2026-07-15, George's s6c eyeball): three changes from the first CMO
+# check of the routed output. (a) MERGE route: verbatim rendering showed the
+# same fact under variant spellings ("Tempe, Arizona" / "Tempe, AZ" /
+# "Tempe, AZ 85288 USA"), each with its own citation — string matching can't
+# know US=USA=United States, so multi-value short cells now go to the LLM
+# with a dedicated merge prompt (pool citations of same-meaning variants,
+# never merge different numbers/places). (b) Bare boolean claims are pulled
+# out BEFORE any LLM call and rendered as a deterministic verdict — on the
+# s6c run 3 of 6 gate failures were the coverage gate demanding a citation
+# from a '"True" (2 items)' theme the model rightly ignored. (c) The prose
+# prompt template itself is UNCHANGED from s6.
+PROMPT_VERSION = "s7"
 
 # Citation parsing. The model batches IDs inside one bracket —
 # "[C0183, C0184, C0185]" — and sometimes chains brackets "[C0183][C0184]".
@@ -114,6 +125,13 @@ def has_citation(text: str) -> bool:
 # fragments that failed the gate and mis-fed the judge. Unknown abbreviations
 # still over-split, which only ever FAILS a summary toward its deterministic
 # Digest line — the safe direction.
+# A unit that is ONLY the overflow marker is our own mandated text, not a
+# claim — it must not count as an uncited sentence. On the s6c CMO run the
+# model placed "(more in Provenance)" after the final period of single-line
+# output, and the sentence splitter turned it into a citation-less fragment
+# that failed the gate (Tecan Systems Integration, Mack Medical device).
+_PROVENANCE_MARKER_RE = re.compile(r"^\(?\s*more in provenance\s*\)?\s*[.!]?$", re.IGNORECASE)
+
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 _ABBREV_END_RE = re.compile(
     r"(?:\b(?:Inc|Ltd|Corp|Co|LLC|GmbH|No|Dr|Mr|Ms|Mrs|St|Jr|Sr|vs|approx|est)"
@@ -166,47 +184,43 @@ def _bool_class(value: str) -> str | None:
     return None
 
 
+def _verdict_segment(pairs: list[tuple[str, str]]) -> str | None:
+    """Collapse the bare boolean claims among pairs into one cited verdict
+    segment, or None when there are none. A genuine yes/no split renders both
+    sides — never a merged verdict no source states."""
+    yes_ids = [cid for cid, v in pairs if _bool_class(v) == "Yes"]
+    no_ids = [cid for cid, v in pairs if _bool_class(v) == "No"]
+    if yes_ids and no_ids:
+        return f"Conflicting: Yes [{', '.join(yes_ids)}] / No [{', '.join(no_ids)}]"
+    if yes_ids:
+        return f"Yes [{', '.join(yes_ids)}]"
+    if no_ids:
+        return f"No [{', '.join(no_ids)}]"
+    return None
+
+
 def deterministic_answer(pairs: list[tuple[str, str]]) -> str | None:
     """Render a cell's citable (claim_id, value) pairs as a compact verbatim
-    answer line, or return None when the cell needs the LLM.
-
-    Applies only when EVERY value is tag-length (<= SUMMARY_TAG_MAX_CHARS):
-    binary questions, numbers, categories, location/certification lists —
-    the cells where uninstructed extraction emits short values and an analyst
-    wants the value itself, not prose about it (George, 2026-07-15). One long
-    value anywhere sends the whole cell to the LLM: mixing verbatim rendering
-    with synthesis inside one cell would blur which text is which.
-
-    Rendering rules, all mechanical:
-      - bare yes/true and no/false claims collapse into ONE leading verdict
-        with their citations merged: "Yes [C0046, C0089]". A genuine split
-        renders both sides, never a merged verdict no source states:
-        "Conflicting: Yes [C0046] / No [C0091]".
-      - every other value renders verbatim as "value [Cid]", '; '-joined,
-        capped at SUMMARY_MAX_ITEMS_PER_LINE with the standard visible
-        "(more in Provenance)" overflow marker (nothing dropped silently).
+    answer line: verdict first (see _verdict_segment), every other value
+    verbatim as "value [Cid]", '; '-joined, capped at
+    SUMMARY_MAX_ITEMS_PER_LINE with the visible "(more in Provenance)"
+    overflow marker. Returns None when any value is longer than
+    SUMMARY_TAG_MAX_CHARS (prose — the LLM path's job).
 
     Faithful by construction — every rendered token is a verified claim or a
-    citation — so there is nothing for the citation gate or judge to catch;
-    rows still carry the rendered line as raw_response so both remain able
-    to check it (the 2026-07-14 lesson).
+    citation. Since s7 this render is used two ways: directly for cells with
+    <=1 non-boolean value (nothing to merge), and as the visible FALLBACK for
+    the LLM merge route (an analyst-readable degradation, unlike the old
+    "N items across M themes" digest line George rejected on the s6c check).
     """
     if not pairs or any(len(v) > SUMMARY_TAG_MAX_CHARS for _, v in pairs):
         return None
 
-    yes_ids = [cid for cid, v in pairs if _bool_class(v) == "Yes"]
-    no_ids = [cid for cid, v in pairs if _bool_class(v) == "No"]
     others = [(cid, v) for cid, v in pairs if _bool_class(v) is None]
-
     parts: list[str] = []
-    if yes_ids and no_ids:
-        parts.append(
-            f"Conflicting: Yes [{', '.join(yes_ids)}] / No [{', '.join(no_ids)}]"
-        )
-    elif yes_ids:
-        parts.append(f"Yes [{', '.join(yes_ids)}]")
-    elif no_ids:
-        parts.append(f"No [{', '.join(no_ids)}]")
+    verdict = _verdict_segment(pairs)
+    if verdict:
+        parts.append(verdict)
 
     shown = others[: SUMMARY_MAX_ITEMS_PER_LINE]
     parts.extend(f"{v} [{cid}]" for cid, v in shown)
@@ -215,6 +229,79 @@ def deterministic_answer(pairs: list[tuple[str, str]]) -> str | None:
     if len(others) > len(shown):
         line += " (more in Provenance)"
     return line
+
+
+def _merge_prompt(entity: str, question: str, pairs: list[tuple[str, str]]) -> str:
+    """Prompt for the s7 merge route: multi-value short cells where verbatim
+    rendering repeats the same fact under variant spellings. The one job the
+    LLM adds over the deterministic render is SEMANTIC deduplication —
+    knowing "U.S." = "USA" = "United States" — which no string metric does.
+    Bare booleans are handled by rule (verdict first) so a pure-verdict cell
+    never reaches here; mixed cells keep one uniform output line."""
+    values = "\n".join(f"[{cid}] {v}" for cid, v in pairs)
+    return (
+        f"You are compiling the verified extracted answers about {entity} "
+        f'for the question "{question}" into one compact line an analyst can '
+        "scan instantly.\n"
+        "Each value below carries its claim ID. Rules (all mandatory):\n"
+        '1. Output exactly ONE line: the distinct answers joined by "; ", '
+        "each as <answer> [claim IDs].\n"
+        "2. Merge values that say the same thing (abbreviation, spelling, "
+        'phrasing or subset variants, e.g. "USA" / "U.S." / "United States") '
+        "into ONE entry: keep the clearest wording among them VERBATIM and "
+        "pool all their claim IDs into its bracket.\n"
+        "3. NEVER merge values with different meanings: different numbers, "
+        "dates, places or scopes each keep their own entry and citations. "
+        "Never invent a range, total or combined figure no value states.\n"
+        '4. Bare yes/true values become the single entry "Yes" (pool their '
+        'IDs); bare no/false become "No". A verdict goes first. If both '
+        'appear, start with: Conflicting: Yes [ids] / No [ids].\n'
+        "5. Use only words that appear in the values — no interpretation, "
+        "no explanation, no extra text.\n"
+        f"6. At most {SUMMARY_MAX_ITEMS_PER_LINE} entries; if more remain "
+        'after merging, keep the first ones and end the line with '
+        '"(more in Provenance)".\n'
+        "Values:\n" + values
+    )
+
+
+def _theme_fallback(
+    entity: str,
+    question: str,
+    groups: list[dict],
+    claim_index: dict,
+) -> str:
+    """Analyst-readable fallback for a failed prose-cell LLM call: the top
+    themes' MEDOID labels — real verified claim strings, never synthesized —
+    each cited with its resolvable members' pooled IDs. Replaces the
+    "N items across M themes" digest bookkeeping in the AI Summary sheet
+    (the Digest sheet itself is unchanged). Capped at
+    SUMMARY_MAX_LINES_PER_CELL lines with the standard overflow marker."""
+    lines: list[str] = []
+    skipped = 0
+    for group in groups:
+        if len(lines) == SUMMARY_MAX_LINES_PER_CELL:
+            skipped += 1
+            continue
+        ids = []
+        first_value = None
+        for value in group.get("values", []):
+            hit = claim_index.get((entity, question, _norm_claim(value)))
+            if hit and _bool_class(str(value)) is None:
+                ids.append(hit[0])
+                if first_value is None:
+                    first_value = str(value).strip()
+        if not ids:
+            skipped += 1  # nothing resolvable, or a pure-boolean theme
+            continue
+        theme = group.get("theme", "")
+        label = theme
+        if theme == ALL_ITEMS_THEME or _bool_class(theme) is not None:
+            label = first_value
+        lines.append(f"{label} [{', '.join(ids)}]")
+    if skipped and lines:
+        lines[-1] += " (more in Provenance)"
+    return "\n".join(lines)
 
 
 def make_client():
@@ -261,6 +348,7 @@ def _cell_prompt(
     question: str,
     groups: list[dict],
     claim_index: dict,
+    exclude_ids: set[str] | None = None,
 ) -> tuple[str, set[str], list[tuple[str, set[str]]]]:
     """Build one cell's prompt from its themes.
 
@@ -277,7 +365,13 @@ def _cell_prompt(
     Members whose value doesn't resolve to a claim ID are omitted — an
     uncitable claim must not be paraphrasable. Truncation is principled:
     members are capped per theme (marked "+N more"), whole themes never drop.
+
+    exclude_ids (s7): claims routed elsewhere — bare booleans rendered as a
+    deterministic verdict — are kept out of the prompt AND the coverage
+    sets, so a '"True" (2 items)' theme can no longer fail the gate by
+    being a top theme the model rightly never cites.
     """
+    exclude_ids = exclude_ids or set()
     input_ids: set[str] = set()
     top_theme_id_sets: list[tuple[str, set[str]]] = []
     blocks: list[str] = []
@@ -286,7 +380,7 @@ def _cell_prompt(
         pairs = []
         for value in group.get("values", []):
             hit = claim_index.get((entity, question, _norm_claim(value)))
-            if hit:
+            if hit and hit[0] not in exclude_ids:
                 pairs.append((hit[0], str(value).strip()))
         if not pairs:
             continue
@@ -366,7 +460,10 @@ def mechanical_gate(
     sentences = _split_sentences(text or "")
     if not sentences:
         reasons.append("empty summary")
-    uncited = [s for s in sentences if not has_citation(s)]
+    uncited = [
+        s for s in sentences
+        if not has_citation(s) and not _PROVENANCE_MARKER_RE.match(s)
+    ]
     if uncited:
         reasons.append(f"{len(uncited)} uncited sentence(s)")
 
@@ -384,6 +481,8 @@ def summarize_groups(claim_groups: list[dict], rows: list) -> list[dict]:
       {entity, question, summary, cited_ids, uncited_sentences,
        input_claim_ids, gate, model, prompt_version, generated_at,
        system_fingerprint, prompt, raw_response, duration_ms, error}
+    plus, on LLM-routed records since s7, fallback_text — the
+    analyst-readable degradation io_excel shows when gate != pass.
 
     gate is "pass", "failed citation gate: ...", or "call failed: ..." —
     io_excel renders non-pass rows as their Digest line with the failure
@@ -406,20 +505,8 @@ def summarize_groups(claim_groups: list[dict], rows: list) -> list[dict]:
     deterministic: list[dict] = []
     jobs = []
     for (entity, question), groups in cells.items():
-        prompt, input_ids, top_sets = _cell_prompt(entity, question, groups, claim_index)
-        if not input_ids:
-            # Nothing citable — no summary row, mirroring "no group, no row".
-            continue
-
-        # Deterministic answer route (2026-07-15, generalizing the s4
-        # tag-only route): a cell whose citable values are ALL tag-length
-        # renders verbatim with per-value citations and no LLM call —
-        # "Yes [C0046, C0089]; MIL-STD 810 testing [C0037]". Covers binary,
-        # numeric, categorical and location-list cells; nothing to
-        # hallucinate, and short-tag cells were exactly where LLM prose read
-        # worst (s3 gloss/filler; s6 "confirms having..." verbosity). Pairs
-        # are collected across ALL groups uncapped — the per-theme prompt cap
-        # exists for the LLM's context, not for a verbatim render.
+        # Collect ALL citable pairs across groups, uncapped — the per-theme
+        # prompt cap exists for the LLM's context, not for routing.
         pairs: list[tuple[str, str]] = []
         seen_ids: set[str] = set()
         for g in groups:
@@ -428,14 +515,34 @@ def summarize_groups(claim_groups: list[dict], rows: list) -> list[dict]:
                 if hit and hit[0] not in seen_ids:
                     seen_ids.add(hit[0])
                     pairs.append((hit[0], str(v).strip()))
-        rendered = deterministic_answer(pairs)
-        if rendered is not None:
-            cited = cited_ids(rendered)
+        if not pairs:
+            # Nothing citable — no summary row, mirroring "no group, no row".
+            continue
+
+        # s7 three-way routing (George's s6c review, 2026-07-15):
+        #   deterministic — bare booleans and <=1 non-boolean short value;
+        #                   nothing to merge, render verbatim, no LLM.
+        #   merge         — 2+ short values; the LLM's one job is SEMANTIC
+        #                   dedup ("Tempe, AZ" = "Tempe, Arizona"), pooling
+        #                   citations of same-meaning variants. Fallback =
+        #                   the verbatim render (readable, never digest
+        #                   bookkeeping).
+        #   prose         — any long value; the s6 synthesis prompt over the
+        #                   NON-boolean claims, with the boolean verdict
+        #                   prepended deterministically (a '"True" (2 items)'
+        #                   top theme can no longer fail the coverage gate).
+        bool_ids = {cid for cid, v in pairs if _bool_class(v) is not None}
+        content = [(cid, v) for cid, v in pairs if cid not in bool_ids]
+        verdict = _verdict_segment(pairs)
+        all_short = all(len(v) <= SUMMARY_TAG_MAX_CHARS for _, v in content)
+
+        if all_short and len(content) <= 1:
+            rendered = deterministic_answer(pairs)
             deterministic.append({
                 "entity": entity,
                 "question": question,
                 "summary": rendered,
-                "cited_ids": sorted(set(cited)),
+                "cited_ids": sorted(set(cited_ids(rendered))),
                 "uncited_sentences": [],
                 "input_claim_ids": sorted(cid for cid, _ in pairs),
                 "gate": "pass",
@@ -456,7 +563,33 @@ def summarize_groups(claim_groups: list[dict], rows: list) -> list[dict]:
             })
             continue
 
-        jobs.append((entity, question, prompt, input_ids, top_sets))
+        if all_short:
+            jobs.append({
+                "entity": entity,
+                "question": question,
+                "prompt": _merge_prompt(entity, question, pairs),
+                "input_ids": {cid for cid, _ in pairs},
+                "all_ids": sorted(cid for cid, _ in pairs),
+                "top_sets": [],  # flat values — no theme coverage to demand
+                "prefix": None,  # merge rule 4 has the model place the verdict
+                "fallback": deterministic_answer(pairs),
+            })
+            continue
+
+        prompt, input_ids, top_sets = _cell_prompt(
+            entity, question, groups, claim_index, exclude_ids=bool_ids)
+        if not input_ids:
+            continue
+        jobs.append({
+            "entity": entity,
+            "question": question,
+            "prompt": prompt,
+            "input_ids": input_ids,
+            "all_ids": sorted(cid for cid, _ in pairs),
+            "top_sets": top_sets,
+            "prefix": verdict,
+            "fallback": _theme_fallback(entity, question, groups, claim_index),
+        })
 
     if deterministic:
         print(f"  -> {len(deterministic)} short-value cell(s) rendered deterministically (no LLM call)")
@@ -469,34 +602,48 @@ def summarize_groups(claim_groups: list[dict], rows: list) -> list[dict]:
     # Azure calls this layer makes (EXTRACT_MAX_CONCURRENT_CALLS pattern).
     responses: list[dict | None] = [None] * len(jobs)
     with ThreadPoolExecutor(max_workers=max(1, SUMMARY_MAX_CONCURRENT_CALLS)) as pool:
-        futures = {pool.submit(azure_chat, client, job[2]): i for i, job in enumerate(jobs)}
+        futures = {pool.submit(azure_chat, client, job["prompt"]): i for i, job in enumerate(jobs)}
         for fut in as_completed(futures):
             responses[futures[fut]] = fut.result()
 
     out: list[dict] = list(deterministic)
-    for (entity, question, prompt, input_ids, top_sets), resp in zip(jobs, responses):
+    for job, resp in zip(jobs, responses):
         text = resp.get("text")
         if resp.get("error") is not None or text is None:
             gate = f"call failed: {resp.get('error') or 'no response'}"
             cited, uncited = set(), []
             text = ""
         else:
-            reasons, cited, uncited = mechanical_gate(text, input_ids, top_sets)
+            reasons, cited, uncited = mechanical_gate(text, job["input_ids"], job["top_sets"])
             gate = "pass" if not reasons else "failed citation gate: " + "; ".join(reasons)
+        # The deterministic verdict line (prose route) is part of the cell's
+        # output: prepend it so the sheet, the judge and the eval legs all
+        # see the same text. It is assembled AFTER the gate — the gate's
+        # closed set is the prompt's ids, the verdict cites boolean ids the
+        # model never saw.
+        summary = text
+        if gate == "pass" and job["prefix"]:
+            summary = job["prefix"] + "\n" + text
+            cited = set(cited) | set(cited_ids(job["prefix"]))
         out.append({
-            "entity": entity,
-            "question": question,
-            "summary": text,
+            "entity": job["entity"],
+            "question": job["question"],
+            "summary": summary,
             "cited_ids": sorted(cited),
             "uncited_sentences": uncited,
-            "input_claim_ids": sorted(input_ids),
+            "input_claim_ids": job["all_ids"],
             "gate": gate,
             "model": AZURE_DEPLOYMENT,
             "prompt_version": PROMPT_VERSION,
             "generated_at": generated_at,
             "system_fingerprint": resp.get("system_fingerprint"),
-            "prompt": prompt,
-            "raw_response": resp.get("text") or "",
+            "prompt": job["prompt"],
+            "raw_response": summary if gate == "pass" else (resp.get("text") or ""),
+            # Analyst-readable degradation for the AI Summary sheet: the
+            # verbatim value render (merge route) or the top themes' medoid
+            # claims (prose route) — never the "N items across M themes"
+            # digest bookkeeping George rejected on the s6c check.
+            "fallback_text": job["fallback"],
             "duration_ms": resp.get("duration_ms", 0),
             "error": resp.get("error"),
         })

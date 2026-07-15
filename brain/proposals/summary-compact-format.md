@@ -113,3 +113,46 @@ NOT done (deliberate): no question-type metadata/config — claim-shape routing
 needs none for the baseline; week-2 instructions can add per-question format
 directives to the extractor AND (if still wanted) per-cell prompt directives,
 measured as one before/after. Grouping/aggregate untouched (locked chain).
+
+## 2026-07-15 addendum 2: s7 — merge route + fallback/gate fixes (George's s6c review)
+
+The s6c check (first routed output, 5 entities) surfaced two George rejections:
+
+1. **Verbatim rendering repeats one fact under variant spellings** —
+   "Tempe, Arizona [C0056]; Tempe, AZ [C0099]; Tempe, AZ 85288 USA [C0050]".
+   String metrics cannot know US=USA=United States; semantic dedup is
+   exactly the LLM's job (George: "the whole point of having an LLM ... is
+   to avoid having to read the same thing twice", with pooled references).
+2. **Fallback cells (light orange) showed digest bookkeeping** ("6 items
+   across 4 themes...") — useless to an analyst. Worse, most of those
+   fallbacks were caused by two harness-side bugs, not model faults:
+   3 of 6 gate failures were the coverage gate demanding a citation from a
+   '"True" (2 items)' theme the model rightly ignored; 2 more were the
+   model placing "(more in Provenance)" after the final period, which the
+   sentence splitter turned into an "uncited sentence".
+
+s7 changes (commit-level record in src/summarize.py):
+
+- **Three-way routing.** deterministic (bare booleans + <=1 short value;
+  verbatim, no LLM) / **merge** (2+ short values; new compact prompt: merge
+  same-meaning variants keeping the clearest wording verbatim, pool their
+  claim IDs into one bracket, NEVER merge different numbers/dates/places,
+  verdict first, cap 8 + overflow marker) / prose (any long value; s6
+  template unchanged, but bare booleans are excluded from the prompt and
+  rendered as a deterministic verdict line prepended to the output).
+- **Gate fixes.** Standalone "(more in Provenance)" units exempt from the
+  uncited-sentence check; boolean claims can no longer form coverage-
+  mandatory themes (they never enter the prompt).
+- **Readable fallbacks.** Every LLM record carries fallback_text: the
+  verbatim value render (merge route) or the top themes' medoid claims —
+  real verified claim strings with pooled member citations (prose route).
+  io_excel shows that on gate failure, marked "[fallback: verbatim claims
+  — ...]"; the digest line remains only for pre-s7 workbooks. The Digest
+  sheet itself is untouched.
+
+Eval implications: PROMPT_VERSION bumped s6 -> s7 (new merge prompt; prose
+template unchanged). Automated legs (judge, corruptions, self-agreement)
+must re-run on the next fresh workbook; George spot-labels ~10 merge-route
+lines (the new judged population — merge faithfulness = "did it pool the
+right citations"). Deterministic and verdict segments stay faithful by
+construction.

@@ -7,7 +7,7 @@
 
 ## 2026-07-07 — LLM summary layer BUILT (George's green light); SUMMARY_ENABLED stays False until the pre-registered eval bar passes
 
-**Context:** All build gates cleared: George re-reviewed the Azure revision of `brain/proposals/llm-summary-layer.md` and gave the green light (which also carries Nick's Azure-direct sanction, §7 item 3); the §7 work-laptop checklist passed via `diagnostics/azure_test.py` (connectivity/key/deployment/TLS OK, seed-determinism probe `identical outputs: True`, fingerprint `fp_b7c8a4dc64` stable — §5's reduced-nondeterminism assumption CONFIRMED on this deployment). The verified-only base validated clean on 2026-07-06 (pinned replay, Matrix 100/100 identical).
+**Context:** All build gates cleared: George re-reviewed the Azure revision of `brain/proposals/llm-summary-layer.md` and gave the green light (which also carries leadership's Azure-direct sanction, §7 item 3); the §7 work-laptop checklist passed via `diagnostics/azure_test.py` (connectivity/key/deployment/TLS OK, seed-determinism probe `identical outputs: True`, fingerprint `fp_b7c8a4dc64` stable — §5's reduced-nondeterminism assumption CONFIRMED on this deployment). The verified-only base validated clean on 2026-07-06 (pinned replay, Matrix 100/100 identical).
 
 **Built (this session, exactly per the approved design — no design changes):**
 - `src/summarize.py` — summarizer over `diag["claim_groups"]` (grouped-scaffolding input), one Azure GPT-4.1-mini call per grouped cell at temperature=0 + `SUMMARY_SEED`, `[C####]`-tagged closed input set (members capped per theme, whole themes never dropped), Tier-1 mechanical gate inline (invented citations / uncited sentences / top-3 theme coverage → fall back to the Digest line, visibly). `system_fingerprint`, exact prompt and raw response recorded per call.
@@ -60,7 +60,7 @@
 
 ## 2026-07-06 — Verified-only grouping/digest enforced (George's standing decision); LLM summary layer designed, not built
 
-**Context:** The 2026-07-05 traceability audit found the "every citation traces to a verified claim" assertion (this log, 2026-07-03) was never enforced — unverified claims appeared as theme anchors and Digest citations. Separately, Nick asked for LLM-synthesized summary prose for consultants.
+**Context:** The 2026-07-05 traceability audit found the "every citation traces to a verified claim" assertion (this log, 2026-07-03) was never enforced — unverified claims appeared as theme anchors and Digest citations. Separately, leadership asked for LLM-synthesized summary prose for consultants.
 
 **Decision (George):** Unverified claims (quotes that couldn't be confirmed against the page) are excluded from grouping/digest/summary; they stay in Provenance flagged for analyst review. This is a standing decision, not per-run tuning.
 
@@ -74,7 +74,7 @@
 
 ## 2026-07-03 — Traceability chain shipped: claim IDs + Digest sheet + hyperlinks (summarization decision resolved: deterministic)
 
-**Context:** Nick delegated the summarization call to George; George's requirement: Advisory needs grouping and summary **traceable to claims**, ideally with hyperlinked references. That requirement settles Part 2b of `proposals/filter-and-synthesis.md`: a deterministic template digest is faithful and traceable *by construction*; LLM prose would need a faithfulness eval to earn the same trust. Deterministic chosen; LLM prose stays a written future option.
+**Context:** Leadership delegated the summarization call to George; George's requirement: Advisory needs grouping and summary **traceable to claims**, ideally with hyperlinked references. That requirement settles Part 2b of `proposals/filter-and-synthesis.md`: a deterministic template digest is faithful and traceable *by construction*; LLM prose would need a faithfulness eval to earn the same trust. Deterministic chosen; LLM prose stays a written future option.
 
 **Built (io_excel only — pipeline/aggregate/group logic untouched):**
 1. **Claim IDs**: Provenance gains a `Claim ID` first column (`C0001…`, sequential in deterministic Provenance order). First occurrence per (entity, question, normalised claim) is the anchor row.
@@ -114,9 +114,9 @@
 
 -----
 
-## 2026-07-03 — Filter routes on name+instruction; deterministic Grouped Themes layer added (Nick's quality pivot)
+## 2026-07-03 — Filter routes on name+instruction; deterministic Grouped Themes layer added (leadership's quality pivot)
 
-**Context:** Nick redirected: no big batch runs (credits out), focus extraction quality — make Filter work, add grouping/summarization at Aggregate. Diagnosis already on record (`proposals/filter-and-synthesis.md`): Filter embedded only the 2–3 word column NAME as its query (`filter.py`), discarding the 30–50 word instruction; measured score-vs-answered AUC on the validation run was 0.64 overall (0.55–0.74 per question) — why passthrough was on. Twin defect in the crawl link-scorer call sites.
+**Context:** Leadership redirected: no big batch runs (credits out), focus extraction quality — make Filter work, add grouping/summarization at Aggregate. Diagnosis already on record (`proposals/filter-and-synthesis.md`): Filter embedded only the 2–3 word column NAME as its query (`filter.py`), discarding the 30–50 word instruction; measured score-vs-answered AUC on the validation run was 0.64 overall (0.55–0.74 per question) — why passthrough was on. Twin defect in the crawl link-scorer call sites.
 
 **Decision (two independent changes, built by parallel worktree agents, merged + audited):**
 1. **Instruction-aware routing:** shared `query_text(col)` helper → `"{name}. {instruction}"`; used by Filter's `score_page_columns` AND both crawler embed-scorer call sites. `QUERY_INCLUDES_INSTRUCTION = True` config flag (False restores name-only for A/B). Critical detail: `_question_emb_cache` key changed from name-tuple to query-text-tuple (else stale name-only embeddings would be silently reused). Keyword gate stays on the name (instruction words are generic — would over-fire). BM25 `build_crawl_query` untouched (already instruction-weighted); experimental scorer untouched (already handles instructions).
@@ -126,7 +126,7 @@
 
 **Pending (work laptop — Ollama + validation cache live there, cannot be computed off-network):** AFTER AUC table + threshold sweep (`python diagnostics/filter_recalibration.py`), and `GROUP_SIMILARITY` calibration on real claims (`python diagnostics/group_calibration.py`). Until the AFTER table shows real separation, `FILTER_MODE` stays passthrough — the fix changes what scores are computed, not yet what routes.
 
-**Status:** Merged and pushed. LLM summarization remains a written option only (`proposals/filter-and-synthesis.md` Part 2b) — awaiting George/Nick's deterministic-template vs LLM decision.
+**Status:** Merged and pushed. LLM summarization remains a written option only (`proposals/filter-and-synthesis.md` Part 2b) — awaiting George's deterministic-template vs LLM decision.
 
 **Context:** Full high-effort review (8 finder angles, candidates verified by direct code reading) of everything from 2026-07-02: entity parallelism, crawl locale-dedup/score-aware cap, LLMAPI retry, output limits, playwright_pooled backend. 10 real findings surfaced; George approved fixing the top 2 before batch 1, recording the rest.
 
@@ -163,7 +163,7 @@
 
 ## 2026-07-02 — playwright_pooled backend built (politeness gate mandatory); free proxies and stealth anti-bot REJECTED
 
-**Context:** Firecrawl credits remaining: 1,025 ≈ 74 of 178 companies at the measured 13.7 pages/entity. No budget for top-ups without Nick. The remaining ~108 companies therefore need a free fetch path — the self-hosted backend from `proposals/firecrawl-replacement.md`, promoted from "worth testing" to "required to finish".
+**Context:** Firecrawl credits remaining: 1,025 ≈ 74 of 178 companies at the measured 13.7 pages/entity. No budget for top-ups without leadership. The remaining ~108 companies therefore need a free fetch path — the self-hosted backend from `proposals/firecrawl-replacement.md`, promoted from "worth testing" to "required to finish".
 
 **Options considered:**
 1. Squeeze 178 into 1,025 credits by cutting `CRAWL_MAX_PAGES` to ~5 — REJECTED: would gut the About/locations coverage that just fixed Q1 (validated same day).
@@ -173,7 +173,7 @@
 
 **Decision:** `ACQUIRE_TOOL="playwright_pooled"` (`src/acquire/playwright_pool.py`): thread-local persistent Chromium (sync API is not cross-thread-safe; one browser per pipeline worker; kills the ~1–2 s per-page launch cost), Trafilatura text, full 3-rule quality gate, rendered DOM into link discovery (nav links present by construction — no rawHtml workaround needed). Politeness gate built-in, not optional: per-domain ≥`CRAWL_POLITE_DELAY_S`=2 s across all threads, robots.txt per-domain cached (disallowed → skipped with `robots_disallowed` provenance; unreadable → allow), honest UA. Off by default.
 
-**Status:** Built + offline-tested (8 tests, no browser/network). NOT yet pointed at external sites — usage (not code) awaits Nick's IP-exposure sign-off. Go/no-go = the pre-registered bake-off in the proposal: re-fetch ~5 batch-1 companies, compare pages/cells/failures vs Firecrawl. Batch slicing added to `build_182_workbook.py` (`--start/--end`) so batch 1 (1–70, Firecrawl) can run meanwhile.
+**Status:** Built + offline-tested (8 tests, no browser/network). NOT yet pointed at external sites — usage (not code) awaits leadership's IP-exposure sign-off. Go/no-go = the pre-registered bake-off in the proposal: re-fetch ~5 batch-1 companies, compare pages/cells/failures vs Firecrawl. Batch slicing added to `build_182_workbook.py` (`--start/--end`) so batch 1 (1–70, Firecrawl) can run meanwhile.
 
 -----
 
@@ -604,7 +604,7 @@
 
 **Decision:** All tool selection via config.py constants. Dispatch is the `_FETCHERS` dict + backend branches in `fetch_page_with_provenance` (src/acquire/fetcher.py) and the extract-tool if/elif chain in `extract_cells` (src/extract.py). *(Corrected 2026-07-02: originally written as `_get_fetcher`/`_get_extractor` functions, which never existed under those names.)* Filter, Verify, Aggregate never know which tools were used upstream.
 
-**Why:** The scientific validity of the evaluation depends on only ONE thing varying between the two pipeline runs: the tools. If the code changes between runs, differences in output could come from the code change rather than the tools. Config-driven dispatch ensures both runs go through identical Filter, Verify, and Aggregate logic — the only variable is the tool at each dispatch point. This is what makes the comparison methodologically sound and publishable. It also makes the pipeline operationally useful beyond the dissertation: an analyst or Nick can change ACQUIRE_TOOL from “firecrawl” to “local” in a single line when running on a corporate network without internet access. The architecture was explicitly grounded in the “separable layers” framing in the interim report — tool swaps are a one-file change, not a code change.
+**Why:** The scientific validity of the evaluation depends on only ONE thing varying between the two pipeline runs: the tools. If the code changes between runs, differences in output could come from the code change rather than the tools. Config-driven dispatch ensures both runs go through identical Filter, Verify, and Aggregate logic — the only variable is the tool at each dispatch point. This is what makes the comparison methodologically sound and publishable. It also makes the pipeline operationally useful beyond the dissertation: an analyst or leadership can change ACQUIRE_TOOL from “firecrawl” to “local” in a single line when running on a corporate network without internet access. The architecture was explicitly grounded in the “separable layers” framing in the interim report — tool swaps are a one-file change, not a code change.
 
 -----
 

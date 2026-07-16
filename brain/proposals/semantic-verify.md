@@ -53,4 +53,4 @@ This is Stage-10-shaped (aligner/metrics discipline reused on a new target) — 
 
 ## Decision points
 - **George:** ~1–2 h to label the ~100-pair ADLM support sample; agree the tier vocabulary shown to consultants (`supported/weak/unsupported/not-assessed` vs softer wording).
-- **Nick:** sign-off on additional GPT-5.5 proxy volume (~500 calls per 182-run, plus ~300 for the eval set); confirm consultants should see support tiers in client-facing Matrix output (trust/CYA framing is a consultancy call).
+- **Leadership:** sign-off on additional GPT-5.5 proxy volume (~500 calls per 182-run, plus ~300 for the eval set); confirm consultants should see support tiers in client-facing Matrix output (trust/CYA framing is a consultancy call).

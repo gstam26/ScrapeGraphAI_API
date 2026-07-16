@@ -1,6 +1,6 @@
 # Proposal: Make Filter work + a Synthesis layer at/after Aggregate
 
-**Status:** Design + evidence, 2026-07-03. Prompted by Nick: focus on extraction quality, not scale (credits out); make filtering work; explore a grouping/summarization layer at aggregate "or the stage after that." No code changed yet.
+**Status:** Design + evidence, 2026-07-03. Prompted by leadership: focus on extraction quality, not scale (credits out); make filtering work; explore a grouping/summarization layer at aggregate "or the stage after that." No code changed yet.
 
 **Bottom line:** Both are worth doing, both are buildable and validatable WITHOUT Firecrawl credits (cached pages + local Ollama), and both generalize to the plant-milk task. But the summarization half carries a hard constraint the current architecture was built to protect — verifiability + determinism — so it must be a layer STRICTLY OUTSIDE the verified chain, evaluated on its own faithfulness metric, never a replacement of the Matrix. Getting that boundary right is the whole game.
 
@@ -30,7 +30,7 @@ Note: the crawl link-scorer (`score_links_embed`) has the *same* defect — it e
 2. **Re-calibrate the threshold** on the validation Filter-Log distribution once scores actually separate, per-question if needed (Recent news already works; Diagnostics is hardest).
 3. **Validation with no credits:** the 343 validation pages are already cached and the Filter Log already has the name-based scores. On the work laptop (Ollama reachable), re-score those same cached pages with instruction-aware queries, recompute the AUC table above, and only retire `passthrough` if AUC climbs enough that a threshold beats "route everything." Pure local embeddings — no Firecrawl, no LLM.
 
-**Why this serves Nick's goals directly:** a filter that discriminates means fewer page×question extraction calls (the HORIBA news archive would never route to "R&D location"), which cuts LLM cost AND cuts the noise that lands in Aggregate. Filter quality and Aggregate quality are the same problem from two ends.
+**Why this serves leadership's goals directly:** a filter that discriminates means fewer page×question extraction calls (the HORIBA news archive would never route to "R&D location"), which cuts LLM cost AND cuts the noise that lands in Aggregate. Filter quality and Aggregate quality are the same problem from two ends.
 
 **Plant-milk generalization / locked-metrics safety:** plant-milk questions carry instructions too, so the fix helps there. It does NOT touch the locked RQ1 extraction eval — that ran on hand-picked depth-0 URLs under passthrough, so filter routing was already bypassed there by construction. The change only affects production/crawl routing. Safe.
 
@@ -38,7 +38,7 @@ Note: the crawl link-scorer (`score_links_embed`) has the *same* defect — it e
 
 ## Part 2 — Synthesis layer (grouping + summarization) at/after Aggregate
 
-Nick conflated three things under "filter/grouping/summarization." They are NOT equally safe — separating them is the key move:
+Leadership conflated three things under "filter/grouping/summarization." They are NOT equally safe — separating them is the key move:
 
 ### 2a. Grouping — deterministic, safe, build first
 
@@ -46,7 +46,7 @@ Cluster the verified claims *within* a cell into themes (HORIBA's ~600 news item
 
 ### 2b. Summarization — LLM, risky, needs a guardrail decision
 
-> **RESOLVED 2026-07-03 (George, with Nick's delegation):** the Advisory requirement is traceability, which settles the design — the **deterministic template Digest** was built (one mechanical line per grouped cell, theme labels = verbatim claims, every reference a Provenance claim ID, faithful by construction). Traceability chain shipped: **Digest → Grouped Themes → Provenance (claim IDs + internal hyperlinks) → source-URL links.** Free-text LLM synthesis remains the future option below, still gated on the faithfulness eval if ever wanted.
+> **RESOLVED 2026-07-03 (George, with leadership's delegation):** the Advisory requirement is traceability, which settles the design — the **deterministic template Digest** was built (one mechanical line per grouped cell, theme labels = verbatim claims, every reference a Provenance claim ID, faithful by construction). Traceability chain shipped: **Digest → Grouped Themes → Provenance (claim IDs + internal hyperlinks) → source-URL links.** Free-text LLM synthesis remains the future option below, still gated on the faithfulness eval if ever wanted.
 
 Synthesizing prose ("In 2026 HORIBA announced ~15 product launches and 8 regulatory clearances…") is where the architecture pushes back hard, and I won't quietly build past it:
 
@@ -66,7 +66,7 @@ Synthesizing prose ("In 2026 HORIBA announced ~15 product launches and 8 regulat
 1. Filter instruction-aware routing + re-calibration (also fix the twin defect in the crawl scorer). Validate on cached validation pages via local Ollama.
 2. Deterministic grouping as a new output sheet.
 
-**Needs Nick's decision before building:**
+**Needs leadership's decision before building:**
 3. The Summarization layer — specifically: (a) is a non-deterministic, separately-evaluated, clearly-marked synthesis pass acceptable given 2026-06-24, or do we keep synthesis deterministic-only (grouping + template-filled counts, no free-text LLM)? (b) does it ship in the client-facing workbook or stay a diagnostic? A deterministic template summary ("N launches, M clearances, K partnerships" built from the groups in 2a) captures most of the consultant value with none of the verifiability/determinism cost — that may be the smart stopping point.
 
-**Decision for George/Nick:** approve building 1 + 2 now (safe, credit-free, immediately useful), and rule on whether Part 2b is deterministic-template-only or an LLM synthesis pass with the faithfulness-eval guardrail.
+**Decision for George:** approve building 1 + 2 now (safe, credit-free, immediately useful), and rule on whether Part 2b is deterministic-template-only or an LLM synthesis pass with the faithfulness-eval guardrail.

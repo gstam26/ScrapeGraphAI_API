@@ -4,14 +4,14 @@ Notable changes, newest first. Full rationale for each decision: `brain/decision
 
 ## 2026-07-13/14
 
-### Hybrid fetch backend promoted to production default (Nick sign-off 2026-07-13)
+### Hybrid fetch backend promoted to production default (leadership sign-off 2026-07-13)
 - `FETCH_BACKEND = "playwright_pooled_hybrid"` — Firecrawl credits cover only ~74/178 ADLM companies; the hybrid fetches free from our IP with politeness by construction. Firecrawl remains available per-workbook and as the proposed vendor fallback for denied sites.
 - **Stage-2 parity measured** (the never-before-run bar item 1): replay of the pinned 25-entity page set through hybrid + `diagnostics/matrix_parity.py` (new tool: populated-cell retention vs a pinned baseline; warns when extract tools differ between runs). Result: Company type 100%, Diagnostics type 92% (bar 0.95) — losses = Agilent + Aladdin.
 - **Attribution run separated fetch from model**: cache-served replay (Firecrawl text, new extractor) scored 100% on all four questions → the extractor change is blameless; every lost cell is fetch-side. Live probes then diagnosed each: Agilent = hard Akamai 403 (only a vendor can fetch it); Nova = Cloudflare beaten by our render; Neogen = our own escalation bug (fixed below); Aniara = gate over-flag (content still reaches extraction); Monobind = commerce template with no extractable text.
 - **Hybrid escalation fix**: the static→render escalation shipped the render unconditionally; SPA pages that wipe server-rendered HTML on hydration made the render far thinner than the static extraction (Neogen: 20,346 chars static → 1,560 rendered → pipeline got the 1,560). Escalation now keeps whichever extraction is richer. Verified live.
 - **Static-probe timeout cap** (`HYBRID_STATIC_TIMEOUT_S=12`): the hybrid's static attempt is a fast-path check, not a full fetch — a hanging response now escalates in 12 s instead of burning the full 30 s (FUJIFILM: 52 s → 7 s). A trialled networkidle render wait was **disconfirmed** (link-grid pages are genuinely thin when rendered; longer waits recover nothing) and reverted — negative result documented in `config.py`.
 - Acquire Log now carries fetch provenance columns (Backend / Render Fallback / Gate Passed / Gate Reason) — recorded by the crawler since the pooled backends landed but previously dropped by the sheet writer.
-- Proposal: `brain/proposals/vendor-fallback.md` — condition-triggered Firecrawl escalation for protocol-level denials (401/403/429/503 + failed render). The exception list is an output of each run (Acquire Log pivot), never a hardcoded site list. Awaiting review + Nick's spend approval.
+- Proposal: `brain/proposals/vendor-fallback.md` — condition-triggered Firecrawl escalation for protocol-level denials (401/403/429/503 + failed render). The exception list is an output of each run (Acquire Log pivot), never a hardcoded site list. Awaiting review + leadership's spend approval.
 
 ### Extraction switched to Azure-direct GPT-4.1-mini
 - The Power Automate proxy no longer serves GPT-5.5 (credit burn) — it now runs the same GPT-4.1-mini as the Azure-direct deployment, so the extra flow dependency buys nothing. `build_182_workbook.py` and the committed 182 workbook now set `EXTRACT_TOOL=azure`. Attribution run above doubles as the extractor's population-parity validation (100%).
@@ -37,7 +37,7 @@ Notable changes, newest first. Full rationale for each decision: `brain/decision
 - Provenance records the serving path per page: `pooled_hybrid_static` / `pooled_hybrid_render` (render_fallback=True). Render failure after a gate-failed static fetch keeps the static content with the failure recorded (`local`'s contract).
 - Crawler link discovery treats the hybrid's HTML like `playwright_pooled`'s (full DOM either way).
 - `backend_compare.py` gains `--backend playwright_pooled_hybrid` + a per-page "PW Backend" column + static-hit-rate summary, so one laptop bake-off measures both cell-population parity (bar item 1, never yet measured) and the hybrid's efficiency claim.
-- ⚠️ Off by default; same Nick sign-off + bake-off go/no-go as `playwright_pooled` (brain/proposals/firecrawl-replacement.md). Note for the bake-off writeup: the static path has a different network fingerprint (plain httpx vs Chromium), so WAF behaviour (e.g. Agilent/Akamai) may shift vs the 07-05 run — a second moving variable alongside the robots-UA fix.
+- ⚠️ Off by default; same leadership sign-off + bake-off go/no-go as `playwright_pooled` (brain/proposals/firecrawl-replacement.md). Note for the bake-off writeup: the static path has a different network fingerprint (plain httpx vs Chromium), so WAF behaviour (e.g. Agilent/Akamai) may shift vs the 07-05 run — a second moving variable alongside the robots-UA fix.
 - Suite: 170 offline tests green (6 new).
 
 ## 2026-07-09

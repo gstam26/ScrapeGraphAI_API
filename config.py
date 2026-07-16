@@ -20,7 +20,7 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 # TOOLS
 # ============================================================
 
-# Deployment default (Nick sign-off 2026-07-13; Firecrawl credits cover only
+# Deployment default (signed off 2026-07-13; Firecrawl credits cover only
 # ~74/178 ADLM companies). Static-first hybrid: httpx + Trafilatura, escalating
 # to the pooled browser only on quality-gate failure; politeness (robots.txt,
 # per-domain delay, honest UA) on both paths. Alternatives: "firecrawl" |

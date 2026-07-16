@@ -1,6 +1,6 @@
 """Fetch-backend bake-off: playwright_pooled vs a Firecrawl baseline run.
 
-Approved by Nick 2026-07-02 for TESTING (priority: quality). Method: re-fetch
+Approved 2026-07-02 for TESTING (priority: quality). Method: re-fetch
 the EXACT page URLs a completed Firecrawl run selected (from its Acquire Log),
 so the comparison measures pure fetch quality — no crawler/scorer variance,
 no LLM needed, no API keys. Politeness gate (per-domain delay, robots.txt,

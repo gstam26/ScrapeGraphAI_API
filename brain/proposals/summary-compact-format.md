@@ -3,7 +3,7 @@
 **Status:** PROPOSED 2026-07-14 — George reopened the 2026-07-08 "ship the
 floor" format decision (his to reopen: the CMO case study makes an
 analyst-facing deliverable the point, so readability is now a requirement,
-not polish). Not built; awaiting George's format approval + one Nick check.
+not polish). Not built; awaiting George's format approval + one leadership check.
 
 ## What George asked for
 
@@ -62,18 +62,18 @@ were measured on s3 outputs. s4 changes sentence structure, so:
 - prompt_version bumps s3→s4 in the Summary Log; fingerprints recorded as
   before. The deterministic tag-route needs no eval (no model output).
 
-## The one Nick check
+## The one leadership check
 
-LLM prose was Nick's original ask. Compact theme-lines are still an "AI
+LLM prose was leadership's original ask. Compact theme-lines are still an "AI
 summary" (synthesis within each theme is model-written), but the register
-changes from narrative to scan-optimized. One-line confirmation from Nick
+changes from narrative to scan-optimized. One-line confirmation from leadership
 that this serves the client deliverable before it ships client-facing.
 
 ## Decisions needed
 
 - **George:** approve the line format + overflow cap default (proposed: 8
   items/line) + the deterministic tag-route; spot-label ~20 lines post-build.
-- **Nick:** confirm compact register is what the deliverable wants.
+- **Leadership:** confirm compact register is what the deliverable wants.
 
 ## 2026-07-15 addendum: deterministic answer route (routing v2, prompt stays s6)
 

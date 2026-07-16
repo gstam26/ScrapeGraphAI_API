@@ -50,7 +50,7 @@ Layers are separable by design: tools are swapped via `config.py` / workbook con
 These are IT-policy constraints, not preferences — the pipeline is built around them:
 
 - **No HuggingFace** (model downloads blocked). Embeddings come **only** from the internal Ollama server (`nomic-embed-text` at `OLLAMA_HOST`, reachable on Science Group WiFi/VPN only). Off VPN, the pipeline degrades gracefully: BM25 crawl scoring, route-all filtering, no semantic scores.
-- **Production extraction is Azure-direct GPT-4.1-mini** (`EXTRACT_TOOL=azure`, Nick-sanctioned 2026-07). The Power Automate proxy (`llmapi`) remains as a legacy path — it now serves the same model, so it buys nothing but an extra dependency. Claude direct is off-network spot checks only.
+- **Production extraction is Azure-direct GPT-4.1-mini** (`EXTRACT_TOOL=azure`, leadership-sanctioned 2026-07). The Power Automate proxy (`llmapi`) remains as a legacy path — it now serves the same model, so it buys nothing but an extra dependency. Claude direct is off-network spot checks only.
 - **Polite crawling.** The default fetcher (`playwright_pooled_hybrid`) runs from THIS machine's IP, so politeness is enforced by construction: robots.txt respected, ≥2 s per-domain delay, honest User-Agent. Sagentia has had IPs blocked before — do not weaken these.
 - Corporate TLS interception can break vendor API calls (e.g. Firecrawl `SSL: CERTIFICATE_VERIFY_FAILED`) — a known on-network failure mode.
 

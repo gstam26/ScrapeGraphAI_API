@@ -58,4 +58,4 @@ Fetch same-depth queued links 2–3 at a time. Smaller marginal win once R1 land
 
 ## Decision points
 - **George:** entity-parallelism worker count (needs the Firecrawl plan's concurrency limit); accept generic locale-suppression heuristic (R2) as non-domain-specific.
-- **Nick:** none for R1/R4. R2/R3 only if bundled with the self-hosted-fetch decision (IP exposure — see `firecrawl-replacement.md`).
+- **Leadership:** none for R1/R4. R2/R3 only if bundled with the self-hosted-fetch decision (IP exposure — see `firecrawl-replacement.md`).

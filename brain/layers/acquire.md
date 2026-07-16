@@ -22,5 +22,5 @@
 - Pages within one entity fetched serially (entity-level parallelism added 2026-07-02; within-entity concurrency deliberately not — per-domain politeness).
 
 ## Open questions
-- Self-hosted pooled-Playwright backend — blocked on Nick (IP exposure). See proposal.
+- Self-hosted pooled-Playwright backend — blocked on leadership (IP exposure). See proposal.
 - Systematic depth 0/1/2 completeness experiment (report §5.3) still outstanding.

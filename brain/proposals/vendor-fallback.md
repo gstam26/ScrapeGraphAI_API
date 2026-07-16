@@ -1,6 +1,6 @@
 # Vendor fallback: condition-triggered Firecrawl escalation for denied pages
 
-**Status:** PROPOSED 2026-07-13 — awaiting George's design review, then Nick's
+**Status:** PROPOSED 2026-07-13 — awaiting George's design review, then leadership's
 credit-spend approval. Not built.
 
 ## Problem
@@ -56,13 +56,13 @@ Calibrated against the 2026-07-13 probe evidence:
   existing `_fetch_firecrawl_doc` path). Result replaces the denied page's
   text/html; provenance `backend="firecrawl_fallback"` so every vendor call
   is visible in the Acquire Log's Backend column. The per-run "exception
-  list" Nick sees is a pivot on that column.
+  list" leadership sees is a pivot on that column.
 - **Budget cap:** `FALLBACK_MAX_PAGES_PER_RUN` (proposed default 30). At the
   cap, further triggers are logged (`gate_reason="fallback_budget_exhausted"`)
   but not fetched — a pathological input cannot silently drain credits.
 - **Fail-soft:** no Firecrawl key present → page stays as the hybrid left it,
   reason logged. The pipeline never crashes on a missing key.
-- **Off by default:** `VENDOR_FALLBACK_ENABLED = False` until Nick approves;
+- **Off by default:** `VENDOR_FALLBACK_ENABLED = False` until leadership approves;
   env-overridable per the FILTER_MODE / SUMMARY_ENABLED convention.
 
 ## Cost model
@@ -92,11 +92,11 @@ leaves them lost. An entity-level trigger ("most of an entity's pages
 gate-fail after render → vendor-fetch the seed") could recover them but risks
 false credit burn on Hologic-class link-grid sites, which look similar by
 that signature. Build only if parity evidence says Monobind-class losses
-matter to a bar that matters; that is a George+Nick quality/cost call, and
+matter to a bar that matters; that is a George quality/cost call, and
 Q1/Q4 (where those losses sit) are not bar item 1.
 
 ## Decisions needed
 
 - **George:** design review of the trigger signature + cap default.
-- **Nick:** approval to enable spend (bounded, itemised per run in the
+- **Leadership:** approval to enable spend (bounded, itemised per run in the
   Acquire Log), i.e. flip VENDOR_FALLBACK_ENABLED in the client-facing env.

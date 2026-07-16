@@ -4,9 +4,9 @@
 
 ## Blunt verdict
 
-**Showable to Nick with caveats, not as a finished claim.** The chain's *mechanics* are genuinely solid: every hyperlink and every Claim ID reference I checked — a full-population scan, not a sample, across all 89 Digest rows, all 322 Grouped Themes rows, and all 2766 Provenance rows — resolves to the row it claims to, with correct Entity/Question alignment and zero dangling references. FUJIFILM's small chain (2 cells, 6 Provenance rows) traces perfectly end to end. That's real and worth demoing.
+**Showable to leadership with caveats, not as a finished claim.** The chain's *mechanics* are genuinely solid: every hyperlink and every Claim ID reference I checked — a full-population scan, not a sample, across all 89 Digest rows, all 322 Grouped Themes rows, and all 2766 Provenance rows — resolves to the row it claims to, with correct Entity/Question alignment and zero dangling references. FUJIFILM's small chain (2 cells, 6 Provenance rows) traces perfectly end to end. That's real and worth demoing.
 
-But the one sentence the whole chain exists to let George say — **"every citation traces to a verified claim"** — is not true of the artifact. It is asserted three times in the codebase (`src/group.py:13-14`, `src/group.py:152`, `brain/decision-log.md:56`: theme labels are "always a real verified claim, never synthesized") and contradicted by the workbook: two theme anchors and ten further citations point to Provenance rows with `Verified=False`, including one inside HORIBA itself (the pathological case) and one that is quoted verbatim in the Digest sheet's top-3 line — the first thing a consultant reads. Do not tell Nick "100% verified-only" until gap #1 below is closed. Everything else is real but secondary.
+But the one sentence the whole chain exists to let George say — **"every citation traces to a verified claim"** — is not true of the artifact. It is asserted three times in the codebase (`src/group.py:13-14`, `src/group.py:152`, `brain/decision-log.md:56`: theme labels are "always a real verified claim, never synthesized") and contradicted by the workbook: two theme anchors and ten further citations point to Provenance rows with `Verified=False`, including one inside HORIBA itself (the pathological case) and one that is quoted verbatim in the Digest sheet's top-3 line — the first thing a consultant reads. Do not tell leadership "100% verified-only" until gap #1 below is closed. Everything else is real but secondary.
 
 ## Ranked gaps
 
@@ -65,7 +65,7 @@ But the one sentence the whole chain exists to let George say — **"every citat
 
 ## Change plan for structural gaps (planned only, not implemented)
 
-1. **Decide the verified-only policy (gap #1).** Options, needing a George/Nick call, not a coding call:
+1. **Decide the verified-only policy (gap #1).** Options, needing a George call, not a coding call:
    a. Filter grouping input to `verified==True` evidence only (in `aggregate.py` or `group.py`) — simplest, but silently drops real (if unverified) claims from the consultant-facing view even though Matrix might still show them, changing recall.
    b. Keep unverified evidence in the cluster but exclude it from ever being the `_medoid`/anchor, and mark it inline (e.g. `[C1009 ⚠]`) with a legend.
    c. Split "Claim IDs" into two columns (verified / unverified) so nothing is hidden but nothing is unlabelled either.
@@ -79,4 +79,4 @@ But the one sentence the whole chain exists to let George say — **"every citat
 - **`src/io_excel.py`, `_make_grouped_themes_df` (~line 549-566):** the "Claim IDs" column was sliced to `MATRIX_MAX_DISPLAY_ITEMS` (50) in lockstep with the bullet-display truncation, so any theme with more than 50 members lost the Claim IDs for every member past #50 — exactly the members the "+N more — see Provenance" overflow text tells a reader to go look up, leaving them with no ID to search by. Fixed by computing the full `all_ids` list from the untruncated `pairs` before slicing for display; the `" (+N more)"` suffix on `ids_text` was removed since the column is now complete.
   **Test:** `tests/test_traceability.py::test_grouped_themes_claim_ids_not_truncated_by_display_cap` (new) — builds a 55-item theme (`MATRIX_MAX_DISPLAY_ITEMS + 5`), asserts the Values bullets stay capped at 50 with the overflow marker, but the Claim IDs column lists all 55 sequential IDs (`C0001`…`C0055`). Full suite: **119 passed** (was 118 before this session's one addition), run via `python -m pytest tests/ -q`, fully offline.
 
-No other code changes made. The verified-only gap (#1) was diagnosed but deliberately left unfixed — closing it changes what data appears in the consultant-facing view, which is a design call reserved for George/Nick per the brief.
+No other code changes made. The verified-only gap (#1) was diagnosed but deliberately left unfixed — closing it changes what data appears in the consultant-facing view, which is a design call reserved for George per the brief.

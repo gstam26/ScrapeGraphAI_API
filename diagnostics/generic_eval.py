@@ -633,17 +633,24 @@ def evaluate(gt: list[GTRow], ai: list[AIRow], semantic: bool = True) -> EvalRes
         q = cell.question
         tp, fn, fp = _cell_counts(cell)
         if q not in per_question:
-            per_question[q] = {"TP": 0, "FN": 0, "FP": 0, "cells": 0}
+            per_question[q] = {"TP": 0, "FN": 0, "FP": 0, "cells": 0, "is_list": False}
         per_question[q]["TP"] += tp
         per_question[q]["FN"] += fn
         per_question[q]["FP"] += fp
         per_question[q]["cells"] += 1
+        per_question[q]["is_list"] = per_question[q]["is_list"] or cell.is_list
 
     pq_metrics = {}
     for q, counts in per_question.items():
         m = _metrics(counts["TP"], counts["FN"], counts["FP"])
         m["cells"] = counts["cells"]
+        m["is_list"] = counts["is_list"]
         pq_metrics[q] = m
+
+    def _block(is_list_wanted: bool) -> dict:
+        qs = [c for c in per_question.values() if c["is_list"] == is_list_wanted]
+        return _metrics(sum(c["TP"] for c in qs), sum(c["FN"] for c in qs),
+                        sum(c["FP"] for c in qs))
 
     total_tp = sum(c["TP"] for c in per_question.values())
     total_fn = sum(c["FN"] for c in per_question.values())
@@ -655,6 +662,12 @@ def evaluate(gt: list[GTRow], ai: list[AIRow], semantic: bool = True) -> EvalRes
         1 for c in results for p in c.gt_pairs if p.verdict == "semantic_review"
     )
     overall["redundant_dropped"] = sum(len(c.redundant) for c in results)
+    # Split headline: single-answer questions are the TRUSTWORTHY metric; list
+    # questions have non-exhaustive GT (the pipeline finds real items the GT
+    # never enumerated), so their precision is only a LOWER BOUND — reported
+    # separately, never mixed into the headline (George's decision 2026-07-16).
+    overall["single"] = _block(False)
+    overall["list"] = _block(True)
 
     return EvalResult(cells=results, per_question=pq_metrics, overall=overall)
 
@@ -668,17 +681,47 @@ def print_report(result: EvalResult, verbose: bool = False) -> None:
     print(" GENERIC EVAL REPORT")
     print("=" * 68)
 
-    print(f"\n{'QUESTION':<40}  {'P':>6}  {'R':>6}  {'F1':>6}  {'HALL':>6}  cells")
-    print("-" * 68)
-    for q, m in result.per_question.items():
-        label = q[:39]
-        print(f"  {label:<38}  {m['precision']:6.3f}  {m['recall']:6.3f}  "
-              f"{m['F1']:6.3f}  {m['hallucination_rate']:6.3f}  {m['cells']}")
+    def _qtable(is_list_wanted: bool):
+        rows = [(q, m) for q, m in result.per_question.items()
+                if m.get("is_list", False) == is_list_wanted]
+        for q, m in rows:
+            print(f"  {q[:38]:<38}  {m['precision']:6.3f}  {m['recall']:6.3f}  "
+                  f"{m['F1']:6.3f}  {m['hallucination_rate']:6.3f}  {m['cells']}")
+        return rows
 
     o = result.overall
+    hdr = f"\n{'QUESTION':<40}  {'P':>6}  {'R':>6}  {'F1':>6}  {'HALL':>6}  cells"
+
+    # ── Trustworthy headline: single-answer questions ──
+    print("\n### SINGLE-ANSWER QUESTIONS (trustworthy) ###")
+    print(hdr)
     print("-" * 68)
-    print(f"  {'OVERALL':<38}  {o['precision']:6.3f}  {o['recall']:6.3f}  "
-          f"{o['F1']:6.3f}  {o['hallucination_rate']:6.3f}  "
+    if _qtable(False):
+        s = o["single"]
+        print("-" * 68)
+        print(f"  {'SINGLE-ANSWER OVERALL':<38}  {s['precision']:6.3f}  {s['recall']:6.3f}  "
+              f"{s['F1']:6.3f}  {s['hallucination_rate']:6.3f}  "
+              f"TP={s['TP']} FN={s['FN']} FP={s['FP']}")
+    else:
+        print("  (none)")
+
+    # ── List questions: precision is a LOWER BOUND (non-exhaustive GT) ──
+    print("\n### LIST QUESTIONS — precision = LOWER BOUND (GT non-exhaustive) ###")
+    print("  Unmatched AI items may be real-but-unlisted, not hallucinations.")
+    print(hdr)
+    print("-" * 68)
+    if _qtable(True):
+        ls = o["list"]
+        print("-" * 68)
+        print(f"  {'LIST OVERALL (P=lower bound)':<38}  {ls['precision']:6.3f}  {ls['recall']:6.3f}  "
+              f"{ls['F1']:6.3f}  {ls['hallucination_rate']:6.3f}  "
+              f"TP={ls['TP']} FN={ls['FN']} FP={ls['FP']}")
+    else:
+        print("  (none)")
+
+    print("\n" + "-" * 68)
+    print(f"  COMBINED (all questions): P={o['precision']:.3f} R={o['recall']:.3f} "
+          f"F1={o['F1']:.3f} HALL={o['hallucination_rate']:.3f}  "
           f"{o['cells']} cells / {o['entities']} entities")
     print(f"  TP={o['TP']}  FN={o['FN']}  FP={o['FP']}")
     if o.get("semantic_rescues"):

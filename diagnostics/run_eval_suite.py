@@ -115,30 +115,39 @@ def run_one_task(name, input_path, gt_path, out_dir, backend, verbose):
 
 
 def print_suite_summary(records: list[dict]) -> None:
-    print(f"\n\n{'#'*68}\n  EVAL SUITE SUMMARY\n{'#'*68}")
-    print(f"\n{'TASK':<28}{'P':>7}{'R':>7}{'F1':>7}{'HALL':>7}{'cells':>7}{'sec':>7}")
-    print("-" * 68)
+    print(f"\n\n{'#'*72}\n  EVAL SUITE SUMMARY\n{'#'*72}")
+    # Headline columns are SINGLE-ANSWER (trustworthy). List F1 is shown flagged
+    # (its precision is a lower bound — GT lists are non-exhaustive).
+    print("  Headline P/R/F1/HALL = single-answer questions (trustworthy).")
+    print("  listF1 = list questions (precision is a LOWER BOUND).\n")
+    print(f"{'TASK':<26}{'P':>7}{'R':>7}{'F1':>7}{'HALL':>7}{'listF1':>8}{'sec':>6}")
+    print("-" * 72)
     for r in records:
         if r["status"] != "ok":
-            print(f"  {r['task']:<26}{'ERROR — ' + (r['error'] or '')[:30]:>40}")
+            print(f"  {r['task']:<24}{'ERROR — ' + (r['error'] or '')[:34]:>44}")
             continue
-        o = r["overall"]
-        print(f"  {r['task']:<26}{o['precision']:>7.3f}{o['recall']:>7.3f}"
-              f"{o['F1']:>7.3f}{o['hallucination_rate']:>7.3f}"
-              f"{o['cells']:>7}{r['seconds']:>7.0f}")
-    print("-" * 68)
+        s = r["overall"]["single"]
+        lf1 = r["overall"]["list"]["F1"]
+        print(f"  {r['task']:<24}{s['precision']:>7.3f}{s['recall']:>7.3f}"
+              f"{s['F1']:>7.3f}{s['hallucination_rate']:>7.3f}{lf1:>8.3f}{r['seconds']:>6.0f}")
+    print("-" * 72)
     ok = [r for r in records if r["status"] == "ok"]
     if ok:
-        tp = sum(r["overall"]["TP"] for r in ok)
-        fn = sum(r["overall"]["FN"] for r in ok)
-        fp = sum(r["overall"]["FP"] for r in ok)
-        rr = tp / (tp + fn) if tp + fn else 1.0
-        pp = tp / (tp + fp) if tp + fp else 1.0
-        f1 = 2 * pp * rr / (pp + rr) if pp + rr else 0.0
-        hall = fp / max(1, tp + fp)
-        print(f"  {'SUITE (micro-avg)':<26}{pp:>7.3f}{rr:>7.3f}{f1:>7.3f}"
-              f"{hall:>7.3f}{'':>7}")
-        print(f"  TP={tp}  FN={fn}  FP={fp}  over {len(ok)}/{len(records)} tasks OK")
+        def _micro(block_key):
+            tp = sum(r["overall"][block_key]["TP"] for r in ok)
+            fn = sum(r["overall"][block_key]["FN"] for r in ok)
+            fp = sum(r["overall"][block_key]["FP"] for r in ok)
+            rr = tp / (tp + fn) if tp + fn else 1.0
+            pp = tp / (tp + fp) if tp + fp else 1.0
+            f1 = 2 * pp * rr / (pp + rr) if pp + rr else 0.0
+            return pp, rr, f1, fp / max(1, tp + fp), tp, fn, fp
+        pp, rr, f1, hall, tp, fn, fp = _micro("single")
+        lf = _micro("list")
+        print(f"  {'SUITE single-answer':<24}{pp:>7.3f}{rr:>7.3f}{f1:>7.3f}"
+              f"{hall:>7.3f}{lf[2]:>8.3f}")
+        print(f"  single-answer TP={tp} FN={fn} FP={fp}  |  "
+              f"list TP={lf[4]} FN={lf[5]} FP={lf[6]} (P lower-bound)  "
+              f"over {len(ok)}/{len(records)} tasks OK")
 
 
 def write_suite_summary(records: list[dict], path: str) -> None:
@@ -150,12 +159,18 @@ def write_suite_summary(records: list[dict], path: str) -> None:
                               "error": r["error"], "seconds": round(r["seconds"], 1)})
             continue
         o = r["overall"]
+        s, ls = o["single"], o["list"]
         task_rows.append({
             "task": r["task"], "status": "ok", "error": "",
             "entities": o["entities"], "cells": o["cells"],
-            "TP": o["TP"], "FN": o["FN"], "FP": o["FP"],
-            "precision": o["precision"], "recall": o["recall"], "F1": o["F1"],
-            "hallucination_rate": o["hallucination_rate"],
+            # Single-answer = trustworthy headline.
+            "single_P": s["precision"], "single_R": s["recall"],
+            "single_F1": s["F1"], "single_HALL": s["hallucination_rate"],
+            "single_TP": s["TP"], "single_FN": s["FN"], "single_FP": s["FP"],
+            # List precision is a lower bound (non-exhaustive GT).
+            "list_P_lowerbound": ls["precision"], "list_R": ls["recall"],
+            "list_F1": ls["F1"],
+            "combined_F1": o["F1"],
             "seconds": round(r["seconds"], 1),
         })
         for q, m in r["per_question"].items():

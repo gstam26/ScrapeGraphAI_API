@@ -167,6 +167,23 @@ def test_fuzzy_dedup_collapses_reorderings():
     print("OK test_fuzzy_dedup_collapses_reorderings passed")
 
 
+def test_single_and_list_blocks_reported_separately():
+    # Single-answer questions are the trustworthy headline; list precision is a
+    # separate lower-bound block (George's decision 2026-07-16).
+    gt = [_gt("M", "Year founded", "2003"),
+          _gt("M", "Projects", "Firefox", is_list=True),
+          _gt("M", "Projects", "Thunderbird", is_list=True)]
+    ai = [_ai("M", "Year founded", "2003"),
+          _ai("M", "Projects", "Firefox"),
+          _ai("M", "Projects", "Common Voice")]  # real-but-unlisted extra
+    r = evaluate(gt, ai, semantic=False)
+    assert r.overall["single"]["precision"] == 1.0 and r.overall["single"]["FP"] == 0
+    assert r.overall["list"]["TP"] == 1 and r.overall["list"]["FP"] == 1
+    assert r.per_question["Projects"]["is_list"] is True
+    assert r.per_question["Year founded"]["is_list"] is False
+    print("OK test_single_and_list_blocks_reported_separately passed")
+
+
 if __name__ == "__main__":
     test_reads_current_provenance_schema()
     test_lexical_only_double_penalises_paraphrase()

@@ -1,8 +1,8 @@
 # Entity Extraction Pipeline
 
-A five-layer pipeline that extracts structured, **source-verified** answers about named entities from their websites, and writes an Excel workbook with full provenance. Built as an MSc dissertation project with Sagentia Innovation; designed to be run by non-technical consultants on real engagements.
+A pipeline that extracts structured, **source-verified** answers about named entities from their websites, and writes an Excel workbook with full provenance. Built as an MSc dissertation project with Sagentia Innovation; designed to be run by non-technical consultants on real engagements. Five core layers (Acquire → Filter → Extract → Verify → Aggregate) do the extraction and grounding; an optional grouping + LLM-summary layer turns the verified claims into a consultant-facing summary.
 
-The core reliability claim: every extracted answer carries a verbatim quote, and the Verify layer independently checks that quote against the cached source page — the LLM is never trusted on its own word.
+The core reliability claim: every extracted answer carries a verbatim quote, and the Verify layer independently checks that quote against the cached source page — the LLM is never trusted on its own word. The same principle extends to the optional AI Summary: every sentence must cite a claim ID from the verified set, and a deterministic gate falls back to verbatim claims when a sentence doesn't.
 
 ## Architecture
 
@@ -40,8 +40,50 @@ Input workbook (entities + urls + questions + optional config)
 +----------------+
         |
         v
-Excel output: Summary | Matrix | Provenance (+ 4 diagnostic sheets)
++----------------+   cluster each cell's verified claims into themes and assign
+|     GROUP      |   stable [C####] claim IDs (deterministic, on by default);
+|                |   feeds the Digest + Grouped Themes sheets
++----------------+
+        |
+        v
++----------------+   OPTIONAL (SUMMARY_ENABLED): LLM synthesizes the verified
+|   SUMMARIZE    |   claims into a scannable line per cell, each sentence cited;
+|                |   a mechanical gate falls back to verbatim claims on failure
++----------------+
+        |
+        v
+Excel output (always): Summary | Matrix | Provenance
+  + grouping (default): Digest | Grouped Themes
+  + summary (opt-in):   AI Summary [| Summary Log]
+  + diagnostics (default): Acquire | Crawl | Filter | Extract | Verify logs
 ```
+
+### The stages in plain terms
+
+| Stage | What it does | Why it's there |
+|---|---|---|
+| **Acquire** | Fetches each entity's website and crawls the relevant pages | You can't answer questions about a company without its content |
+| **Filter** | Routes each page only to the questions it could plausibly answer | Don't ask "what's the revenue?" on a careers page — saves cost and noise |
+| **Extract** | An LLM pulls out each answer **plus a verbatim quote** proving it | Structured answers, with the receipt attached |
+| **Verify** | Checks that quote actually appears on the page | Catches hallucination — the LLM is never taken at its word |
+| **Aggregate** | Merges duplicate answers across pages, flags genuine conflicts | One clean answer per cell, without hiding disagreement |
+| **Group** | Clusters the verified claims and gives each a citable `[C####]` ID | The audit trail: every claim is traceable back to its source |
+| **Summarize** *(optional)* | An LLM writes a scannable summary, every sentence cited; a gate falls back to plain claims if it can't cite | A consultant-ready view that stays honest by construction |
+
+### Tools & methods per stage
+
+Where each stage lives, what it uses, and how it works:
+
+| Stage | Code | Tool(s) | Method |
+|---|---|---|---|
+| **Acquire — fetch** | `src/acquire/fetcher.py` | httpx · Trafilatura · Playwright → Chromium | Static-first hybrid: httpx GET → Trafilatura extracts the real content → a quality gate judges it; only on failure does it launch a headless Chromium render (via Playwright), then keeps whichever text is richer |
+| **Acquire — crawl** | `src/acquire/crawler.py`, `link_scorer.py` | Ollama embeddings (BM25 fallback) · BeautifulSoup | Same-domain crawl; scores links against the questions and follows the most relevant; pages cached by `sha256(url)` |
+| **Filter** | `src/filter.py` | Ollama embeddings + cosine | Chunk the page, embed chunks + questions, take the max cosine per question; keep a question if cosine ≥ threshold **or** a keyword matches. Fail-safe: route all questions if unsure |
+| **Extract** | `src/extract.py` | Azure OpenAI GPT-4.1-mini (Claude / SGAI pluggable) | Prompt for strict JSON `{value, verbatim quote}` per entity × question; overlapped chunking, concurrency-capped calls, per-chunk cache, results merged |
+| **Verify** | `src/verify.py` | rapidfuzz + Ollama embeddings | Quote grounding: exact substring → fuzzy (`partial_ratio`) → soft-anchor for long quotes; plus a semantic cosine (claim vs quote). Unverified evidence is kept and flagged, never dropped |
+| **Aggregate** | `src/aggregate.py` | rapidfuzz (`token_sort_ratio`) | Group by entity × question; fuzzy-dedup near-identical answers; flag conflicts on single-answer questions; rank evidence by verification quality |
+| **Group** | `src/group.py` | Ollama embeddings (mean-centered) + cosine | Cluster verified claims into themes and assign stable `[C####]` IDs — deterministic, so the audit trail is reproducible |
+| **Summarize** *(opt-in)* | `src/summarize.py` | Azure OpenAI (temp 0, seeded) + deterministic gate | 3-way route — deterministic (verbatim) / merge (semantic dedup) / prose (synthesis); every sentence must cite a `[C####]` ID; a mechanical gate falls back to verbatim claims on failure |
 
 Layers are separable by design: tools are swapped via `config.py` / workbook config, and Filter/Verify/Aggregate never know which fetcher or LLM ran upstream. Deep-dive notes per layer: `brain/layers/`.
 
@@ -104,7 +146,9 @@ Sample: `samples/test_smoke.xlsx`. Workbook builders (ADLM, CMO): `scripts/build
 | `PIPELINE_ENTITY_WORKERS` | `4` | Entities crawled concurrently (one domain each) |
 | `EXTRACT_MAX_CONCURRENT_CALLS` | `16` | Global LLM-call cap across all workers |
 | `VERIFY_THRESHOLD` | `70` | Fuzzy match gate for quote verification |
-| `DIAGNOSTICS` | `True` | 7 output sheets vs 3 |
+| `GROUPING_ENABLED` | `True` | Adds Digest + Grouped Themes (claim-ID traceability chain) |
+| `SUMMARY_ENABLED` | `False` (env-only) | Opt-in AI Summary layer (LLM synthesis + citation gate) |
+| `DIAGNOSTICS` | `True` | Adds the per-layer log sheets (Acquire/Crawl/Filter/Extract/Verify + Summary Log) |
 
 ### The two fetch backends that matter
 
@@ -113,14 +157,20 @@ Sample: `samples/test_smoke.xlsx`. Workbook builders (ADLM, CMO): `scripts/build
 
 ## Output workbook
 
-`Summary`, `Matrix` (one row per entity, one column per question — deduplicated, ranked, conflict-flagged), `Provenance` (every evidence item: claim, verbatim quote, verified flag, match type, scores, source URL). With `DIAGNOSTICS=True` also: `Acquire Log`, `Crawl Candidates`, `Filter Log`, `Extract Log`, `Verify Log`.
+**Always:** `Summary`, `Matrix` (one row per entity, one column per question — deduplicated, ranked, conflict-flagged), `Provenance` (every evidence item: claim, verbatim quote, verified flag, match type, scores, source URL).
+
+**Grouping layer (on by default):** `Digest` and `Grouped Themes` — deterministic claim clusters with stable `[C####]` IDs, hyperlinked back to Provenance (chain: Digest → Grouped Themes → Provenance).
+
+**Summary layer (`SUMMARY_ENABLED`, opt-in):** `AI Summary` — the matrix-shaped consultant view; gate-failed cells fall back to the deterministic Digest line, visibly marked. `Summary Log` (under `DIAGNOSTICS`) is the per-call audit trail.
+
+**Diagnostics (`DIAGNOSTICS=True`, default):** `Acquire Log`, `Crawl Candidates`, `Filter Log`, `Extract Log`, `Verify Log`.
 
 Unverified claims are marked and highlighted in the Matrix; Provenance is the audit trail back to source.
 
 ## Tests
 
 ```bash
-python -m pytest tests/ --ignore=tests/test_acquire_smoke.py   # offline suite (~72 tests)
+python -m pytest tests/ --ignore=tests/test_acquire_smoke.py   # offline suite (~196 tests)
 python -m pytest tests/test_acquire_smoke.py                   # live-network smoke
 ```
 
@@ -128,9 +178,10 @@ python -m pytest tests/test_acquire_smoke.py                   # live-network sm
 
 ```text
 main.py, pipeline.py, config.py, models.py     entry points + shared config/schema
-src/                                           the five layers
+src/                                           the pipeline layers
   acquire/  (fetcher, crawler, link_scorer, cache)
   filter.py, extract.py, verify.py, aggregate.py
+  group.py, summarize.py                       grouping + optional LLM summary
   io_excel.py, embed.py, llmapi.py
   resolve/  (company-name -> URL resolver; fallback to the directory scrape)
 tests/                                         offline + live smoke tests

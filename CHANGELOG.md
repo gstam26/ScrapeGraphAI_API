@@ -2,6 +2,21 @@
 
 Notable changes, newest first. Full rationale for each decision: `brain/decision-log.md`.
 
+## 2026-07-15/20
+
+### AI Summary layer — s7 routing + citation gate (opt-in deliverable)
+- The LLM summary layer (`src/summarize.py`, `SUMMARY_ENABLED`, **off by default**) routes each cell three ways: **deterministic** (a bare Yes/No or a single short value — rendered verbatim, no LLM call), **merge** (2+ short values — the LLM's only job is semantic dedup, e.g. "U.S." = "USA" = "United States", pooling their citations), and **prose** (long values — theme synthesis). Roughly half of cells never touch the LLM.
+- **Faithful by construction**: every summary sentence must cite a `[C####]` claim ID from the closed verified set. A deterministic **Tier-1 mechanical gate** (no LLM) rejects invented citations, uncited sentences, and uncovered top themes; a failed cell **falls back to the verbatim Digest line, visibly marked** — it never ships unfaithful prose. Measured on a CMO depth-1 run (5 entities × 15 questions): 56/60 cells passed the gate, 4 fell back.
+- Prompt iterated s4→s7 against real CMO output (compact analyst format, cell-level line cap, synthesized topics, explicit bans on range-blending and absence assertions). `temperature=0` + fixed seed; each call's prompt, raw response and system fingerprint recorded in the Summary Log.
+- **Known edge cases** (documented, not yet closed — the review items before a user pilot): geographic-hierarchy merges (country vs continent not collapsed), occasional inference leakage past the no-interpretation rule ("...indicating X"), and keyword-grab non-answers surfacing from extraction.
+- The Tier-2 LLM-as-judge stays a **post-run diagnostics pass** (`diagnostics/summary_judge.py`), never part of the deliverable pipeline.
+
+### Domain-agnostic evaluation suite
+- `diagnostics/generic_eval.py` + `diagnostics/run_eval_suite.py`: one-command scoring (recall / precision / F1, semantic matching, single-answer vs list handling) across the eval tasks, so answer quality is measured, not asserted. Single-answer trustworthy headline is split from the list lower-bound; semantic rescue restricted to single-answer cells.
+
+### CMO depth sweep — presentation figures
+- Saturation curve, per-question heatmap and per-entity coverage over the budget-100 sweep; confirmed depth's apparent win was page budget, not depth, and that dead seeds are the real coverage ceiling.
+
 ## 2026-07-13/14
 
 ### Hybrid fetch backend promoted to production default (leadership sign-off 2026-07-13)
@@ -49,6 +64,14 @@ Notable changes, newest first. Full rationale for each decision: `brain/decision
 - Stale comments fixed (audit §E): FILTER_THRESHOLD 0.35 note, FETCH_BACKEND "dev default" note, `_DEDUP_RATIO` inline contradiction (header comment was correct: 85 is intentionally below eval's AI_DEDUP_RATIO 95).
 - Stale `PROJECT_STRUCTURE.md` deleted (marked stale since 2026-07-02; history in git).
 - R4 (eval_lib promotion) and R5 (io_excel split) deliberately deferred — summary eval in flight.
+
+## 2026-07-06/08
+
+### Traceability chain + LLM summary layer (introduced)
+- **Deterministic grouping layer** (`src/group.py`, `GROUPING_ENABLED`, on by default): clusters each aggregated cell's verified claims into themes and assigns stable `[C####]` claim IDs. Per-cell mean-centering was required — calibration showed raw cosines cannot separate themes (embedding anisotropy); `GROUP_SIMILARITY` re-calibrated 0.30 → 0.15 in the centered space.
+- **Full traceability output**: new `Digest` and `Grouped Themes` sheets, hyperlinked back to `Provenance` (chain: Digest → Grouped Themes → Provenance). Deliverable-facing — present whenever grouping ran, **not** gated behind `DIAGNOSTICS`. Grouping and the Digest enforce **verified-only** claims (standing decision 2026-07-06).
+- **LLM summary layer built** (`src/summarize.py`, design `brain/proposals/llm-summary-layer.md`): the summarizer consumes the grouped-theme structure (inheriting the verified-only guarantee), plus a Tier-1 mechanical citation gate and a Tier-2 judge/eval harness. **Walled off** — output goes to the AI Summary sheet only; the data sheets are byte-identical whether it runs or not. Off by default (`SUMMARY_ENABLED`).
+- Three new domain-agnostic eval tasks added alongside the plant-milk and ADLM cases.
 
 ## 2026-07-02
 

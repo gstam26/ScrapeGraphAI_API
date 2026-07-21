@@ -30,8 +30,17 @@ from __future__ import annotations
 import math
 import os
 
+from dotenv import load_dotenv
+
+# Machine-local model location belongs in .env (the FILTER_MODE /
+# SUMMARY_ENABLED pattern) — loaded here directly because this module can be
+# reached without config.py ever being imported (e.g. generic_eval
+# --semantic-backend cross-encoder).
+load_dotenv()
+
 # HF id of the model George has locally; override with a filesystem path via
-# env when the auto-resolved cache is not available (e.g. on-network).
+# env/.env when the auto-resolved cache is not available (e.g. on-network:
+# CROSS_ENCODER_MODEL=C:\path\to\ms-marco-MiniLM-L6-v2).
 CROSS_ENCODER_MODEL = os.getenv(
     "CROSS_ENCODER_MODEL", "cross-encoder/ms-marco-MiniLM-L6-v2"
 )

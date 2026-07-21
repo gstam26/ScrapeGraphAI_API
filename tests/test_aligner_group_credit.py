@@ -19,14 +19,14 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from diagnostics.eval_lib.aligner import (
+from src.eval.aligner import (
     AUTO_MATCH_THRESHOLD,
     AUTO_MISS_THRESHOLD,
     PairScore,
     _match_cell,
 )
-from diagnostics.eval_lib.gt_reader import GTClaim
-from diagnostics.eval_lib.pipeline_reader import AIClaim
+from src.eval.gt_reader import GTClaim
+from src.eval.pipeline_reader import AIClaim
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +120,7 @@ class TestGroupCredit:
         def mock_pair_score(gt_claim, ai_claim, emb):
             return scores[gt_claim.claim_id]
 
-        with patch("diagnostics.eval_lib.aligner._pair_score", side_effect=mock_pair_score):
+        with patch("src.eval.aligner._pair_score", side_effect=mock_pair_score):
             alignments, ai_only = _match_cell(slot, emb={}, is_list=True)
 
         return {a.gt_claim.claim_id: a for a in alignments}
@@ -184,7 +184,7 @@ class TestManualBandPassenger:
         def mock_pair_score(gt_claim, ai_claim, emb):
             return scores[gt_claim.claim_id]
 
-        with patch("diagnostics.eval_lib.aligner._pair_score", side_effect=mock_pair_score):
+        with patch("src.eval.aligner._pair_score", side_effect=mock_pair_score):
             alignments, _ = _match_cell(slot, emb={}, is_list=True)
 
         return {a.gt_claim.claim_id: a for a in alignments}
@@ -214,7 +214,7 @@ class TestSingleton:
         def mock_pair_score(g, a, emb):
             return _score(score)
 
-        with patch("diagnostics.eval_lib.aligner._pair_score", side_effect=mock_pair_score):
+        with patch("src.eval.aligner._pair_score", side_effect=mock_pair_score):
             alignments, _ = _match_cell(slot, emb={}, is_list=True)
 
         return alignments[0]

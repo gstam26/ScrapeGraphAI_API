@@ -34,7 +34,7 @@ Key methodology (confirmed decisions):
   Excel Provenance sheet. Recorded as a known limitation, not scored as 0.
 
 Run directly (needs Ollama for the Sustainability cosine path, like the aligner):
-    python diagnostics/eval_lib/metrics.py <ground_truth.xlsx> <pipeline_output.xlsx>
+    python src/eval/metrics.py <ground_truth.xlsx> <pipeline_output.xlsx>
 """
 
 from __future__ import annotations
@@ -52,14 +52,14 @@ if _REPO_ROOT not in sys.path:
 
 from rapidfuzz import fuzz
 
-from diagnostics.eval_lib.aligner import (
+from src.eval.aligner import (
     AUTO_MATCH_THRESHOLD,
     AlignmentResult,
     CellAlignment,
     align,
 )
-from diagnostics.eval_lib.gt_reader import GroundTruth, GTClaim, read_ground_truth
-from diagnostics.eval_lib.pipeline_reader import AIClaim, read_pipeline_output
+from src.eval.gt_reader import GroundTruth, GTClaim, read_ground_truth
+from src.eval.pipeline_reader import AIClaim, read_pipeline_output
 
 
 # =====================================================================
@@ -621,6 +621,6 @@ def _selfcheck(gt_path: str, pipe_path: str) -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("usage: python diagnostics/eval_lib/metrics.py <ground_truth.xlsx> <pipeline_output.xlsx>")
+        print("usage: python src/eval/metrics.py <ground_truth.xlsx> <pipeline_output.xlsx>")
         sys.exit(2)
     _selfcheck(sys.argv[1], sys.argv[2])

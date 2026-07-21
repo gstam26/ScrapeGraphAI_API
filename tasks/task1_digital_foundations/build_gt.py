@@ -1,7 +1,7 @@
 """
 Ground-truth builder — Task 1: Digital Non-Profit Foundations
 
-GT format used by diagnostics/generic_eval.py:
+GT format used by src/eval/generic_eval.py:
   Sheet "GroundTruth": entity | question | value | is_list | verbatim_quote | source_url | notes
   Sheet "Metadata":    key    | value
 
@@ -117,7 +117,7 @@ meta_df = pd.DataFrame([
     ("created",          "2026-07-07"),
     ("gt_verified",      "Wikimedia/Mozilla/Apache/Creative Commons web-verified 2026-07-07; "
                          "Internet Archive from training knowledge"),
-    ("eval_script",      "python diagnostics/generic_eval.py "
+    ("eval_script",      "python src/eval/generic_eval.py "
                          "tasks/task1_digital_foundations/ground_truth.xlsx <pipeline_output.xlsx>"),
     ("notes",            "Q3 GT is conservative (prominent projects only). "
                          "AI-only extractions that are correct are GT-gap, not hallucinations. "

@@ -6,13 +6,13 @@ compute metrics -> write the six-sheet Excel report + print a console summary.
 
 Usage:
     # Preliminary pass (writes report with a blank Manual Verdict column):
-    python diagnostics/eval_lib/eval_extraction.py \
-        --gt diagnostics/eval_lib/fixtures/ground_truth.xlsx \
-        --pipeline diagnostics/eval_lib/fixtures/pipeline_output.xlsx \
+    python src/eval/eval_extraction.py \
+        --gt src/eval/fixtures/ground_truth.xlsx \
+        --pipeline src/eval/fixtures/pipeline_output.xlsx \
         --out outputs/eval_report.xlsx
 
     # Final pass (analyst has filled Manual Verdict in the prior report):
-    python diagnostics/eval_lib/eval_extraction.py \
+    python src/eval/eval_extraction.py \
         --gt ... --pipeline ... --review outputs/eval_report.xlsx \
         --out outputs/eval_report_final.xlsx
 
@@ -30,11 +30,11 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from diagnostics.eval_lib.aligner import align
-from diagnostics.eval_lib.gt_reader import read_ground_truth
-from diagnostics.eval_lib.metrics import compute_metrics
-from diagnostics.eval_lib.pipeline_reader import read_pipeline_output
-from diagnostics.eval_lib.report_writer import (
+from src.eval.aligner import align
+from src.eval.gt_reader import read_ground_truth
+from src.eval.metrics import compute_metrics
+from src.eval.pipeline_reader import read_pipeline_output
+from src.eval.report_writer import (
     apply_manual_verdicts,
     read_manual_verdicts,
     write_report,

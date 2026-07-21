@@ -27,9 +27,9 @@ Design choices worth knowing:
     generic_eval prints a warning and falls back to lexical-only automatically.
 
 Usage (from repo root, on the machine with keys/VPN):
-  python diagnostics/run_eval_suite.py
-  python diagnostics/run_eval_suite.py --tasks task1_digital_foundations,task3_standards_bodies
-  python diagnostics/run_eval_suite.py --backend local --outdir outputs/eval_local
+  python src/eval/run_eval_suite.py
+  python src/eval/run_eval_suite.py --tasks task1_digital_foundations,task3_standards_bodies
+  python src/eval/run_eval_suite.py --backend local --outdir outputs/eval_local
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ import time
 import traceback
 from datetime import datetime
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
@@ -74,7 +74,7 @@ def run_one_task(name, input_path, gt_path, out_dir, backend, verbose):
     captured in the dict) so the caller's loop survives a bad task."""
     from src.io_excel import read_input, write_output_excel
     from pipeline import run_pipeline
-    from diagnostics.generic_eval import (
+    from src.eval.generic_eval import (
         read_gt, read_pipeline_output, evaluate, print_report, write_report_excel,
     )
 

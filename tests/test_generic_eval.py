@@ -1,5 +1,5 @@
 """
-Tests for diagnostics/generic_eval.py — the domain-agnostic evaluator.
+Tests for src/eval/generic_eval.py — the domain-agnostic evaluator.
 
 Covers the three properties that were broken or added on 2026-07-15:
   * Provenance column drift ('Question'/'Verbatim Quote' vs old 'Column'/'Quote').
@@ -16,8 +16,8 @@ import tempfile
 
 import pandas as pd
 
-import diagnostics.generic_eval as ge
-from diagnostics.generic_eval import (
+import src.eval.generic_eval as ge
+from src.eval.generic_eval import (
     AIRow, GTRow, _dedup_ai, _norm, evaluate, read_pipeline_output,
 )
 

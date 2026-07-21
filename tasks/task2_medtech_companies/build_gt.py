@@ -1,7 +1,7 @@
 """
 Ground-truth builder — Task 2: Medical Device Companies
 
-GT format used by diagnostics/generic_eval.py:
+GT format used by src/eval/generic_eval.py:
   Sheet "GroundTruth": entity | question | value | is_list | verbatim_quote | source_url | notes
   Sheet "Metadata":    key | value
 
@@ -149,7 +149,7 @@ meta_df = pd.DataFrame([
     ("gt_verified",  "Training knowledge + web spot-checks 2026-07-07. "
                      "Boston Scientific CEO web-verified. "
                      "CEO rows are time-sensitive — re-verify before reuse."),
-    ("eval_script",  "python diagnostics/generic_eval.py "
+    ("eval_script",  "python src/eval/generic_eval.py "
                      "tasks/task2_medtech_companies/ground_truth.xlsx <pipeline_output.xlsx>"),
     ("notes",        "Q3 segment names are official division names; pipeline may extract "
                      "sub-divisions — GT-gap not hallucination. "

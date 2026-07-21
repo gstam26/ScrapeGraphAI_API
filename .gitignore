@@ -28,7 +28,7 @@ diagnostics/fetch_eval/
 cmo-inputs/
 
 # Eval fixtures — committed real data for reproducible scoring
-!diagnostics/eval_lib/fixtures/*.xlsx
+!src/eval/fixtures/*.xlsx
 
 # ADLM diagnostics run inputs/outputs — tracked despite the *.xlsx blanket ignore
 !adlm-inputs/*.xlsx

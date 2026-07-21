@@ -1,7 +1,7 @@
 """
 Ground-truth builder — Task 3: International Standards Bodies
 
-GT format used by diagnostics/generic_eval.py:
+GT format used by src/eval/generic_eval.py:
   Sheet "GroundTruth": entity | question | value | is_list | verbatim_quote | source_url | notes
   Sheet "Metadata":    key | value
 
@@ -167,7 +167,7 @@ meta_df = pd.DataFrame([
                     "ISO/IEEE/IEC/BSI/DIN: training knowledge; "
                     "founding years and HQ cities are stable; "
                     "domain lists are representative only."),
-    ("eval_script", "python diagnostics/generic_eval.py "
+    ("eval_script", "python src/eval/generic_eval.py "
                     "tasks/task3_standards_bodies/ground_truth.xlsx <pipeline_output.xlsx>"),
     ("notes",
      "BSI and DIN have no Q4 GT row — pipeline Q4 output for these two must be reviewed "

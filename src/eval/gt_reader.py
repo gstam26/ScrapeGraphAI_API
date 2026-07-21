@@ -33,7 +33,7 @@ Expected sheets (column matching is case/whitespace tolerant via _find_column):
 
 This module performs NO matching and NO embedding. Run it directly to self-check:
 
-    python diagnostics/eval_lib/gt_reader.py path/to/ground_truth.xlsx
+    python src/eval/gt_reader.py path/to/ground_truth.xlsx
 """
 
 from __future__ import annotations
@@ -416,6 +416,6 @@ def _selfcheck(filepath: str) -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("usage: python diagnostics/eval_lib/gt_reader.py <ground_truth.xlsx>")
+        print("usage: python src/eval/gt_reader.py <ground_truth.xlsx>")
         sys.exit(2)
     _selfcheck(sys.argv[1])

@@ -39,7 +39,7 @@ precision denominator, the precision/recall/F1 math, and the hallucination vs
 GT-gap classification of ai_only claims.
 
 Run directly to review alignment on real data:
-    python diagnostics/eval_lib/aligner.py <ground_truth.xlsx> <pipeline_output.xlsx>
+    python src/eval/aligner.py <ground_truth.xlsx> <pipeline_output.xlsx>
 """
 
 from __future__ import annotations
@@ -59,13 +59,13 @@ from rapidfuzz import fuzz
 from src.embed import embed_batch
 from src.verify import _cosine
 
-from diagnostics.eval_lib.gt_reader import (
+from src.eval.gt_reader import (
     GT_SHEET_TO_QUESTION,
     GTClaim,
     GroundTruth,
     read_ground_truth,
 )
-from diagnostics.eval_lib.pipeline_reader import (
+from src.eval.pipeline_reader import (
     AIClaim,
     PipelineOutput,
     read_pipeline_output,
@@ -560,7 +560,7 @@ def _selfcheck(gt_path: str, pipe_path: str) -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("usage: python diagnostics/eval_lib/aligner.py "
+        print("usage: python src/eval/aligner.py "
               "<ground_truth.xlsx> <pipeline_output.xlsx>")
         sys.exit(2)
     _selfcheck(sys.argv[1], sys.argv[2])

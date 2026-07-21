@@ -58,9 +58,9 @@ Precision / recall / F1 definitions:
 
 ---------------------------------------------------------------------------
 Usage:
-  python diagnostics/generic_eval.py <ground_truth.xlsx> <pipeline_output.xlsx>
-  python diagnostics/generic_eval.py <gt.xlsx> <pipe.xlsx> --output report.xlsx
-  python diagnostics/generic_eval.py <gt.xlsx> <pipe.xlsx> --verbose
+  python src/eval/generic_eval.py <ground_truth.xlsx> <pipeline_output.xlsx>
+  python src/eval/generic_eval.py <gt.xlsx> <pipe.xlsx> --output report.xlsx
+  python src/eval/generic_eval.py <gt.xlsx> <pipe.xlsx> --verbose
 """
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Optional
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 

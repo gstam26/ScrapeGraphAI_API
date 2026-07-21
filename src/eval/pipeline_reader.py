@@ -21,7 +21,7 @@ this needs either a new Provenance column or a JSON sidecar from the pipeline.
 This module performs NO matching and NO embedding — pure I/O plus Matrix-cell
 text parsing. Run it directly to self-check parsing:
 
-    python diagnostics/eval_lib/pipeline_reader.py path/to/pipeline_output.xlsx
+    python src/eval/pipeline_reader.py path/to/pipeline_output.xlsx
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ from src.aggregate import _is_null_sentinel, _normalise_value
 from src.io_excel import _clean_str, _find_column, _find_sheet
 
 # Reuse the GT-side entity normaliser so both sources canonicalise identically.
-from diagnostics.eval_lib.gt_reader import normalise_entity
+from src.eval.gt_reader import normalise_entity
 
 
 # Matrix-cell control strings emitted by io_excel._make_matrix_df.
@@ -320,7 +320,7 @@ def _selfcheck(filepath: str, gt_path: str | None = None) -> None:
         print(f"  char_span     : {example.char_span}  (None - absent from Excel Provenance)")
 
     if gt_path:
-        from diagnostics.eval_lib.gt_reader import read_ground_truth
+        from src.eval.gt_reader import read_ground_truth
         gt = read_ground_truth(gt_path)
         result = crosscheck_entities(gt.entities(), pipe.entities())
         print("\n--- entity-name alignment (edge case 7.3) ---")
@@ -331,7 +331,7 @@ def _selfcheck(filepath: str, gt_path: str | None = None) -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("usage: python diagnostics/eval_lib/pipeline_reader.py "
+        print("usage: python src/eval/pipeline_reader.py "
               "<pipeline_output.xlsx> [ground_truth.xlsx]")
         sys.exit(2)
     _selfcheck(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)

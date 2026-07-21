@@ -41,9 +41,9 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
-from diagnostics.eval_lib.aligner import AlignmentResult, CellAlignment
-from diagnostics.eval_lib.gt_reader import GroundTruth, normalise_entity
-from diagnostics.eval_lib.metrics import (
+from src.eval.aligner import AlignmentResult, CellAlignment
+from src.eval.gt_reader import GroundTruth, normalise_entity
+from src.eval.metrics import (
     GroupMetrics,
     MetricsReport,
     ai_only_audit_rows,

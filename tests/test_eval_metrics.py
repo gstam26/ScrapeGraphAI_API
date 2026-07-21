@@ -1,7 +1,7 @@
-from diagnostics.eval_lib.aligner import AIOnly, CellAlignment, GTAlignment, PairScore
-from diagnostics.eval_lib.gt_reader import GTClaim, GroundTruth, normalise_entity
-from diagnostics.eval_lib.metrics import _cell_metrics, ai_only_audit_rows
-from diagnostics.eval_lib.pipeline_reader import AIClaim
+from src.eval.aligner import AIOnly, CellAlignment, GTAlignment, PairScore
+from src.eval.gt_reader import GTClaim, GroundTruth, normalise_entity
+from src.eval.metrics import _cell_metrics, ai_only_audit_rows
+from src.eval.pipeline_reader import AIClaim
 
 
 def _gt(entity: str, claim: str, claim_id: str = "GT-1", is_null: bool = False) -> GTClaim:

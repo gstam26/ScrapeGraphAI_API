@@ -6,7 +6,7 @@ from rapidfuzz import fuzz
 from models import ExtractedCell, SourceQuote
 
 # token_sort_ratio threshold for near-duplicate value suppression in display output.
-# Intentionally lower than AI_DEDUP_RATIO (95) in diagnostics/eval_lib/metrics.py:
+# Intentionally lower than AI_DEDUP_RATIO (95) in src/eval/metrics.py:
 # Matrix display collapses near-paraphrase duplicates; eval precision denom does not.
 _DEDUP_RATIO = 85
 

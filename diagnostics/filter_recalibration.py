@@ -273,6 +273,11 @@ def cross_encoder_tables(
     from src.eval.cross_encoder import CrossEncoderScorer
 
     scorer = CrossEncoderScorer()
+    # Load the model BEFORE the page loop: a load failure must abort the CE
+    # leg once (caught by main's fail-soft wrapper), not be retried per page
+    # (2026-07-21 work-laptop run: SSL-broken HF HEAD checks re-attempted
+    # for every URL because only score_pairs was in the try block).
+    scorer.ensure_ready()
     xl = pd.ExcelFile(baseline)
     acq = pd.read_excel(xl, "Acquire Log")
     prov = pd.read_excel(xl, "Provenance")

@@ -62,9 +62,28 @@ class CrossEncoderScorer:
 
     def _ensure_model(self):
         if self._model is None:
+            # Force OFFLINE model resolution by default. hf_hub makes an
+            # online HEAD check even for fully-cached models; on the Sagentia
+            # network, corporate TLS interception turns that check into an
+            # SSL-handshake retry loop (observed 2026-07-21 on the work
+            # laptop). The model is required to exist locally anyway (HF
+            # downloads are blocked on-network), so offline-first is correct
+            # on both machines. To deliberately download on a machine where
+            # HF is reachable, set HF_HUB_OFFLINE=0 explicitly.
+            # Caveat: env vars are read when huggingface_hub is first
+            # imported — effective here because this import is the lazy
+            # first one in any pipeline/diagnostic process.
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
             from sentence_transformers import CrossEncoder  # heavy import, on demand
             self._model = CrossEncoder(self.model_name)
         return self._model
+
+    def ensure_ready(self) -> None:
+        """Load the model NOW. Call before a long scoring loop so a load
+        failure aborts once with one clear error, instead of being caught
+        and re-attempted per item by the caller's fail-soft loop."""
+        self._ensure_model()
 
     def score(self, a: str, b: str) -> float:
         return self.score_pairs([(a, b)])[0]

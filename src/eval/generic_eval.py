@@ -181,6 +181,22 @@ def _is_null(value: str) -> bool:
     return _norm(value) == _NULL_SENTINEL or "not disclosed" in _norm(value)
 
 
+def _numeric_value(text: str) -> Optional[float]:
+    """Parse a PURE numeric value ("2003", "2,003", "12.5") or None.
+
+    Values with any non-numeric content stay None — this exists for cells
+    like years and counts, where fuzzy string similarity is meaningless:
+    token_sort_ratio("2003", "2004") is 75%, which auto-matched two
+    DIFFERENT years (caught by George's first label set, 2026-07-21)."""
+    t = _norm(text).replace(",", "").replace(" ", "")
+    if not t:
+        return None
+    try:
+        return float(t)
+    except ValueError:
+        return None
+
+
 def _token_f1(a: str, b: str) -> float:
     ta = {t for t in a.lower().split() if t}
     tb = {t for t in b.lower().split() if t}
@@ -276,6 +292,14 @@ def _pair_score(
     (for display); combined_lexical is the lexical-only score the confident
     auto_match / review bands are judged on; the semantic score rescues
     otherwise missed pairs into the flagged semantic_review band (_verdict)."""
+    # Typed comparison first: when BOTH values are pure numbers, they match
+    # exactly or not at all — no fuzzy band, no semantic rescue. "2003" vs
+    # "2004" must miss; "2,003" vs "2003" must match.
+    gt_num, ai_num = _numeric_value(gt.value), _numeric_value(ai.value)
+    if gt_num is not None and ai_num is not None:
+        score = 1.0 if gt_num == ai_num else 0.0
+        return score, 0.0, score, 0.0
+
     vs_lex = fuzz.token_sort_ratio(_norm(gt.value), _norm(ai.value)) / 100.0
     qs = 0.0
     quote_available = bool(gt.verbatim_quote.strip()) and bool(ai.quote.strip())

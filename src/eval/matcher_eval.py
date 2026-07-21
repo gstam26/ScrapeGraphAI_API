@@ -195,6 +195,78 @@ def print_score_report(report: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# ce-rescore: score the SAME labelled pairs with the cross-encoder
+# ---------------------------------------------------------------------------
+def ce_rescore(df: pd.DataFrame, scorer=None) -> dict:
+    """Head-to-head on human-labelled pairs: production matcher vs the
+    cross-encoder scoring (gt_value, ai_value) directly.
+
+    Also sweeps the CE threshold over the labelled pairs — CROSS_ENCODER_MIN
+    (0.50) is a placeholder, and these labels are exactly the data that
+    calibrates it. Pass `scorer=` to inject a fake model in tests."""
+    if scorer is None:
+        from src.eval.cross_encoder import CrossEncoderScorer
+        scorer = CrossEncoderScorer()
+        scorer.ensure_ready()
+
+    labelled = df[df["human_label"].astype(str).str.strip().str.upper().isin(
+        ["SAME", "DIFFERENT"])].copy()
+    if labelled.empty:
+        raise ValueError("No labelled rows (human_label must be SAME or DIFFERENT).")
+    labelled["human"] = labelled["human_label"].astype(str).str.strip().str.upper()
+    labelled["matcher"] = labelled["matcher_says"].astype(str).str.strip().str.upper()
+
+    pairs = [(str(g), str(a)) for g, a in
+             zip(labelled["gt_value"], labelled["ai_value"])]
+    labelled["ce_score"] = scorer.score_pairs(pairs)
+
+    matcher_agreement = float((labelled["matcher"] == labelled["human"]).mean())
+
+    sweep = []
+    for t in [round(0.05 * i, 2) for i in range(1, 20)]:
+        ce_says = labelled["ce_score"].map(
+            lambda s, t=t: "SAME" if s >= t else "DIFFERENT")
+        sweep.append({"threshold": t,
+                      "agreement": round(float((ce_says == labelled["human"]).mean()), 4)})
+    best = max(sweep, key=lambda r: r["agreement"])
+    at_default = next(
+        (r for r in sweep
+         if abs(r["threshold"] - scorer.min_score) < 1e-9), None)
+
+    return {
+        "n_labelled": int(len(labelled)),
+        "matcher_agreement": round(matcher_agreement, 4),
+        "ce_agreement_at_default": at_default["agreement"] if at_default else None,
+        "ce_default_threshold": scorer.min_score,
+        "ce_best_threshold": best["threshold"],
+        "ce_agreement_at_best": best["agreement"],
+        "sweep": sweep,
+        "scores": labelled[["entity", "question", "gt_value", "ai_value",
+                            "human", "matcher", "ce_score"]],
+    }
+
+
+def print_ce_report(report: dict) -> None:
+    print()
+    print("=" * 60)
+    print(" CROSS-ENCODER vs PRODUCTION MATCHER (on human labels)")
+    print("=" * 60)
+    print(f"  labelled pairs             : {report['n_labelled']}")
+    print(f"  production matcher agreement: {report['matcher_agreement']:.3f}")
+    print(f"  CE agreement @ default {report['ce_default_threshold']:.2f} : "
+          f"{report['ce_agreement_at_default']:.3f}")
+    print(f"  CE agreement @ best    {report['ce_best_threshold']:.2f} : "
+          f"{report['ce_agreement_at_best']:.3f}")
+    print("\n  threshold sweep (agreement):")
+    for r in report["sweep"]:
+        marker = "  <- best" if r["threshold"] == report["ce_best_threshold"] else ""
+        print(f"    t={r['threshold']:.2f}  {r['agreement']:.3f}{marker}")
+    print("\n  NOTE: best threshold is chosen ON these labels — treat it as an")
+    print("  estimate to re-check on a second label set, not a validated value.")
+    print()
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 def main() -> int:
@@ -215,6 +287,11 @@ def main() -> int:
 
     s = sub.add_parser("label-score", help="Score a filled labelling workbook")
     s.add_argument("labels", help="Labelling workbook with human_label filled")
+
+    c = sub.add_parser("ce-rescore",
+                       help="Score the same labelled pairs with the cross-encoder "
+                            "(needs local model files) and compare matchers")
+    c.add_argument("labels", help="Labelling workbook with human_label filled")
 
     args = ap.parse_args()
 
@@ -238,6 +315,10 @@ def main() -> int:
         return 0
 
     df = pd.read_excel(args.labels, sheet_name="Pairs")
+    if args.cmd == "ce-rescore":
+        report = ce_rescore(df)
+        print_ce_report(report)
+        return 0
     report = score_labels(df)
     print_score_report(report)
     return 0 if report["passed_bar"] else 1

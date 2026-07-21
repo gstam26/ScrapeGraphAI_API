@@ -185,3 +185,36 @@ def test_label_score_requires_labels():
     df = _labels_df([_label_row("auto_match", "SAME", "")])
     with pytest.raises(ValueError, match="No labelled rows"):
         score_labels(df)
+
+
+# ---------------------------------------------------------------------------
+# matcher_eval: ce-rescore
+# ---------------------------------------------------------------------------
+def test_ce_rescore_compares_matchers_and_sweeps_threshold():
+    from src.eval.matcher_eval import ce_rescore
+
+    rows = [
+        # Human SAME pairs share a first token (FakeModel scores them high).
+        {**_label_row("auto_miss", "DIFFERENT", "SAME"),
+         "gt_value": "geneva hq", "ai_value": "geneva office"},
+        {**_label_row("auto_match", "SAME", "SAME"),
+         "gt_value": "paris lab", "ai_value": "paris facility"},
+        # Human DIFFERENT pair with different first tokens (scored low).
+        {**_label_row("auto_match", "SAME", "DIFFERENT"),
+         "gt_value": "london", "ai_value": "berlin"},
+        # Unlabelled row must be excluded.
+        {**_label_row("auto_miss", "DIFFERENT", ""),
+         "gt_value": "x", "ai_value": "y"},
+    ]
+    df = _labels_df(rows)
+    scorer = CrossEncoderScorer(model=FakeModel())
+    report = ce_rescore(df, scorer=scorer)
+
+    assert report["n_labelled"] == 3
+    # Production matcher: wrong on rows 1 and 3 -> 1/3.
+    assert report["matcher_agreement"] == pytest.approx(1 / 3, abs=1e-3)
+    # Fake CE separates perfectly -> 3/3 at its default 0.5 threshold.
+    assert report["ce_agreement_at_default"] == 1.0
+    assert report["ce_agreement_at_best"] == 1.0
+    assert len(report["sweep"]) == 19
+    assert len(report["scores"]) == 3

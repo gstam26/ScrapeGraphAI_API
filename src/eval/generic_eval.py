@@ -61,6 +61,9 @@ Usage:
   python src/eval/generic_eval.py <ground_truth.xlsx> <pipeline_output.xlsx>
   python src/eval/generic_eval.py <gt.xlsx> <pipe.xlsx> --output report.xlsx
   python src/eval/generic_eval.py <gt.xlsx> <pipe.xlsx> --verbose
+  python src/eval/generic_eval.py <gt.xlsx> <pipe.xlsx> --sheet matrix
+      (score the deliverable Matrix sheet instead of Provenance — measures
+       what the output table SHOWS after aggregation and display capping)
 """
 from __future__ import annotations
 
@@ -362,6 +365,83 @@ def read_pipeline_output(filepath: str) -> list[AIRow]:
             match_type=_clean(r.get(resolved["match_type"])) if resolved["match_type"] else "",
             source_url=_clean(r.get(resolved["source_url"])) if resolved["source_url"] else "",
         ))
+    return rows
+
+
+_MATRIX_MARKER_LINES = {"(sources conflict)", "(unverified)", "-- unverified --"}
+
+
+def read_pipeline_matrix(filepath: str) -> list[AIRow]:
+    """Read the deliverable MATRIX sheet instead of Provenance.
+
+    Provenance mode measures what the pipeline EXTRACTED; matrix mode measures
+    what the deliverable SHOWS — after aggregation, display capping
+    (MATRIX_MAX_DISPLAY_ITEMS) and Excel clamping. Items hidden behind
+    "[+N more items — see Provenance]" therefore count as missing here:
+    that is the point of the mode, not a limitation.
+
+    Cell grammar (io_excel._make_matrix_df):
+      "No data found"                       -> null sentinel (true-negative
+                                               against a null GT cell)
+      "- value" lines                       -> one claim each, verified until
+      "-- Unverified --"                    -> section switch: following
+                                               bullets are unverified
+      "(unverified)" (anywhere in cell)     -> whole cell unverified
+      "(sources conflict)" / "[+N more...]" / "[truncated ...]" -> skipped
+    Matrix cells carry no quotes, so the evaluator's quote signal never fires
+    in this mode (as when GT has no quotes).
+    """
+    xls = pd.ExcelFile(filepath)
+    sheet = next((s for s in xls.sheet_names if s.lower() == "matrix"), None)
+    if sheet is None:
+        raise ValueError(
+            f"Pipeline output {filepath!r} has no Matrix sheet. "
+            f"Found: {xls.sheet_names}"
+        )
+    df = pd.read_excel(xls, sheet_name=sheet)
+    ent_col = next((c for c in df.columns if _norm(str(c)) == "entity"), df.columns[0])
+    question_cols = [c for c in df.columns if c != ent_col]
+
+    rows: list[AIRow] = []
+    for _, r in df.iterrows():
+        entity = _clean(r.get(ent_col))
+        if not entity:
+            continue
+        for q in question_cols:
+            question = str(q).strip()
+            text = _clean(r.get(q))
+            if not text:
+                continue
+            if _norm(text) == "no data found":
+                rows.append(AIRow(
+                    entity=entity, entity_norm=_norm(entity),
+                    question=question, question_norm=_norm(question),
+                    value="None (not disclosed)",  # scores as an AI null claim
+                    quote="", verified=False, match_type="matrix", source_url="",
+                ))
+                continue
+            verified = not any(
+                _norm(line) == "(unverified)" for line in text.split("\n")
+            )
+            for line in text.split("\n"):
+                s = line.strip()
+                if not s:
+                    continue
+                sn = _norm(s)
+                if sn == "-- unverified --":
+                    verified = False
+                    continue
+                if sn in _MATRIX_MARKER_LINES or s.startswith("[+") or sn.startswith("[truncated"):
+                    continue
+                value = s[2:].strip() if s.startswith("- ") else s
+                if not value:
+                    continue
+                rows.append(AIRow(
+                    entity=entity, entity_norm=_norm(entity),
+                    question=question, question_norm=_norm(question),
+                    value=value, quote="", verified=verified,
+                    match_type="matrix", source_url="",
+                ))
     return rows
 
 
@@ -823,13 +903,21 @@ def main() -> None:
                         help="Print cell-level alignment detail")
     parser.add_argument("--no-semantic", action="store_true",
                         help="Disable embedding-based semantic matching (lexical only)")
+    parser.add_argument("--sheet", choices=["provenance", "matrix"],
+                        default="provenance",
+                        help="Which pipeline sheet to score: 'provenance' = what "
+                             "was extracted (default); 'matrix' = what the "
+                             "deliverable shows (post-aggregation, post-display-cap)")
     args = parser.parse_args()
 
     print(f"GT      : {args.ground_truth}")
-    print(f"Pipeline: {args.pipeline_output}")
+    print(f"Pipeline: {args.pipeline_output}  [{args.sheet} mode]")
 
-    gt  = read_gt(args.ground_truth)
-    ai  = read_pipeline_output(args.pipeline_output)
+    gt = read_gt(args.ground_truth)
+    if args.sheet == "matrix":
+        ai = read_pipeline_matrix(args.pipeline_output)
+    else:
+        ai = read_pipeline_output(args.pipeline_output)
     print(f"Loaded  : {len(gt)} GT rows, {len(ai)} AI claims")
 
     result = evaluate(gt, ai, semantic=not args.no_semantic)

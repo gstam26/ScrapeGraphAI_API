@@ -261,6 +261,22 @@ def print_ce_report(report: dict) -> None:
     for r in report["sweep"]:
         marker = "  <- best" if r["threshold"] == report["ce_best_threshold"] else ""
         print(f"    t={r['threshold']:.2f}  {r['agreement']:.3f}{marker}")
+
+    sc = report["scores"]
+    t = report["ce_default_threshold"]
+    ce_wrong = sc[(sc["ce_score"] >= t) != (sc["human"] == "SAME")]
+    if not ce_wrong.empty:
+        print(f"\n  CE disagreements with human @ t={t:.2f}:")
+        for _, r in ce_wrong.iterrows():
+            print(f"    human={r['human']:<9} ce={r['ce_score']:.3f}  "
+                  f"GT {str(r['gt_value'])[:40]!r} <-> AI {str(r['ai_value'])[:40]!r}")
+    m_wrong = sc[sc["matcher"] != sc["human"]]
+    if not m_wrong.empty:
+        print("\n  production-matcher disagreements with human:")
+        for _, r in m_wrong.iterrows():
+            print(f"    human={r['human']:<9} matcher={r['matcher']:<9} "
+                  f"GT {str(r['gt_value'])[:40]!r} <-> AI {str(r['ai_value'])[:40]!r}")
+
     print("\n  NOTE: best threshold is chosen ON these labels — treat it as an")
     print("  estimate to re-check on a second label set, not a validated value.")
     print()

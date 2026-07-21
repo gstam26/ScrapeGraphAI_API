@@ -167,10 +167,32 @@ Sample: `samples/test_smoke.xlsx`. Workbook builders (ADLM, CMO): `scripts/build
 
 Unverified claims are marked and highlighted in the Matrix; Provenance is the audit trail back to source.
 
+## Evaluation (`src/eval/`)
+
+The evaluation framework is domain-agnostic: give it a ground-truth workbook and a pipeline output and it reports precision / recall / F1 / hallucination per question and overall (single-answer questions are the trustworthy headline; list-question precision is a lower bound when GT is non-exhaustive).
+
+```bash
+# Analyst matrix table -> flat GT workbook (splitting, is_list inference, null markers)
+python src/eval/gt_convert.py analyst_matrix.xlsx --output ground_truth.xlsx
+
+# Score a run: what was EXTRACTED (Provenance) or what the deliverable SHOWS (Matrix)
+python src/eval/generic_eval.py ground_truth.xlsx output.xlsx
+python src/eval/generic_eval.py ground_truth.xlsx output.xlsx --sheet matrix
+
+# Run + score every task under tasks/ in one command
+python src/eval/run_eval_suite.py
+
+# Validate the matcher itself against human labels (pre-registered 0.80 bar)
+python src/eval/matcher_eval.py label-template gt.xlsx output.xlsx --output labels.xlsx
+python src/eval/matcher_eval.py label-score labels.xlsx
+```
+
+The plant-milk Stage 10 evaluator (`eval_extraction.py`, aligner/metrics/gt_reader) lives in the same package; its 2026-06-29 metrics are locked for the dissertation. An experimental cross-encoder matching backend (`--semantic-backend cross-encoder`) exists behind a flag — unvalidated until the label-score leg passes, see `src/eval/cross_encoder.py`.
+
 ## Tests
 
 ```bash
-python -m pytest tests/ --ignore=tests/test_acquire_smoke.py   # offline suite (~196 tests)
+python -m pytest tests/ --ignore=tests/test_acquire_smoke.py   # offline suite (~239 tests)
 python -m pytest tests/test_acquire_smoke.py                   # live-network smoke
 ```
 
@@ -183,9 +205,11 @@ src/                                           the pipeline layers
   filter.py, extract.py, verify.py, aggregate.py
   group.py, summarize.py                       grouping + optional LLM summary
   io_excel.py, embed.py, llmapi.py
+  eval/     (generic_eval, gt_convert, matcher_eval, run_eval_suite +
+             the Stage 10 plant-milk evaluator: aligner/metrics/gt_reader)
   resolve/  (company-name -> URL resolver; fallback to the directory scrape)
 tests/                                         offline + live smoke tests
-diagnostics/                                   standalone reports + eval_lib (Stage 10 evaluation)
+diagnostics/                                   standalone reports & calibration tools
 brain/                                         decision log, tool register, layer notes, proposals
 adlm-inputs/, adlm-outputs/                    ADLM engagement workbooks (tracked)
 cache/, outputs/                               generated (gitignored)

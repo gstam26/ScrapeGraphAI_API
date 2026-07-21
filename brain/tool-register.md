@@ -32,6 +32,7 @@ All extractors share: chunking 8000/200, 8 chunk workers, sha256 extract cache, 
 | nomic-embed-text (Ollama) | `OLLAMA_HOST`, `SCORER_TOOL="ollama"` | Active | `src/embed.py` batch endpoint; used by **Acquire** (link scoring), **Filter** (routing), **Verify** (diagnostic semantic_score) | Internal server `http://10.99.96.1:11434` — Science Group WiFi/VPN only. The ONLY permitted embedding source (HuggingFace blocked). Graceful degradation: BM25 in Acquire, route-all in Filter, skipped semantic_score in Verify |
 | BM25 | — (automatic fallback) | Active (fallback) | `score_links` in `link_scorer.py` | Crawler-only fallback when Ollama unreachable. Per-batch relative scores (threshold `CRAWL_MIN_SCORE=0.12`) |
 | sentence-transformers | — | Blocked | Never implemented | HuggingFace downloads blocked by Sagentia IT. Interim-report plan; replaced by Ollama |
+| ms-marco-MiniLM-L6-v2 (cross-encoder) | `--semantic-backend cross-encoder` (generic_eval), `--cross-encoder` (filter_recalibration); `CROSS_ENCODER_MODEL`/`CROSS_ENCODER_MIN` env | Experimental | `src/eval/cross_encoder.py` — pairwise scorer, sigmoid logits, lazy sentence-transformers load | PAIR scorer, no vectors: candidate for filter routing + eval matching; structurally unusable for group.py clustering. Relevance-trained (≠ equivalence); threshold unvalidated until matcher_eval label-score passes. Model files must exist LOCALLY (HF blocked on-network); nothing routes through it by default (2026-07-21) |
 
 ## Verify
 

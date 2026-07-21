@@ -1,6 +1,6 @@
 # Proposal: Code restructure
 
-**Status:** Written 2026-07-02. **Executed 2026-07-09** on George's go-ahead: R1, R2, R3, R6 done (offline suite 164 green before and after; scripts verified via `--help` from repo root). R4 and R5 remain deferred — R4 waits until the summary eval is no longer in flight, R5 until output-schema work needs it. Stale `PROJECT_STRUCTURE.md` also deleted.
+**Status:** Written 2026-07-02. **Executed 2026-07-09** on George's go-ahead: R1, R2, R3, R6 done (offline suite 164 green before and after; scripts verified via `--help` from repo root). Stale `PROJECT_STRUCTURE.md` also deleted. **R4 executed 2026-07-21** (its gate — summary eval in flight — cleared 2026-07-15/20): `eval_lib` → `src/eval/` with `generic_eval.py` + `run_eval_suite.py` joining the package, module names unchanged, aligner test into `tests/` (suite 196 → 205); see decision-log 2026-07-21. Only R5 (io_excel split) remains deferred, until output-schema work needs it.
 
 Original text below. Every item is flagged **pure move** (behaviour-identical, import-path changes only) or **behaviour-adjacent** (could change runtime behaviour — needs its own test pass).
 

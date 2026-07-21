@@ -2,6 +2,16 @@
 
 Notable changes, newest first. Full rationale for each decision: `brain/decision-log.md`.
 
+## 2026-07-21
+
+### Evaluation framework promoted to `src/eval/` and generalised
+- **Restructure R4 executed** (gate cleared by the summary eval shipping): `diagnostics/eval_lib/` → `src/eval/`, with `generic_eval.py` and `run_eval_suite.py` joining the package (module names unchanged — they appear in the dissertation text). The aligner test moved into `tests/` and joins the offline suite. Behaviour-identical; suite green before/after.
+- **`src/eval/gt_convert.py`**: converts a matrix-shaped analyst answer table (entity rows × question columns, multi-item cells) into the flat GT workbook the evaluator reads — newline/semicolon splitting (comma split opt-in per column), bullet stripping, `is_list` inference with `--list`/`--single` overrides, null markers → the canonical sentinel, empty cell = not assessed. Output round-trips through `read_gt` before success is reported. Any analyst table now plugs into the evaluation.
+- **`generic_eval.py --sheet matrix`**: scores the deliverable Matrix sheet (post-aggregation, post-display-cap) instead of Provenance — "No data found" maps to the null sentinel (true negative against null GT); items hidden by the display cap count as missing by design. Verified against the real 07-02 v2 validation workbook.
+- **`src/eval/matcher_eval.py`**: label-template / label-score legs measuring the matcher's agreement with human labels against a pre-registered 0.80 bar (the summary-judge pattern) — the match thresholds had never been human-validated. Awaiting labels.
+- **Cross-encoder experiment (off by default everywhere)**: `src/eval/cross_encoder.py` + `--semantic-backend cross-encoder` in the evaluator, and `filter_recalibration.py --cross-encoder` for the filter-side AUC A/B vs the 0.728 embedding baseline on the same cached pages. Documented caveats: relevance-trained (ms-marco) vs equivalence task; threshold unvalidated until label-score passes; unusable for clustering (no vectors). Adoption decisions wait for the measurements.
+- Suite: 239 offline tests green (196 → 239).
+
 ## 2026-07-15/20
 
 ### AI Summary layer — s7 routing + citation gate (opt-in deliverable)

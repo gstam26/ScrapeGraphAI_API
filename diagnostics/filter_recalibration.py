@@ -258,18 +258,39 @@ def after_tables(
 
 # ── CROSS-ENCODER leg: ms-marco pairwise relevance vs embedding cosine ───────
 
+# Query forms tried per question. MS MARCO cross-encoders are trained on
+# SHORT natural search queries; the production "{name}. {instruction}" string
+# is prompt-ese (output-format directives etc.) far from that distribution,
+# so testing only it risks blaming the model for a query-form mismatch
+# (2026-07-21 review). Column name -> label.
+CE_VARIANTS = {
+    "ce_name_instr": "CE name+instruction",
+    "ce_name": "CE name only",
+    "ce_question": "CE natural question",
+}
+
+def _natural_question(name: str, instruction: str) -> str:
+    """First interrogative sentence of the instruction — the query form
+    closest to MS MARCO's training distribution. Falls back to the name."""
+    import re
+    for sent in re.split(r"(?<=[.?!])\s+", instruction.strip()):
+        if sent.strip().endswith("?"):
+            return sent.strip()
+    return name
+
+
 def cross_encoder_tables(
     baseline: str,
     cache_dir: str,
     questions: dict[str, str],
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, int, int]:
-    """Score the SAME cached pages with the local cross-encoder (query =
-    name + instruction, the production query form; page score per question =
-    max over chunks) and compute the same AUC table + threshold sweep, so the
-    CE column is directly comparable with the embedding AUC on this page set.
-    Needs no Ollama — only the cached pages and the local model files
-    (src/eval/cross_encoder.py; HuggingFace is blocked on-network, so the
-    model must already exist locally)."""
+) -> tuple[list[tuple[str, pd.DataFrame]], pd.DataFrame, pd.DataFrame, int, int]:
+    """Score the SAME cached pages with the local cross-encoder under THREE
+    query forms (production name+instruction, name only, and the natural
+    question extracted from the instruction; page score per question = max
+    over chunks) and compute an AUC table per form, directly comparable with
+    the embedding AUC on this page set. Needs no Ollama — only the cached
+    pages and the local model files (src/eval/cross_encoder.py; HuggingFace
+    is blocked on-network, so the model must already exist locally)."""
     from src.eval.cross_encoder import CrossEncoderScorer
 
     scorer = CrossEncoderScorer()
@@ -284,7 +305,14 @@ def cross_encoder_tables(
     answered = _answered_pairs(prov)
 
     names = list(questions.keys())
-    queries = [f"{n}. {questions[n]}" for n in names]
+    query_sets = {
+        "ce_name_instr": [f"{n}. {questions[n]}" for n in names],
+        "ce_name": list(names),
+        "ce_question": [_natural_question(n, questions[n]) for n in names],
+    }
+    print("  natural-question queries:")
+    for n, q in zip(names, query_sets["ce_question"]):
+        print(f"    [{n}] {q}")
 
     urls = sorted({_norm_url(u) for u in acq["Page URL"].dropna()})
     score_rows: list[dict] = []
@@ -302,7 +330,9 @@ def cross_encoder_tables(
         if not chunks:
             cache_misses += 1
             continue
-        pairs = [(q, c) for q in queries for c in chunks]
+        # One flat batch per page across all variants and questions.
+        all_queries = [q for col in CE_VARIANTS for q in query_sets[col]]
+        pairs = [(q, c) for q in all_queries for c in chunks]
         try:
             flat = scorer.score_pairs(pairs)
         except Exception as e:
@@ -310,13 +340,18 @@ def cross_encoder_tables(
             cache_misses += 1
             continue
         n_chunks = len(chunks)
-        for qi, name in enumerate(names):
-            page_score = max(flat[qi * n_chunks:(qi + 1) * n_chunks])
-            score_rows.append({
-                "url": url, "question": name,
-                "ce_score": round(page_score, 4),
-                "answered": (url, name) in answered,
-            })
+        row_by_q = {
+            name: {"url": url, "question": name,
+                   "answered": (url, name) in answered}
+            for name in names
+        }
+        offset = 0
+        for col in CE_VARIANTS:
+            for name in names:
+                page_score = max(flat[offset:offset + n_chunks])
+                row_by_q[name][col] = round(page_score, 4)
+                offset += n_chunks
+        score_rows.extend(row_by_q.values())
         scored_pages += 1
         if i % 25 == 0 or i == len(urls):
             print(f"  CE-scored {scored_pages}/{i} pages (of {len(urls)} total, "
@@ -326,27 +361,86 @@ def cross_encoder_tables(
     if scores.empty:
         raise RuntimeError("no cached pages could be CE-scored — is --cache-dir right?")
 
-    auc_ce = _auc_table(scores, "ce_score")
+    auc_tables = [(label, _auc_table(scores, col))
+                  for col, label in CE_VARIANTS.items()]
 
     sweep_rows: list[dict] = []
-    for q, sub in scores.groupby("question"):
-        y = sub["answered"].to_numpy()
-        s = sub["ce_score"].to_numpy()
-        for t in CE_THRESHOLDS:
-            pred = s >= t
-            tp = int((pred & y).sum())
-            fp = int((pred & ~y).sum())
-            fn = int((~pred & y).sum())
-            prec = tp / (tp + fp) if tp + fp else 0.0
-            rec = tp / (tp + fn) if tp + fn else 0.0
-            f1 = 2 * prec * rec / (prec + rec) if prec + rec else 0.0
-            sweep_rows.append({
-                "Variant": "cross-encoder (name+instruction)", "Question": q,
-                "Threshold": t, "Precision": round(prec, 3),
-                "Recall": round(rec, 3), "F1": round(f1, 3),
-            })
+    for col, label in CE_VARIANTS.items():
+        for q, sub in scores.groupby("question"):
+            y = sub["answered"].to_numpy()
+            s = sub[col].to_numpy()
+            for t in CE_THRESHOLDS:
+                pred = s >= t
+                tp = int((pred & y).sum())
+                fp = int((pred & ~y).sum())
+                fn = int((~pred & y).sum())
+                prec = tp / (tp + fp) if tp + fp else 0.0
+                rec = tp / (tp + fn) if tp + fn else 0.0
+                f1 = 2 * prec * rec / (prec + rec) if prec + rec else 0.0
+                sweep_rows.append({
+                    "Variant": label, "Question": q, "Threshold": t,
+                    "Precision": round(prec, 3), "Recall": round(rec, 3),
+                    "F1": round(f1, 3),
+                })
     sweep = pd.DataFrame(sweep_rows)
-    return auc_ce, scores, sweep, scored_pages, cache_misses
+    return auc_tables, scores, sweep, scored_pages, cache_misses
+
+
+# ── Paired bootstrap: is a CE-vs-embedding AUC delta real or subset noise? ───
+
+def _auc_ranked(scores: pd.Series, answered: pd.Series) -> float | None:
+    """Mann-Whitney AUC via average ranks — same statistic as _auc, O(n log n)
+    so the bootstrap stays fast."""
+    pos = int(answered.sum())
+    neg = int(len(answered) - pos)
+    if not pos or not neg:
+        return None
+    ranks = scores.rank(method="average")
+    return (float(ranks[answered].sum()) - pos * (pos + 1) / 2) / (pos * neg)
+
+
+def auc_delta_ci(
+    merged: pd.DataFrame,
+    col_a: str,
+    col_b: str,
+    n_boot: int = 2000,
+    seed: int = 42,
+) -> pd.DataFrame:
+    """Per-question AUC(col_b) - AUC(col_a) with a paired-bootstrap 95% CI
+    (resampling PAGES, so both scorers always see the same resample). A CI
+    straddling 0 means the observed winner could be subset noise — with only
+    ~27 answered pages on some questions, most deltas need this check before
+    anyone calls a winner (2026-07-21 review)."""
+    import numpy as np
+
+    out = []
+    rng = np.random.RandomState(seed)
+    for q, sub in merged.groupby("question"):
+        sub = sub.reset_index(drop=True)
+        a_obs = _auc_ranked(sub[col_a], sub["answered"])
+        b_obs = _auc_ranked(sub[col_b], sub["answered"])
+        if a_obs is None or b_obs is None:
+            continue
+        deltas = []
+        n = len(sub)
+        for _ in range(n_boot):
+            idx = rng.randint(0, n, n)
+            rs = sub.iloc[idx].reset_index(drop=True)
+            a = _auc_ranked(rs[col_a], rs["answered"])
+            b = _auc_ranked(rs[col_b], rs["answered"])
+            if a is not None and b is not None:
+                deltas.append(b - a)
+        lo, hi = (float(np.percentile(deltas, 2.5)),
+                  float(np.percentile(deltas, 97.5))) if deltas else (None, None)
+        out.append({
+            "Question": q,
+            "AUC A": round(a_obs, 3), "AUC B": round(b_obs, 3),
+            "Delta (B-A)": round(b_obs - a_obs, 3),
+            "CI 2.5%": round(lo, 3) if lo is not None else None,
+            "CI 97.5%": round(hi, 3) if hi is not None else None,
+            "Significant": (lo is not None) and (lo > 0 or hi < 0),
+        })
+    return pd.DataFrame(out)
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -415,17 +509,31 @@ def main() -> int:
         questions, q_source = _load_questions()
         print(f"\nCROSS-ENCODER -- scoring cached pages ({q_source})")
         try:
-            auc_ce, ce_scores, ce_sweep, n_ok, n_miss = cross_encoder_tables(
+            ce_auc_tables, ce_scores, ce_sweep, n_ok, n_miss = cross_encoder_tables(
                 args.baseline, args.cache_dir, questions
             )
             print(f"\nCE-scored {n_ok} pages; {n_miss} skipped")
-            _print_table("CROSS-ENCODER (name + instruction) AUC "
-                         "[compare vs embedding AUC on same pages]", auc_ce)
-            sheets.update({
-                "CE AUC": auc_ce,
-                "CE Page Scores": ce_scores,
-                "CE Threshold Sweep": ce_sweep,
-            })
+            for label, table in ce_auc_tables:
+                _print_table(f"{label} AUC [same pages as embedding legs]", table)
+            sheets["CE Page Scores"] = ce_scores
+            sheets["CE Threshold Sweep"] = ce_sweep
+            for (col, label), (_, table) in zip(CE_VARIANTS.items(), ce_auc_tables):
+                sheets[f"AUC {label}"[:31]] = table
+
+            # Head-to-head vs the embedding scorer, when both legs ran:
+            # paired bootstrap answers "is this delta real or subset noise?"
+            if "Page Scores" in sheets:
+                emb = sheets["Page Scores"][["url", "question", "new_score", "answered"]]
+                for col, label in CE_VARIANTS.items():
+                    merged = emb.merge(
+                        ce_scores[["url", "question", col]],
+                        on=["url", "question"], how="inner",
+                    )
+                    ci = auc_delta_ci(merged, "new_score", col)
+                    _print_table(
+                        f"{label} vs embedding new (B-A; paired bootstrap 95% CI; "
+                        f"Significant = CI excludes 0)", ci)
+                    sheets[f"CI {label}"[:31]] = ci
         except Exception as e:  # noqa: BLE001 — CE leg must not kill the report
             print(f"\n  ! cross-encoder leg failed ({type(e).__name__}: {e})")
             print("    (model files present locally? sentence-transformers installed?)")

@@ -69,6 +69,10 @@ QUESTIONS = {
 
 THRESHOLDS = [round(0.40 + 0.01 * i, 2) for i in range(31)]  # 0.40 .. 0.70
 
+# Cross-encoder scores are sigmoid(logit), distributed nothing like cosine —
+# sweep the whole range rather than the cosine band.
+CE_THRESHOLDS = [round(0.05 * i, 2) for i in range(1, 20)]  # 0.05 .. 0.95
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -252,6 +256,94 @@ def after_tables(
     return auc_old, auc_new, scores, sweep, best, scored_pages, cache_misses
 
 
+# ── CROSS-ENCODER leg: ms-marco pairwise relevance vs embedding cosine ───────
+
+def cross_encoder_tables(
+    baseline: str,
+    cache_dir: str,
+    questions: dict[str, str],
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, int, int]:
+    """Score the SAME cached pages with the local cross-encoder (query =
+    name + instruction, the production query form; page score per question =
+    max over chunks) and compute the same AUC table + threshold sweep, so the
+    CE column is directly comparable with the embedding AUC on this page set.
+    Needs no Ollama — only the cached pages and the local model files
+    (src/eval/cross_encoder.py; HuggingFace is blocked on-network, so the
+    model must already exist locally)."""
+    from src.eval.cross_encoder import CrossEncoderScorer
+
+    scorer = CrossEncoderScorer()
+    xl = pd.ExcelFile(baseline)
+    acq = pd.read_excel(xl, "Acquire Log")
+    prov = pd.read_excel(xl, "Provenance")
+    answered = _answered_pairs(prov)
+
+    names = list(questions.keys())
+    queries = [f"{n}. {questions[n]}" for n in names]
+
+    urls = sorted({_norm_url(u) for u in acq["Page URL"].dropna()})
+    score_rows: list[dict] = []
+    scored_pages = 0
+    cache_misses = 0
+
+    for i, url in enumerate(urls, 1):
+        path = cache_path_any(url, cache_dir)
+        if path is None:
+            cache_misses += 1
+            continue
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+        chunks = _chunk_text(text)
+        if not chunks:
+            cache_misses += 1
+            continue
+        pairs = [(q, c) for q in queries for c in chunks]
+        try:
+            flat = scorer.score_pairs(pairs)
+        except Exception as e:
+            print(f"  ! cross-encoder failed for {url[:70]} ({e}); skipping")
+            cache_misses += 1
+            continue
+        n_chunks = len(chunks)
+        for qi, name in enumerate(names):
+            page_score = max(flat[qi * n_chunks:(qi + 1) * n_chunks])
+            score_rows.append({
+                "url": url, "question": name,
+                "ce_score": round(page_score, 4),
+                "answered": (url, name) in answered,
+            })
+        scored_pages += 1
+        if i % 25 == 0 or i == len(urls):
+            print(f"  CE-scored {scored_pages}/{i} pages (of {len(urls)} total, "
+                  f"{cache_misses} skipped)")
+
+    scores = pd.DataFrame(score_rows)
+    if scores.empty:
+        raise RuntimeError("no cached pages could be CE-scored — is --cache-dir right?")
+
+    auc_ce = _auc_table(scores, "ce_score")
+
+    sweep_rows: list[dict] = []
+    for q, sub in scores.groupby("question"):
+        y = sub["answered"].to_numpy()
+        s = sub["ce_score"].to_numpy()
+        for t in CE_THRESHOLDS:
+            pred = s >= t
+            tp = int((pred & y).sum())
+            fp = int((pred & ~y).sum())
+            fn = int((~pred & y).sum())
+            prec = tp / (tp + fp) if tp + fp else 0.0
+            rec = tp / (tp + fn) if tp + fn else 0.0
+            f1 = 2 * prec * rec / (prec + rec) if prec + rec else 0.0
+            sweep_rows.append({
+                "Variant": "cross-encoder (name+instruction)", "Question": q,
+                "Threshold": t, "Precision": round(prec, 3),
+                "Recall": round(rec, 3), "F1": round(f1, 3),
+            })
+    sweep = pd.DataFrame(sweep_rows)
+    return auc_ce, scores, sweep, scored_pages, cache_misses
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -261,6 +353,11 @@ def main() -> int:
     ap.add_argument("--baseline", default=DEFAULT_BASELINE)
     ap.add_argument("--cache-dir", default=DEFAULT_CACHE_DIR)
     ap.add_argument("--out", default=DEFAULT_OUT)
+    ap.add_argument("--cross-encoder", action="store_true",
+                    help="ALSO score the cached pages with the local "
+                         "cross-encoder (src/eval/cross_encoder.py) and add "
+                         "its AUC + sweep — the A/B against the embedding "
+                         "scorer. Needs the model files locally; no Ollama.")
     args = ap.parse_args()
 
     # BEFORE — pure workbook analysis, no network needed.
@@ -307,6 +404,26 @@ def main() -> int:
             "Threshold Sweep": sweep,
             "Best Thresholds": best,
         })
+
+    # Cross-encoder leg — independent of Ollama; needs local model files.
+    if args.cross_encoder:
+        questions, q_source = _load_questions()
+        print(f"\nCROSS-ENCODER -- scoring cached pages ({q_source})")
+        try:
+            auc_ce, ce_scores, ce_sweep, n_ok, n_miss = cross_encoder_tables(
+                args.baseline, args.cache_dir, questions
+            )
+            print(f"\nCE-scored {n_ok} pages; {n_miss} skipped")
+            _print_table("CROSS-ENCODER (name + instruction) AUC "
+                         "[compare vs embedding AUC on same pages]", auc_ce)
+            sheets.update({
+                "CE AUC": auc_ce,
+                "CE Page Scores": ce_scores,
+                "CE Threshold Sweep": ce_sweep,
+            })
+        except Exception as e:  # noqa: BLE001 — CE leg must not kill the report
+            print(f"\n  ! cross-encoder leg failed ({type(e).__name__}: {e})")
+            print("    (model files present locally? sentence-transformers installed?)")
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with pd.ExcelWriter(args.out, engine="openpyxl") as w:

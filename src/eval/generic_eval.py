@@ -224,15 +224,58 @@ def embed_values(texts: list[str]) -> Optional[dict[str, list[float]]]:
     return {t: [x - m for x, m in zip(v, mean)] for t, v in zip(uniq, vecs)}
 
 
-def _pair_score(
-    gt: GTRow, ai: AIRow, emb: Optional[dict[str, list[float]]] = None,
-) -> tuple[float, float, float, float]:
-    """Return (value_score, quote_score, combined_lexical, semantic_cos).
+class _CosineScorer:
+    """Semantic scorer over pre-embedded, mean-centred value vectors.
 
-    value_score is the MAX of lexical token_sort_ratio and semantic cosine
+    The abstraction (score / min_score / name) is shared with the
+    experimental cross-encoder backend (src/eval/cross_encoder.py) so the
+    alignment logic never knows which one is running."""
+
+    name = "nomic-embed mean-centred cosine"
+    min_score = SEMANTIC_MIN
+
+    def __init__(self, vectors: dict[str, list[float]]):
+        self._v = vectors
+
+    def score(self, a: str, b: str) -> float:
+        if a in self._v and b in self._v:
+            return _cosine(self._v[a], self._v[b])
+        return 0.0
+
+
+def _build_semantic(texts: list[str], backend: str):
+    """Return a semantic scorer or None (=> lexical-only), always printing
+    which one is active — matching behaviour must never be ambiguous."""
+    if backend == "cross-encoder":
+        try:
+            from src.eval.cross_encoder import CrossEncoderScorer
+            scorer = CrossEncoderScorer()
+            print(f"  [semantic matching ON] {scorer.name}")
+            print("  -> threshold NOT yet validated against human labels; "
+                  "treat semantic_review verdicts as flags, not credits.")
+            return scorer
+        except Exception as e:  # noqa: BLE001 — graceful lexical fallback
+            print(f"  [semantic matching OFF] cross-encoder unavailable "
+                  f"({type(e).__name__}: {e})")
+            print("  -> falling back to lexical matching only.")
+            return None
+    vectors = embed_values(texts)
+    if vectors is None:
+        return None
+    print(f"  [semantic matching ON] embedded {len(vectors)} distinct values "
+          f"(mean-centred nomic-embed)")
+    return _CosineScorer(vectors)
+
+
+def _pair_score(
+    gt: GTRow, ai: AIRow, sem=None,
+) -> tuple[float, float, float, float]:
+    """Return (value_score, quote_score, combined_lexical, semantic).
+
+    value_score is the MAX of lexical token_sort_ratio and semantic score
     (for display); combined_lexical is the lexical-only score the confident
-    auto_match / review bands are judged on; semantic_cos rescues otherwise
-    missed pairs into the flagged semantic_review band (see _verdict)."""
+    auto_match / review bands are judged on; the semantic score rescues
+    otherwise missed pairs into the flagged semantic_review band (_verdict)."""
     vs_lex = fuzz.token_sort_ratio(_norm(gt.value), _norm(ai.value)) / 100.0
     qs = 0.0
     quote_available = bool(gt.verbatim_quote.strip()) and bool(ai.quote.strip())
@@ -242,22 +285,21 @@ def _pair_score(
     else:
         combined = vs_lex
 
-    sem = 0.0
-    if emb is not None and gt.value in emb and ai.value in emb:
-        sem = _cosine(emb[gt.value], emb[ai.value])
+    sem_score = sem.score(gt.value, ai.value) if sem is not None else 0.0
 
-    return max(vs_lex, sem), qs, combined, sem
+    return max(vs_lex, sem_score), qs, combined, sem_score
 
 
-def _verdict(combined_lexical: float, semantic: float) -> str:
+def _verdict(combined_lexical: float, semantic: float,
+             sem_min: float = SEMANTIC_MIN) -> str:
     """Lexical drives the confident bands; semantic only rescues an otherwise
     missed pair into a flagged review (never a silent auto_match on an
-    unvalidated cosine threshold)."""
+    unvalidated threshold)."""
     if combined_lexical >= MATCH_THRESHOLD:
         return "auto_match"
     if combined_lexical >= REVIEW_THRESHOLD:
         return "review"
-    if semantic >= SEMANTIC_MIN:
+    if semantic >= sem_min:
         return "semantic_review"
     return "auto_miss"
 
@@ -485,7 +527,7 @@ def _align_cell(
     gt_rows: list[GTRow],
     ai_rows: list[AIRow],
     is_list: bool,
-    emb: Optional[dict[str, list[float]]] = None,
+    sem=None,
 ) -> CellResult:
     entity   = gt_rows[0].entity if gt_rows else (ai_rows[0].entity if ai_rows else "?")
     question = gt_rows[0].question if gt_rows else (ai_rows[0].question if ai_rows else "?")
@@ -505,7 +547,7 @@ def _align_cell(
     if gt_real and ai_real:
         # S[i][j] = (value_score, quote_score, combined_lexical, semantic)
         S: list[list[tuple[float, float, float, float]]] = [
-            [_pair_score(g, a, emb) for a in ai_real]
+            [_pair_score(g, a, sem) for a in ai_real]
             for g in gt_real
         ]
         # Semantic rescue is for single-answer PROSE cells (missions,
@@ -516,13 +558,14 @@ def _align_cell(
         # DISTINCT items would falsely credit one project for another
         # (observed on task1 Mozilla, 2026-07-15).
         sem_allowed = not is_list
+        sem_min = sem.min_score if sem is not None else SEMANTIC_MIN
 
         candidates = []
         for i in range(len(gt_real)):
             for j in range(len(ai_real)):
-                vs, qs, comb, sem = S[i][j]
-                sem_ok = sem_allowed and sem >= SEMANTIC_MIN
-                strength = max(comb, sem if sem_ok else 0.0)
+                vs, qs, comb, sem_score = S[i][j]
+                sem_ok = sem_allowed and sem_score >= sem_min
+                strength = max(comb, sem_score if sem_ok else 0.0)
                 if comb >= REVIEW_THRESHOLD or sem_ok:
                     candidates.append((strength, i, j))
         candidates.sort(reverse=True)
@@ -540,13 +583,14 @@ def _align_cell(
             if i in group_to_ai:
                 j = group_to_ai[i]
                 a = ai_real[j]
-                vs, qs, comb, sem = S[i][j]
+                vs, qs, comb, sem_score = S[i][j]
                 pairs.append(PairResult(
                     gt_value=g.value, ai_value=a.value,
                     value_score=round(vs, 4), quote_score=round(qs, 4),
                     combined=round(comb, 4),
-                    verdict=_verdict(comb, sem if sem_allowed else 0.0),
-                    semantic=round(sem, 4),
+                    verdict=_verdict(comb, sem_score if sem_allowed else 0.0,
+                                     sem_min),
+                    semantic=round(sem_score, 4),
                 ))
             else:
                 pairs.append(PairResult(
@@ -596,8 +640,8 @@ def _align_cell(
                 return True
             # Semantic "same claim" only for single-answer cells — on lists it
             # would wrongly merge distinct named items (see the matching note).
-            if not is_list and emb is not None and a.value in emb and m.value in emb:
-                if _cosine(emb[a.value], emb[m.value]) >= SEMANTIC_MIN:
+            if not is_list and sem is not None:
+                if sem.score(a.value, m.value) >= sem.min_score:
                     return True
         return False
 
@@ -625,17 +669,20 @@ def _align_cell(
 # ---------------------------------------------------------------------------
 # Full evaluation
 # ---------------------------------------------------------------------------
-def evaluate(gt: list[GTRow], ai: list[AIRow], semantic: bool = True) -> EvalResult:
-    # Embed every real (non-null) GT and AI value ONCE for the whole run — one
-    # Ollama batch, then O(1) lookups during alignment. None => lexical-only.
-    emb: Optional[dict[str, list[float]]] = None
+def evaluate(
+    gt: list[GTRow],
+    ai: list[AIRow],
+    semantic: bool = True,
+    semantic_backend: str = "ollama",
+) -> EvalResult:
+    # Build the semantic scorer ONCE for the whole run (for the embedding
+    # backend that means one Ollama batch, then O(1) lookups during
+    # alignment). None => lexical-only.
+    sem = None
     if semantic:
         texts = [g.value for g in gt if not g.is_null]
         texts += [a.value for a in ai if not _is_null(a.value)]
-        emb = embed_values(texts)
-        if emb is not None:
-            print(f"  [semantic matching ON] embedded {len(emb)} distinct values "
-                  f"(mean-centred nomic-embed)")
+        sem = _build_semantic(texts, semantic_backend)
 
     # Build cell index
     cells: dict[tuple[str, str], dict] = {}
@@ -679,7 +726,7 @@ def evaluate(gt: list[GTRow], ai: list[AIRow], semantic: bool = True) -> EvalRes
     for key, slot in cells.items():
         if not slot["gt"] and not slot["ai"]:
             continue
-        results.append(_align_cell(slot["gt"], slot["ai"], slot["is_list"], emb))
+        results.append(_align_cell(slot["gt"], slot["ai"], slot["is_list"], sem))
 
     results.sort(key=lambda c: (c.entity, c.question))
 
@@ -903,6 +950,12 @@ def main() -> None:
                         help="Print cell-level alignment detail")
     parser.add_argument("--no-semantic", action="store_true",
                         help="Disable embedding-based semantic matching (lexical only)")
+    parser.add_argument("--semantic-backend", choices=["ollama", "cross-encoder"],
+                        default="ollama",
+                        help="Semantic matcher: 'ollama' = mean-centred "
+                             "nomic-embed cosine (default); 'cross-encoder' = "
+                             "local pairwise cross-encoder (EXPERIMENTAL — "
+                             "threshold unvalidated, see src/eval/cross_encoder.py)")
     parser.add_argument("--sheet", choices=["provenance", "matrix"],
                         default="provenance",
                         help="Which pipeline sheet to score: 'provenance' = what "
@@ -920,7 +973,8 @@ def main() -> None:
         ai = read_pipeline_output(args.pipeline_output)
     print(f"Loaded  : {len(gt)} GT rows, {len(ai)} AI claims")
 
-    result = evaluate(gt, ai, semantic=not args.no_semantic)
+    result = evaluate(gt, ai, semantic=not args.no_semantic,
+                      semantic_backend=args.semantic_backend)
     print_report(result, verbose=args.verbose)
 
     if args.output:

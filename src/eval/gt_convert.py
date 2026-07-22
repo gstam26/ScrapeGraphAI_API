@@ -131,6 +131,7 @@ def convert(
     comma_cols: set[str] | None = None,
     force_list: set[str] | None = None,
     force_single: set[str] | None = None,
+    ignore_cols: set[str] | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Matrix DataFrame -> (flat GT rows, human-readable decisions).
 
@@ -140,14 +141,21 @@ def convert(
     comma_cols = {_norm(c) for c in (comma_cols or set())}
     force_list = {_norm(c) for c in (force_list or set())}
     force_single = {_norm(c) for c in (force_single or set())}
+    ignore_cols = {_norm(c) for c in (ignore_cols or set())}
 
     columns = [str(c).strip() for c in df.columns]
     ent_col = entity_col or columns[0]
     if ent_col not in columns:
         raise ValueError(f"Entity column {ent_col!r} not found. Columns: {columns}")
-    questions = [c for c in columns if c != ent_col]
+    unknown_ignores = ignore_cols - {_norm(c) for c in columns}
+    if unknown_ignores:
+        raise ValueError(f"--ignore-cols names not found as columns: "
+                         f"{sorted(unknown_ignores)}. Columns: {columns}")
+    questions = [c for c in columns if c != ent_col and _norm(c) not in ignore_cols]
     if not questions:
         raise ValueError("Matrix has no question columns besides the entity column.")
+    decisions_pre = [f"[{c}] column ignored (--ignore-cols)"
+                     for c in columns if _norm(c) in ignore_cols]
 
     q_norms = {_norm(q) for q in questions}
     for flag_name, flagged in (("--comma-split", comma_cols),
@@ -189,7 +197,7 @@ def convert(
 
     # Pass 2: infer is_list per question (any cell with 2+ real items),
     # unless forced either way.
-    decisions: list[str] = []
+    decisions: list[str] = list(decisions_pre)
     is_list_by_q: dict[str, bool] = {}
     for q in questions:
         qn = _norm(q)
@@ -274,6 +282,9 @@ def main() -> None:
                     help="Force these questions to is_list=True")
     ap.add_argument("--single", dest="force_single", default=None, metavar="Q1,Q2",
                     help="Force single-answer: never split these columns' cells")
+    ap.add_argument("--ignore-cols", dest="ignore_cols", default=None, metavar="C1,C2",
+                    help="Non-question columns to drop entirely (e.g. a prefilled "
+                         "Website column, Notes, Date checked)")
     args = ap.parse_args()
 
     df = read_matrix(args.matrix, sheet=args.sheet)
@@ -283,6 +294,7 @@ def main() -> None:
         comma_cols=_csv_arg(args.comma_split),
         force_list=_csv_arg(args.force_list),
         force_single=_csv_arg(args.force_single),
+        ignore_cols=_csv_arg(args.ignore_cols),
     )
     if not rows:
         sys.exit("No GT rows produced — is the matrix empty, or every cell blank?")

@@ -33,7 +33,12 @@ The filled template converts with:
 
 Usage (from repo root):
     python scripts/build_cmo_gt_sheet.py
+    python scripts/build_cmo_gt_sheet.py --entities "Benchmark Electronics,Tecan"
+        # smoke-run slice: writes ONLY cmo_input_v2_test.xlsx with those
+        # entities (exact names from the urls sheet, order preserved);
+        # the analyst template is not rebuilt.
 """
+import argparse
 import os
 import sys
 
@@ -241,10 +246,20 @@ def _save_lock_safe(save, path: str) -> str:
         return alt
 
 
-def build_input_v2(src: pd.ExcelFile) -> None:
+def build_input_v2(src: pd.ExcelFile, only_entities: list[str] | None = None,
+                   out_path: str = OUT_INPUT_V2) -> None:
     entities = pd.read_excel(src, "entities")
     urls = pd.read_excel(src, "urls")
     config = pd.read_excel(src, "config")
+    if only_entities:
+        have = set(urls["entities"])
+        missing = [e for e in only_entities if e not in have]
+        if missing:
+            sys.exit(f"--entities not found in the urls sheet: {missing}\n"
+                     f"Available: {sorted(have)}")
+        urls = (urls.set_index("entities").loc[only_entities].reset_index()
+                [list(urls.columns)])
+        entities = pd.DataFrame({"entity": only_entities})
     questions = pd.DataFrame({
         "question": [q for q, _ in QUESTIONS],
         "instructions": [g for _, g in QUESTIONS],
@@ -257,16 +272,27 @@ def build_input_v2(src: pd.ExcelFile) -> None:
             questions.to_excel(w, sheet_name="questions", index=False)
             config.to_excel(w, sheet_name="config", index=False)
 
-    out = _save_lock_safe(save, OUT_INPUT_V2)
+    out = _save_lock_safe(save, out_path)
     print(f"Pipeline workbook written: {out} — {len(entities)} "
           f"entities, {len(QUESTIONS)} questions (v2 canonical, instructions on)")
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description="CMO GT template + v2 workbook builder")
+    ap.add_argument("--entities", default=None,
+                    help="comma-separated exact entity names: write ONLY a "
+                         "sliced cmo_input_v2_test.xlsx for a smoke run")
+    args = ap.parse_args()
+
     for path in (SOURCE_WB, SOURCE_INV):
         if not os.path.exists(path):
             sys.exit(f"Missing {path} — decode/build the CMO inputs first.")
     src = pd.ExcelFile(SOURCE_WB)
+    if args.entities:
+        wanted = [e.strip() for e in args.entities.split(",") if e.strip()]
+        build_input_v2(src, only_entities=wanted,
+                       out_path=os.path.join(IN_DIR, "cmo_input_v2_test.xlsx"))
+        return 0
     urls = pd.read_excel(src, "urls")
     inv = pd.read_csv(SOURCE_INV)
     build_template(urls, inv)

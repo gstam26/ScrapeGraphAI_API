@@ -28,7 +28,7 @@ Question-text edits vs the client sheet (flag these back to the client):
 The filled template converts with:
   python src/eval/gt_convert.py cmo_gt_analyst_TEMPLATE.xlsx \
       --output cmo_ground_truth.xlsx --sheet "Ground Truth" \
-      --ignore-cols "Website,Notes / sources,Date checked"
+      --ignore-cols "Website,Supporting quotes / sources,Date checked"
 (the guidance row has an empty entity cell, which gt_convert already skips).
 
 Usage (from repo root):
@@ -102,8 +102,8 @@ INSTRUCTIONS = [
      "on that site."),
     ("Information not on the website",
      "Write 'Not disclosed' — even if you know the answer from elsewhere. "
-     "If you want to record outside knowledge, put it in Notes / sources; "
-     "it will not be scored against the tool."),
+     "If you want to record outside knowledge, put it in Supporting quotes "
+     "/ sources; it will not be scored against the tool."),
     ("Empty cells",
      "Leave a cell EMPTY only if you did not assess it. An empty cell means "
      "'not checked', never 'checked and found nothing' — that distinction "
@@ -118,13 +118,15 @@ INSTRUCTIONS = [
      "No). 'Not disclosed' means the site doesn't say either way — expect "
      "this often; it is a useful answer, not a failure. If torn between No "
      "and Not disclosed, choose Not disclosed, and when you do answer No, "
-     "paste the page that shows it in Notes / sources."),
+     "paste the text/page that shows it in Supporting quotes / sources."),
     ("Answer format row",
      "The grey row under the headers shows the expected answer format for "
      "each question — please follow it; it keeps answers comparable."),
-    ("Notes / sources (optional)",
-     "For non-obvious answers (revenue, acquisitions), pasting the page URL "
-     "you found it on makes disagreements easy to settle later."),
+    ("Supporting quotes / sources",
+     "Please paste the bit of text that gives you the answer for anything "
+     "non-obvious (revenue, acquisitions, any No), plus the page URL if "
+     "handy — it makes disagreements quick to settle later. Keep quotes in "
+     "this column, not in the answer cells, so answers stay clean."),
     ("Date checked",
      "The date you completed the row — websites change."),
     ("Excluded companies tab",
@@ -154,12 +156,15 @@ def build_template(urls: pd.DataFrame, inv: pd.DataFrame) -> None:
     ws.title = "Ground Truth"
     ws.sheet_properties.tabColor = "4CAF50"
     headers = (["CMO", "Website"] + [q for q, _ in QUESTIONS]
-               + ["Notes / sources", "Date checked"])
+               + ["Supporting quotes / sources", "Date checked"])
     ws.append(headers)
     # Guidance row: entity cell EMPTY on purpose — gt_convert skips leading
     # rows with no entity, so the filled sheet converts without deleting it.
     guide = ["", "ANSWER FORMAT ->"] + [g for _, g in QUESTIONS] + [
-        "Optional: page URL where you found non-obvious answers", "When you finished the row"]
+        "Paste the bit of text (and/or page URL) that gives each non-obvious "
+        "answer, e.g. Revenue: 'turnover of EUR 45m' (About page). Keep "
+        "quotes out of the answer cells.",
+        "When you finished the row"]
     ws.append(guide)
     for c in range(1, len(headers) + 1):
         cell = ws.cell(row=2, column=c)

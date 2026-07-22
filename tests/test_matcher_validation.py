@@ -104,14 +104,33 @@ def test_cross_encoder_backend_rescues_paraphrase(monkeypatch):
     assert r.overall["semantic_rescues"] == 1
 
 
-def test_cross_encoder_unavailable_falls_back_to_lexical(monkeypatch):
+def test_cross_encoder_unavailable_falls_back_to_embeddings(monkeypatch):
+    # 2026-07-22 fallback chain: CE missing -> EMBEDDINGS (not straight to
+    # lexical), so a machine with Ollama but no local CE model keeps the
+    # single-answer semantic rescue instead of silently losing it.
     def _boom():
         raise ImportError("sentence_transformers not installed")
     monkeypatch.setattr(ce_mod, "CrossEncoderScorer", _boom)
+    monkeypatch.setattr(ge, "embed_values",
+                        lambda texts: {t: [1.0, 0.0] for t in set(texts)})
     gt = [_gt("Acme", "Mission", "knowledge access for every human")]
     ai = [_ai("Acme", "Mission", "knowledge shared freely worldwide")]
     r = evaluate(gt, ai, semantic=True, semantic_backend="cross-encoder")
-    # Lexical-only: the pair stays a miss; the run itself must not crash.
+    # Embedding rescue fired: the pair is credited (flagged), not a miss.
+    verdicts = [p.verdict for c in r.cells for p in c.gt_pairs]
+    assert verdicts == ["semantic_review"]
+    assert r.overall["semantic_rescues"] == 1
+
+
+def test_all_semantic_unavailable_falls_back_to_lexical(monkeypatch):
+    # Both CE and embeddings down -> lexical-only; the run must not crash.
+    def _boom():
+        raise ImportError("sentence_transformers not installed")
+    monkeypatch.setattr(ce_mod, "CrossEncoderScorer", _boom)
+    monkeypatch.setattr(ge, "embed_values", lambda texts: None)
+    gt = [_gt("Acme", "Mission", "knowledge access for every human")]
+    ai = [_ai("Acme", "Mission", "knowledge shared freely worldwide")]
+    r = evaluate(gt, ai, semantic=True, semantic_backend="cross-encoder")
     verdicts = [p.verdict for c in r.cells for p in c.gt_pairs]
     assert verdicts == ["auto_miss"]
 

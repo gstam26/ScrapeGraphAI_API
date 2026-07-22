@@ -299,7 +299,7 @@ def main() -> int:
     t.add_argument("--sheet", choices=["provenance", "matrix"], default="provenance")
     t.add_argument("--no-semantic", action="store_true")
     t.add_argument("--semantic-backend", choices=["ollama", "cross-encoder"],
-                   default="ollama")
+                   default="cross-encoder")
 
     s = sub.add_parser("label-score", help="Score a filled labelling workbook")
     s.add_argument("labels", help="Labelling workbook with human_label filled")

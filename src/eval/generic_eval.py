@@ -249,6 +249,9 @@ class _CosineScorer:
 
     name = "nomic-embed mean-centred cosine"
     min_score = SEMANTIC_MIN
+    # Additive-only: rescues lexical misses on single-answer prose, never
+    # decides/vetoes (anisotropy makes it unreliable on distinct list items).
+    decisive = False
 
     def __init__(self, vectors: dict[str, list[float]]):
         self._v = vectors
@@ -266,15 +269,18 @@ def _build_semantic(texts: list[str], backend: str):
         try:
             from src.eval.cross_encoder import CrossEncoderScorer
             scorer = CrossEncoderScorer()
+            # Load NOW so a missing model / absent dependency fails here and we
+            # can fall back to embeddings — not deep inside the scoring loop.
+            scorer.ensure_ready()
             print(f"  [semantic matching ON] {scorer.name}")
-            print("  -> threshold NOT yet validated against human labels; "
-                  "treat semantic_review verdicts as flags, not credits.")
+            print("  -> CE DECIDES value equivalence (veto + rescue), validated "
+                  "vs human labels on task1 (0.967) + task2 (1.000), 2026-07-22.")
             return scorer
-        except Exception as e:  # noqa: BLE001 — graceful lexical fallback
-            print(f"  [semantic matching OFF] cross-encoder unavailable "
-                  f"({type(e).__name__}: {e})")
-            print("  -> falling back to lexical matching only.")
-            return None
+        except Exception as e:  # noqa: BLE001 — graceful fallback to embeddings
+            print(f"  [semantic matching] cross-encoder unavailable "
+                  f"({type(e).__name__}: {e}); falling back to embeddings.")
+            # fall through to the embedding backend below (still better than
+            # lexical-only on machines with Ollama but no local CE model).
     vectors = embed_values(texts)
     if vectors is None:
         return None
@@ -326,6 +332,19 @@ def _verdict(combined_lexical: float, semantic: float,
     if semantic >= sem_min:
         return "semantic_review"
     return "auto_miss"
+
+
+def _verdict_decisive(combined_lexical: float, semantic: float) -> str:
+    """Verdict when a DECISIVE semantic backend (cross-encoder) drives matching.
+
+    Only pairs the CE already credited reach this (semantic >= its min, or an
+    exact identity). Lexical no longer gates the match — it only LABELS the
+    band for auditing: a strong lexical agreement is a confident auto_match;
+    a pair the CE credited that lexical wouldn't have is flagged
+    semantic_review so every CE-only credit stays visible."""
+    if combined_lexical >= MATCH_THRESHOLD:
+        return "auto_match"
+    return "semantic_review"
 
 
 # ---------------------------------------------------------------------------
@@ -559,6 +578,12 @@ def _align_cell(
     ai_dedup = _dedup_ai(ai_rows)
     no_ai_at_all = len(ai_dedup) == 0
 
+    # Is the active semantic scorer decisive (cross-encoder) or additive
+    # (embeddings)? A decisive scorer both VETOES lexical false-positives and
+    # RESCUES lexical misses, on list AND single-answer cells; an additive one
+    # only rescues single-answer prose (the 2026-07-15 anisotropy guard).
+    decisive = sem is not None and getattr(sem, "decisive", False)
+
     gt_null  = [g for g in gt_rows if g.is_null]
     gt_real  = [g for g in gt_rows if not g.is_null]
     ai_null  = [a for a in ai_dedup if _is_null(a.value)]
@@ -581,17 +606,28 @@ def _align_cell(
         # Thunderbird, Common Voice) on nearly one axis, so cosine ~1 between
         # DISTINCT items would falsely credit one project for another
         # (observed on task1 Mozilla, 2026-07-15).
-        sem_allowed = not is_list
+        # Additive (embeddings): semantic rescue only on single-answer prose.
+        # Decisive (cross-encoder): it judges every cell, list included.
+        sem_allowed = True if decisive else (not is_list)
         sem_min = sem.min_score if sem is not None else SEMANTIC_MIN
 
         candidates = []
         for i in range(len(gt_real)):
             for j in range(len(ai_real)):
                 vs, qs, comb, sem_score = S[i][j]
-                sem_ok = sem_allowed and sem_score >= sem_min
-                strength = max(comb, sem_score if sem_ok else 0.0)
-                if comb >= REVIEW_THRESHOLD or sem_ok:
-                    candidates.append((strength, i, j))
+                if decisive:
+                    # The CE decides: a pair matches iff it judges the two
+                    # values equivalent. An exact identity (identical string or
+                    # equal number, comb == 1.0) is credited without consulting
+                    # the CE — the typed-numeric path reports semantic=0, which
+                    # must NOT read as a CE rejection of "2003" vs "2003".
+                    if comb >= 1.0 or sem_score >= sem_min:
+                        candidates.append((max(comb, sem_score), i, j))
+                else:
+                    sem_ok = sem_allowed and sem_score >= sem_min
+                    strength = max(comb, sem_score if sem_ok else 0.0)
+                    if comb >= REVIEW_THRESHOLD or sem_ok:
+                        candidates.append((strength, i, j))
         candidates.sort(reverse=True)
 
         used_gt: set[int] = set()
@@ -612,8 +648,9 @@ def _align_cell(
                     gt_value=g.value, ai_value=a.value,
                     value_score=round(vs, 4), quote_score=round(qs, 4),
                     combined=round(comb, 4),
-                    verdict=_verdict(comb, sem_score if sem_allowed else 0.0,
-                                     sem_min),
+                    verdict=(_verdict_decisive(comb, sem_score) if decisive
+                             else _verdict(comb, sem_score if sem_allowed else 0.0,
+                                           sem_min)),
                     semantic=round(sem_score, 4),
                 ))
             else:
@@ -662,9 +699,10 @@ def _align_cell(
         for m in matched_real:
             if fuzz.token_sort_ratio(_norm(a.value), _norm(m.value)) >= AI_DEDUP_RATIO:
                 return True
-            # Semantic "same claim" only for single-answer cells — on lists it
-            # would wrongly merge distinct named items (see the matching note).
-            if not is_list and sem is not None:
+            # Semantic "same claim": additive embeddings merge only single-
+            # answer cells (a list merge would conflate distinct named items);
+            # the decisive CE reliably separates them, so it merges on lists too.
+            if sem is not None and (decisive or not is_list):
                 if sem.score(a.value, m.value) >= sem.min_score:
                     return True
         return False
@@ -697,7 +735,7 @@ def evaluate(
     gt: list[GTRow],
     ai: list[AIRow],
     semantic: bool = True,
-    semantic_backend: str = "ollama",
+    semantic_backend: str = "cross-encoder",
 ) -> EvalResult:
     # Build the semantic scorer ONCE for the whole run (for the embedding
     # backend that means one Ollama batch, then O(1) lookups during
@@ -975,11 +1013,13 @@ def main() -> None:
     parser.add_argument("--no-semantic", action="store_true",
                         help="Disable embedding-based semantic matching (lexical only)")
     parser.add_argument("--semantic-backend", choices=["ollama", "cross-encoder"],
-                        default="ollama",
-                        help="Semantic matcher: 'ollama' = mean-centred "
-                             "nomic-embed cosine (default); 'cross-encoder' = "
-                             "local pairwise cross-encoder (EXPERIMENTAL — "
-                             "threshold unvalidated, see src/eval/cross_encoder.py)")
+                        default="cross-encoder",
+                        help="Semantic matcher: 'cross-encoder' = local pairwise "
+                             "cross-encoder, DECIDES equivalence, default "
+                             "(validated vs human labels task1+task2 2026-07-22; "
+                             "falls back to embeddings if the model is absent); "
+                             "'ollama' = mean-centred nomic-embed cosine, "
+                             "additive rescue only")
     parser.add_argument("--sheet", choices=["provenance", "matrix"],
                         default="provenance",
                         help="Which pipeline sheet to score: 'provenance' = what "

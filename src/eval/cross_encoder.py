@@ -61,6 +61,14 @@ class CrossEncoderScorer:
     pair from several call sites.
     """
 
+    # When this scorer is active it DECIDES value equivalence for every pair
+    # (veto a lexical false-positive AND rescue a lexical miss), not merely
+    # rescue like the embedding cosine. Reading the two values jointly, it
+    # separates the -ology suffix collisions the lexical matcher conflated
+    # (Urology vs laryngology) — validated against human labels on task1
+    # (0.967) and task2 (1.000), 2026-07-22. See _align_cell.
+    decisive = True
+
     def __init__(self, model=None, model_name: str = CROSS_ENCODER_MODEL,
                  min_score: float = CROSS_ENCODER_MIN):
         self._model = model

@@ -93,7 +93,7 @@ def test_semantic_rescue_promotes_paraphrase_to_tp(monkeypatch):
     _inject_embeddings(monkeypatch, _MISSION_AXIS)
     gt = [_gt("Wikimedia", "Primary mission", _GT_MISSION)]
     ai = [_ai("Wikimedia", "Primary mission", _AI_MISSION)]
-    r = evaluate(gt, ai, semantic=True)
+    r = evaluate(gt, ai, semantic=True, semantic_backend="ollama")
     assert r.overall["TP"] == 1 and r.overall["FN"] == 0 and r.overall["FP"] == 0
     assert r.overall["semantic_rescues"] == 1
     verdicts = [p.verdict for c in r.cells for p in c.gt_pairs]
@@ -107,7 +107,7 @@ def test_semantic_never_upgrades_to_confident_auto_match(monkeypatch):
     _inject_embeddings(monkeypatch, [["knowledge", "empower"]])
     gt = [_gt("W", "Mission", "universal access to knowledge")]
     ai = [_ai("W", "Mission", "empower people to share freely")]
-    r = evaluate(gt, ai, semantic=True)
+    r = evaluate(gt, ai, semantic=True, semantic_backend="ollama")
     p = r.cells[0].gt_pairs[0]
     assert p.verdict == "semantic_review"
     print("OK test_semantic_never_upgrades_to_confident_auto_match passed")
@@ -122,7 +122,7 @@ def test_semantic_disabled_on_list_items(monkeypatch):
           _gt("Mozilla", "Main projects", "Thunderbird", is_list=True)]
     ai = [_ai("Mozilla", "Main projects", "Common Voice"),
           _ai("Mozilla", "Main projects", "Webmaker")]
-    r = evaluate(gt, ai, semantic=True)
+    r = evaluate(gt, ai, semantic=True, semantic_backend="ollama")
     # No semantic rescue: both GT items miss, both AI items are FP (real extras).
     assert r.overall["TP"] == 0 and r.overall["semantic_rescues"] == 0
     print("OK test_semantic_disabled_on_list_items passed")
@@ -136,7 +136,7 @@ def test_redundant_restatements_not_counted_as_hallucination(monkeypatch):
     ai = [_ai("ISO", "Headquarters location", "Geneva, Switzerland"),
           _ai("ISO", "Headquarters location", "Geneva"),
           _ai("ISO", "Headquarters location", "based in Geneva, Switzerland")]
-    r = evaluate(gt, ai, semantic=True)
+    r = evaluate(gt, ai, semantic=True, semantic_backend="ollama")
     assert r.overall["TP"] == 1 and r.overall["FP"] == 0
     assert r.overall["redundant_dropped"] == 2
     print("OK test_redundant_restatements_not_counted_as_hallucination passed")
@@ -149,10 +149,84 @@ def test_genuine_extra_claim_still_counts_as_fp(monkeypatch):
     gt = [_gt("ISO", "Headquarters location", "Geneva, Switzerland")]
     ai = [_ai("ISO", "Headquarters location", "Geneva, Switzerland"),
           _ai("ISO", "Headquarters location", "London, United Kingdom")]
-    r = evaluate(gt, ai, semantic=True)
+    r = evaluate(gt, ai, semantic=True, semantic_backend="ollama")
     assert r.overall["TP"] == 1 and r.overall["FP"] == 1
     assert r.overall["redundant_dropped"] == 0
     print("OK test_genuine_extra_claim_still_counts_as_fp passed")
+
+
+# ── Decisive cross-encoder backend ───────────────────────────────────────────
+# The 2026-07-22 rewire: when the semantic scorer is the cross-encoder it
+# DECIDES equivalence (veto + rescue) on list AND single-answer cells, rather
+# than only rescuing single-answer prose like the embedding cosine.
+
+class _FakeDecisiveScorer:
+    """Stand-in for the cross-encoder: decides equivalence from an explicit
+    SAME set, so a test controls exactly which pairs it credits or vetoes."""
+    name = "fake cross-encoder (test)"
+    min_score = 0.5
+    decisive = True
+
+    def __init__(self, same_pairs):
+        self._same = {frozenset((_norm(a), _norm(b))) for a, b in same_pairs}
+
+    def score(self, a, b):
+        return 1.0 if frozenset((_norm(a), _norm(b))) in self._same else 0.0
+
+
+def _inject_decisive(monkeypatch, same_pairs):
+    scorer = _FakeDecisiveScorer(same_pairs)
+    monkeypatch.setattr(ge, "_build_semantic", lambda texts, backend: scorer)
+
+
+def test_ce_vetoes_lexical_list_false_positive(monkeypatch):
+    # The -ology trap: lexical scores 'Urology' vs 'laryngology' as a confident
+    # auto_match (~0.67), but they are different specialties. A decisive CE that
+    # judges them NOT equivalent must VETO the match, leaving the GT item a miss
+    # and the AI item a real hallucination. (The production matcher failed all
+    # 9 of these on task2, 2026-07-22.)
+    _inject_decisive(monkeypatch, same_pairs=[])  # CE credits nothing
+    gt = [_gt("BSC", "Product areas", "Urology", is_list=True)]
+    ai = [_ai("BSC", "Product areas", "laryngology")]
+    r = evaluate(gt, ai, semantic=True, semantic_backend="cross-encoder")
+    assert r.overall["TP"] == 0 and r.overall["FN"] == 1 and r.overall["FP"] == 1
+    assert [p.verdict for c in r.cells for p in c.gt_pairs] == ["auto_miss"]
+    print("OK test_ce_vetoes_lexical_list_false_positive passed")
+
+
+def test_ce_credits_list_paraphrase_that_embeddings_forbid(monkeypatch):
+    # Mirror image: a lexically-mild list pair the CE judges equivalent is
+    # credited — a rescue the embedding path refuses on lists (anisotropy guard).
+    _inject_decisive(monkeypatch, same_pairs=[("Knee", "Knees")])
+    gt = [_gt("Z", "Product areas", "Knee", is_list=True)]
+    ai = [_ai("Z", "Product areas", "Knees")]
+    r = evaluate(gt, ai, semantic=True, semantic_backend="cross-encoder")
+    assert r.overall["TP"] == 1 and r.overall["FP"] == 0
+    print("OK test_ce_credits_list_paraphrase_that_embeddings_forbid passed")
+
+
+def test_ce_numeric_identity_not_vetoed(monkeypatch):
+    # Guard: the typed-numeric path reports semantic=0 for '2003' vs '2003'.
+    # A decisive backend must still credit the identity via the exact-match
+    # path, not read the 0 as a veto and drop a correct year.
+    _inject_decisive(monkeypatch, same_pairs=[])  # CE would veto everything
+    gt = [_gt("M", "Year founded", "2003")]
+    ai = [_ai("M", "Year founded", "2003")]
+    r = evaluate(gt, ai, semantic=True, semantic_backend="cross-encoder")
+    assert r.overall["TP"] == 1 and r.overall["FN"] == 0
+    assert [p.verdict for c in r.cells for p in c.gt_pairs] == ["auto_match"]
+    print("OK test_ce_numeric_identity_not_vetoed passed")
+
+
+def test_ce_vetoes_single_answer_anisotropy_error(monkeypatch):
+    # The two single-answer errors CE fixes on task2: distinct proper nouns the
+    # embedding cosine falsely rated 1.0 (Kalamazoo/Portage, Tornos/Rentas).
+    _inject_decisive(monkeypatch, same_pairs=[])
+    gt = [_gt("Z", "Current CEO", "Ivan Tornos")]
+    ai = [_ai("Z", "Current CEO", "Jennifer Rentas")]
+    r = evaluate(gt, ai, semantic=True, semantic_backend="cross-encoder")
+    assert r.overall["TP"] == 0 and r.overall["FN"] == 1 and r.overall["FP"] == 1
+    print("OK test_ce_vetoes_single_answer_anisotropy_error passed")
 
 
 # ── Fuzzy dedup ──────────────────────────────────────────────────────────────

@@ -182,7 +182,9 @@ def build_template(urls: pd.DataFrame, inv: pd.DataFrame) -> None:
     for row in range(3, 3 + len(urls)):
         for c in (1, 2):
             ws.cell(row=row, column=c).fill = _PREFILL_FILL
-        ws.cell(row=row, column=2).alignment = Alignment(vertical="top")
+        # Wrap the URL too — otherwise long ones overflow across the empty
+        # answer cells ("crossing the line" in Excel's overflow rendering).
+        ws.cell(row=row, column=2).alignment = _WRAP_TOP
         ws.cell(row=row, column=1).alignment = _WRAP_TOP
         # Answer cells wrap so Alt+Enter lists display and auto-expand.
         for c in range(3, len(headers) + 1):

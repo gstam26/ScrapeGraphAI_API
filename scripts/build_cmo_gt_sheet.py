@@ -176,11 +176,17 @@ def build_template(urls: pd.DataFrame, inv: pd.DataFrame) -> None:
         cell.alignment = _WRAP_TOP
     for _, r in urls.iterrows():
         ws.append([r["entities"], r["url"]] + [""] * (len(QUESTIONS) + 2))
+    # Slightly airier default; per-row heights stay AUTO so wrapped answers
+    # keep growing the row (a fixed height would clip multi-line entries).
+    ws.sheet_format.defaultRowHeight = 22
     for row in range(3, 3 + len(urls)):
         for c in (1, 2):
             ws.cell(row=row, column=c).fill = _PREFILL_FILL
         ws.cell(row=row, column=2).alignment = Alignment(vertical="top")
         ws.cell(row=row, column=1).alignment = _WRAP_TOP
+        # Answer cells wrap so Alt+Enter lists display and auto-expand.
+        for c in range(3, len(headers) + 1):
+            ws.cell(row=row, column=c).alignment = _WRAP_TOP
     _style_header(ws, len(headers))
     widths = [30, 36] + [28] * len(QUESTIONS) + [40]
     for i, w in enumerate(widths, start=1):

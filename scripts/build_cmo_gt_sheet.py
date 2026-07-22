@@ -72,8 +72,9 @@ QUESTIONS = [
     ("Where is the company headquarters located?",
      "City and country, e.g. 'Lund, Sweden'."),
     ("In which country/countries does manufacturing take place?",
-     "One country per line. List every manufacturing country stated on the "
-     "website."),
+     "One country per line; list every manufacturing country stated on the "
+     "website. If the site only names a region (e.g. 'Europe', 'Asia'), "
+     "write the region."),
     ("Does the company have printed circuit board (PCB) manufacturing or "
      "assembly capability?", YN),
     ("Does the company have systems integration capability?", YN),

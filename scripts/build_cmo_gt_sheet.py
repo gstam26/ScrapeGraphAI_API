@@ -48,7 +48,8 @@ SOURCE_INV = os.path.join(IN_DIR, "cmo_url_inventory.csv")
 OUT_TEMPLATE = os.path.join(IN_DIR, "cmo_gt_analyst_TEMPLATE.xlsx")
 OUT_INPUT_V2 = os.path.join(IN_DIR, "cmo_input_v2.xlsx")
 
-YN = "Answer Yes, No, or Not disclosed."
+YN = ("Yes / No / Not disclosed. No = the site says or clearly implies they "
+      "don't; Not disclosed = the site is silent. If torn, Not disclosed.")
 
 # (question text, guidance) — guidance is BOTH the extractor instruction in
 # cmo_input_v2.xlsx and the analyst's answer-format row: same contract on
@@ -111,7 +112,13 @@ INSTRUCTIONS = [
      "Put one item per line inside the cell (Alt+Enter in Excel), e.g. one "
      "manufacturing country per line."),
     ("Yes/No questions",
-     "Answer exactly Yes, No, or Not disclosed."),
+     "Answer exactly Yes, No, or Not disclosed. 'No' needs positive evidence "
+     "on the website — a statement or a clear implication from stated facts "
+     "(e.g. manufacturing listed only in the US -> 'exclusively in China?' = "
+     "No). 'Not disclosed' means the site doesn't say either way — expect "
+     "this often; it is a useful answer, not a failure. If torn between No "
+     "and Not disclosed, choose Not disclosed, and when you do answer No, "
+     "paste the page that shows it in Notes / sources."),
     ("Answer format row",
      "The grey row under the headers shows the expected answer format for "
      "each question — please follow it; it keeps answers comparable."),

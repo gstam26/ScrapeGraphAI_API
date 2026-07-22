@@ -28,7 +28,7 @@ Question-text edits vs the client sheet (flag these back to the client):
 The filled template converts with:
   python src/eval/gt_convert.py cmo_gt_analyst_TEMPLATE.xlsx \
       --output cmo_ground_truth.xlsx --sheet "Ground Truth" \
-      --ignore-cols "Website,Supporting quotes / sources,Date checked"
+      --ignore-cols "Website,Supporting quotes / sources"
 (the guidance row has an empty entity cell, which gt_convert already skips).
 
 Usage (from repo root):
@@ -132,8 +132,6 @@ INSTRUCTIONS = [
      "non-obvious (revenue, acquisitions, any No), plus the page URL if "
      "handy — it makes disagreements quick to settle later. Keep quotes in "
      "this column, not in the answer cells, so answers stay clean."),
-    ("Date checked",
-     "The date you completed the row — websites change."),
     ("Excluded companies tab",
      "Companies we could not find a usable website for (duplicates, "
      "acquired-and-absorbed, no site found). No research needed — listed "
@@ -161,15 +159,14 @@ def build_template(urls: pd.DataFrame, inv: pd.DataFrame) -> None:
     ws.title = "Ground Truth"
     ws.sheet_properties.tabColor = "4CAF50"
     headers = (["CMO", "Website"] + [q for q, _ in QUESTIONS]
-               + ["Supporting quotes / sources", "Date checked"])
+               + ["Supporting quotes / sources"])
     ws.append(headers)
     # Guidance row: entity cell EMPTY on purpose — gt_convert skips leading
     # rows with no entity, so the filled sheet converts without deleting it.
     guide = ["", "ANSWER FORMAT ->"] + [g for _, g in QUESTIONS] + [
         "Paste the bit of text (and/or page URL) that gives each non-obvious "
         "answer, e.g. Revenue: 'turnover of EUR 45m' (About page). Keep "
-        "quotes out of the answer cells.",
-        "When you finished the row"]
+        "quotes out of the answer cells."]
     ws.append(guide)
     for c in range(1, len(headers) + 1):
         cell = ws.cell(row=2, column=c)
@@ -184,7 +181,7 @@ def build_template(urls: pd.DataFrame, inv: pd.DataFrame) -> None:
         ws.cell(row=row, column=2).alignment = Alignment(vertical="top")
         ws.cell(row=row, column=1).alignment = _WRAP_TOP
     _style_header(ws, len(headers))
-    widths = [30, 36] + [28] * len(QUESTIONS) + [40, 13]
+    widths = [30, 36] + [28] * len(QUESTIONS) + [40]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.row_dimensions[1].height = 68

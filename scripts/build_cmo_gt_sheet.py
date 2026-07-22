@@ -222,9 +222,23 @@ def build_template(urls: pd.DataFrame, inv: pd.DataFrame) -> None:
         for cell in row:
             cell.alignment = _WRAP_TOP
 
-    wb.save(OUT_TEMPLATE)
-    print(f"Analyst template written: {OUT_TEMPLATE} — {len(urls)} entities, "
+    out = _save_lock_safe(wb.save, OUT_TEMPLATE)
+    print(f"Analyst template written: {out} — {len(urls)} entities, "
           f"{len(QUESTIONS)} questions, {len(excluded)} excluded listed")
+
+
+def _save_lock_safe(save, path: str) -> str:
+    """Excel keeps the target open more often than not on these machines —
+    fall back to a __new-suffixed name instead of dying mid-build."""
+    try:
+        save(path)
+        return path
+    except PermissionError:
+        root, ext = os.path.splitext(path)
+        alt = f"{root}__new{ext}"
+        save(alt)
+        print(f"NOTE: {path} is locked (open in Excel?) — wrote {alt} instead.")
+        return alt
 
 
 def build_input_v2(src: pd.ExcelFile) -> None:
@@ -235,12 +249,16 @@ def build_input_v2(src: pd.ExcelFile) -> None:
         "question": [q for q, _ in QUESTIONS],
         "instructions": [g for _, g in QUESTIONS],
     })
-    with pd.ExcelWriter(OUT_INPUT_V2, engine="openpyxl") as w:
-        entities.to_excel(w, sheet_name="entities", index=False)
-        urls.to_excel(w, sheet_name="urls", index=False)
-        questions.to_excel(w, sheet_name="questions", index=False)
-        config.to_excel(w, sheet_name="config", index=False)
-    print(f"Pipeline workbook written: {OUT_INPUT_V2} — {len(entities)} "
+
+    def save(path: str) -> None:
+        with pd.ExcelWriter(path, engine="openpyxl") as w:
+            entities.to_excel(w, sheet_name="entities", index=False)
+            urls.to_excel(w, sheet_name="urls", index=False)
+            questions.to_excel(w, sheet_name="questions", index=False)
+            config.to_excel(w, sheet_name="config", index=False)
+
+    out = _save_lock_safe(save, OUT_INPUT_V2)
+    print(f"Pipeline workbook written: {out} — {len(entities)} "
           f"entities, {len(QUESTIONS)} questions (v2 canonical, instructions on)")
 
 

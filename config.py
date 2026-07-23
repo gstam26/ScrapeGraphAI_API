@@ -257,6 +257,16 @@ VERIFY_LONG_QUOTE_MIN = 100
 EXTRACT_TIMEOUT = 120
 EXTRACT_CHUNK_SIZE = 8000
 EXTRACT_CHUNK_OVERLAP = 200
+
+# Extraction determinism (2026-07-23): the Azure extractor previously sent no
+# temperature/seed and ran at the API default (temperature 1.0) — identical
+# input produced 5 vs 10 items across the two CMO smoke runs
+# (tecan.com/services, byte-identical text). The summary layer has run
+# temperature=0 + seed since birth; extraction now matches it. Same
+# reduced-nondeterminism caveat as SUMMARY_SEED: a best-effort determinism
+# hint, not a guarantee (Azure fingerprint changes still vary output).
+EXTRACT_TEMPERATURE = 0.0
+EXTRACT_SEED = 42
 EXTRACT_MAX_WORKERS = 8
 EXTRACT_PAGE_WORKERS = 4
 

@@ -382,7 +382,7 @@ def test_extract_cells_only_returns_requested_entities():
     page = PageDoc(url="http://example.com", text="Oatly claim. Ripple claim.")
     original = extract._extract_with_sgai
 
-    def fake_extract(page, columns, entities):
+    def fake_extract(page, columns, entities, entity_context=""):
         return {
             "Oatly": {"Question": {"value": "Oatly claim", "quote": "Oatly claim"}},
             "Ripple": {"Question": {"value": "Ripple claim", "quote": "Ripple claim"}},
@@ -410,7 +410,7 @@ def test_extract_cells_supports_claude_backend():
     page = PageDoc(url="http://example.com", text="Oatly claim.")
     original = extract._extract_with_claude
 
-    def fake_extract(page, columns, entities):
+    def fake_extract(page, columns, entities, entity_context=""):
         return {
             "Oatly": {"Question": {"value": "Oatly claim", "quote": "Oatly claim"}},
         }, {"extraction_time_ms": 1, "timed_out": False, "retry_count": 0}

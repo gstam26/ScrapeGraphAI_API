@@ -5,6 +5,21 @@
 
 -----
 
+## 2026-07-23 (evening) — Extract layer pre-baseline review: determinism root cause FIXED (no temperature/seed was sent), prompt-blind cache key FIXED, page-level "Not disclosed" suppressed at source, per-entity context mechanism added
+
+**Context:** last leg of George's layer-by-layer pre-baseline review. Queue: (1) 5-vs-10-items nondeterminism on byte-identical input (tecan.com/services, both CMO smoke runs); (2) acquired-entity attribution (Forj pages yield zero Minnetronix claims — entity-faithful but makes 6 successor-seeded rows near-empty); (3) stochastic per-page "Not disclosed" claims polluting cells ("Yes [C0002]; Not disclosed [C0079]").
+
+**Found & fixed (suite 273):**
+1. **Nondeterminism root cause: `_extract_with_azure` sent NO temperature/seed** — ran at API default temperature 1.0 since birth, while the summary layer has run temperature=0+seed from day one (its self-agreement 1.000 proves the deployment supports it). Now `EXTRACT_TEMPERATURE=0.0` + `EXTRACT_SEED=42` (config, with the same reduced-nondeterminism caveat as SUMMARY_SEED). Trade-off accepted knowingly: temp-0 yields the modal extraction; occasional lucky high-temp draws that found extra items are foregone in exchange for reproducible A/Bs and a GT eval that isn't measuring dice.
+2. **Cache-key bug class: the extract cache key hashed chunk+column NAMES+entities+tool — neither instructions nor the prompt template.** Any prompt/instruction edit silently no-opped on cache hits. Key now includes instruction text, `EXTRACT_PROMPT_VERSION` (bump on template edits — this change is e2), entity_context, temperature and seed. Old cache entries miss the new keys, so existing extract caches self-invalidate on upgrade.
+3. **Page-level "Not disclosed" suppressed at source (prompt rule, e2):** the v2 question guidance ("Answer Yes, No, or Not disclosed") collided with the base prompt's "use null if not found" — the model alternated, per page. New rule: absence markers are not extractable answers; null when the page is silent; explicit "X is not disclosed" statements on the page remain extractable with their quote. The eval-side normalization stays planned as belt-and-braces.
+4. **Per-entity context mechanism (mechanism, not policy):** optional `context` column on the urls sheet → UrlSpec.context → extractor prompt block "Context about these entities". Default empty = byte-identical prompts. Whether the 6 acquired rows get context strings (e.g. "Acquired by Forj Medical; this site is the acquirer's") is George's per-row editorial call, made in the workbook, not hardcoded. His standing decision (exclude acquired rows from headline scoring) is unchanged until he opts in.
+5. Also: one transient-error retry on the Azure call (5s wait; timeouts still fail fast); `tests/test_extract.py` added (prompt rules, cache-key sensitivity, determinism params, retry semantics — extract's first dedicated unit tests).
+
+**Status:** layer-by-layer review COMPLETE (acquire, filter, extract; verify/group/summary were already eval-hardened in July). Next: fresh-cache 4-entity smoke on the laptop (predictions: NO "Not disclosed" claims in Provenance; re-run of the same input reproduces itself), then the full 69-entity v2 baseline.
+
+-----
+
 ## 2026-07-23 (later) — CE answerability A/B EXECUTED (Dell, same day as the recorded opportunity): per-question routing is structurally capped at ~5% safe exclusion vs a 78% oracle; page-skip REFUTED; filter stays passthrough + diagnostic; harness promoted as the per-case-study instrument
 
 **Context:** George pressed: "the filter layer needs to be doing something — removal of the irrelevant, maybe per question — test this and tell me; generalizable." Same-day execution of the entry below's recorded opportunity, on this machine: refetched all 119 pages of the CMO rescue run (`diagnostics/fetch_run_pages.py`, 119/119 ok), scored all 2,023 (page × question) pairs with ms-marco-MiniLM-L6-v2 in two query forms, targets = the run's own Provenance yields.

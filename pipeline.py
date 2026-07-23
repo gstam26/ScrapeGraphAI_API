@@ -226,6 +226,7 @@ def _process_url_spec(
                 entities=relevant_entities,
                 cfg=cfg,
                 diag=page_diag,
+                entity_context=spec.context,
             )
             cells = verify_cells(cells, routed.page, diag=page_diag)
             return {

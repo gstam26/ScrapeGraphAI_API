@@ -140,6 +140,7 @@ def _read_urls_sheet(xls: pd.ExcelFile, sheet_name: str) -> list[UrlSpec]:
     url_col = _find_url_column(df)
     depth_col = _find_column(df, "depth")
     entities_col = _find_column(df, "entities")
+    context_col = _find_column(df, "context")
 
     url_specs: list[UrlSpec] = []
     for _, row in df.iterrows():
@@ -149,7 +150,8 @@ def _read_urls_sheet(xls: pd.ExcelFile, sheet_name: str) -> list[UrlSpec]:
 
         depth = _parse_depth(row.get(depth_col)) if depth_col is not None else 0
         entities = _parse_entity_list(row.get(entities_col)) if entities_col is not None else []
-        url_specs.append(UrlSpec(url=url, depth=depth, entities=entities))
+        context = _clean_str(row.get(context_col)) if context_col is not None else ""
+        url_specs.append(UrlSpec(url=url, depth=depth, entities=entities, context=context))
 
     return url_specs
 

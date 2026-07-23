@@ -14,6 +14,11 @@ class UrlSpec(BaseModel):
     url: str
     depth: int = 0
     entities: list[str] = Field(default_factory=list)
+    # Optional free-text context handed to the extractor about these entities
+    # (e.g. "Acquired by Forj Medical; this site is the acquirer's"). Empty =
+    # no prompt change. Read from an optional "context" column on the urls
+    # sheet; content policy is the workbook author's, not the pipeline's.
+    context: str = ""
 
 
 class PipelineInput(BaseModel):

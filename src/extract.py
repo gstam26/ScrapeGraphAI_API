@@ -26,6 +26,8 @@ from config import (
     EXTRACT_MAX_CHUNKS_PER_PAGE,
     EXTRACT_MAX_CONCURRENT_CALLS,
     EXTRACT_MAX_WORKERS,
+    EXTRACT_SEED,
+    EXTRACT_TEMPERATURE,
     EXTRACT_TIMEOUT,
     EXTRACT_TOOL,
 )
@@ -38,10 +40,19 @@ from models import ColumnSpec, Config, ExtractedCell, PageDoc, SourceQuote
 _LLM_CALL_SEMAPHORE = threading.BoundedSemaphore(EXTRACT_MAX_CONCURRENT_CALLS)
 
 
+# Bump whenever the prompt template below changes in ANY way: the version is
+# part of the extract-cache key, so edits invalidate cached extractions
+# instead of silently no-opping on cache hits (bug class found 2026-07-23:
+# the key previously hashed only chunk+column NAMES+entities+tool — neither
+# instructions nor the template were in it).
+EXTRACT_PROMPT_VERSION = "e2"
+
+
 def _build_prompt(
     columns: list[ColumnSpec],
     entities: list[str],
     page_text: str | None = None,
+    entity_context: str = "",
 ) -> str:
     entity_fields = "".join(f'- "{entity}"\n' for entity in entities)
     question_fields = ""
@@ -51,12 +62,15 @@ def _build_prompt(
         else:
             question_fields += f'- "{col.name}"\n'
 
+    context_block = (
+        f"\nContext about these entities (from the requester):\n{entity_context}\n"
+        if entity_context else ""
+    )
     base = f"""
 Extract answers to these questions about these specific entities from this page.
 
 Specific entities:
-{entity_fields}
-
+{entity_fields}{context_block}
 Return a JSON object with exactly these top-level keys, one per specific entity:
 {entity_fields}
 
@@ -76,6 +90,12 @@ Rules:
 - Do not invent information.
 - Only use information present in the content provided.
 - If the answer is not found, use null for both value and quote.
+- "Not disclosed", "not found", "unknown" and similar are NOT extractable
+  answers: when this page does not state the information, use null — even if
+  a question's guidance lists "Not disclosed" as an allowed answer (that
+  guidance is for the final aggregated answer, not for a single page).
+  Exception: if the page itself explicitly states the information is not
+  disclosed, extract that statement with its quote.
 - If multiple answers exist, return a JSON array of objects, one per answer.
   Each object must have exactly one value and exactly one quote.
 - Treat each distinct programme, metric, certification, partnership, or commitment
@@ -112,6 +132,7 @@ def _extract_with_sgai(
     page: PageDoc,
     columns: list[ColumnSpec],
     entities: list[str],
+    entity_context: str = "",
 ) -> tuple[dict[str, Any], dict]:
     """
     Extract fields using ScrapeGraphAI.
@@ -120,7 +141,7 @@ def _extract_with_sgai(
       extraction_time_ms, timed_out, retry_count
     """
     page_text = page.text if getattr(page, "text", None) else None
-    prompt = _build_prompt(columns, entities, page_text)
+    prompt = _build_prompt(columns, entities, page_text, entity_context)
 
     if ScrapeGraphAI is None or JsonFormatConfig is None:
         raise RuntimeError("scrapegraph-py is required when EXTRACT_TOOL='sgai'")
@@ -244,12 +265,13 @@ def _extract_with_llmapi(
     page: PageDoc,
     columns: list[ColumnSpec],
     entities: list[str],
+    entity_context: str = "",
 ) -> tuple[dict[str, Any], dict]:
     """Extract fields using the internal LLMAPI HTTP endpoint."""
     from src.llmapi import LLMAPI
 
     page_text = page.text if getattr(page, "text", None) else None
-    prompt = _build_prompt(columns, entities, page_text)
+    prompt = _build_prompt(columns, entities, page_text, entity_context)
 
     print(f"      -> LLMAPI extracting: {page.url}")
     t0 = time.time()
@@ -298,6 +320,7 @@ def _extract_with_azure(
     page: PageDoc,
     columns: list[ColumnSpec],
     entities: list[str],
+    entity_context: str = "",
 ) -> tuple[dict[str, Any], dict]:
     """Extract fields using Azure OpenAI via the OpenAI Python SDK."""
     from openai import OpenAI
@@ -306,36 +329,50 @@ def _extract_with_azure(
         raise RuntimeError("Missing AZURE_API_KEY in .env")
 
     page_text = page.text if getattr(page, "text", None) else None
-    prompt = _build_prompt(columns, entities, page_text)
+    prompt = _build_prompt(columns, entities, page_text, entity_context)
 
     print(f"      -> Azure extracting: {page.url}")
     t0 = time.time()
     timed_out = False
+    retries = 0
 
     def make_timing():
         return {
             "extraction_time_ms": int((time.time() - t0) * 1000),
             "timed_out": timed_out,
-            "retry_count": 0,
+            "retry_count": retries,
         }
 
     try:
         client = OpenAI(base_url=AZURE_ENDPOINT, api_key=AZURE_API_KEY)
-        try:
-            completion = client.chat.completions.create(
-                model=AZURE_DEPLOYMENT,
-                messages=[{"role": "user", "content": prompt}],
-                timeout=EXTRACT_TIMEOUT,
-            )
-        except Exception as e:
-            if "timeout" in str(e).lower() or "timed out" in str(e).lower():
-                timed_out = True
+        completion = None
+        max_attempts = 2  # one retry on transient (non-timeout) errors
+        for attempt in range(1, max_attempts + 1):
+            try:
+                completion = client.chat.completions.create(
+                    model=AZURE_DEPLOYMENT,
+                    messages=[{"role": "user", "content": prompt}],
+                    timeout=EXTRACT_TIMEOUT,
+                    # Determinism hints (config note): default temperature 1.0
+                    # produced 5-vs-10 items on identical input across runs.
+                    temperature=EXTRACT_TEMPERATURE,
+                    seed=EXTRACT_SEED,
+                )
+                break
+            except Exception as e:
+                if "timeout" in str(e).lower() or "timed out" in str(e).lower():
+                    timed_out = True
+                    duration = time.time() - t0
+                    print(f"      ! Azure timed out after {duration:.2f}s")
+                    return {}, make_timing()
                 duration = time.time() - t0
-                print(f"      ! Azure timed out after {duration:.2f}s")
+                if attempt < max_attempts:
+                    retries += 1
+                    print(f"      ! Azure call error after {duration:.2f}s: {e} — retrying in 5s")
+                    time.sleep(5)
+                    continue
+                print(f"      X Azure call error after {duration:.2f}s: {e}")
                 return {}, make_timing()
-            duration = time.time() - t0
-            print(f"      X Azure call error after {duration:.2f}s: {e}")
-            return {}, make_timing()
 
         duration = time.time() - t0
         print(f"      -> Azure call completed in {duration:.2f}s")
@@ -360,13 +397,14 @@ def _extract_with_claude(
     page: PageDoc,
     columns: list[ColumnSpec],
     entities: list[str],
+    entity_context: str = "",
 ) -> tuple[dict[str, Any], dict]:
     """Extract fields using Anthropic Claude via the Messages HTTP API."""
     if not CLAUDE_API_KEY:
         raise RuntimeError("Missing CLAUDE_API_KEY in .env")
 
     page_text = page.text if getattr(page, "text", None) else None
-    prompt = _build_prompt(columns, entities, page_text)
+    prompt = _build_prompt(columns, entities, page_text, entity_context)
 
     print(f"      -> Claude extracting: {page.url}")
     t0 = time.time()
@@ -532,12 +570,21 @@ def _extract_cache_key(
     columns: list[ColumnSpec],
     entities: list[str],
     extract_tool: str,
+    entity_context: str = "",
 ) -> str:
+    # Everything that shapes the LLM call must be in the key, or edits
+    # silently no-op on cache hits (2026-07-23: instructions and the prompt
+    # template were previously absent — an instruction change kept serving
+    # stale extractions).
     payload = {
         "chunk_text": chunk_text,
-        "columns": sorted(c.name for c in columns),
+        "columns": sorted(f"{c.name}\x1f{c.instruction or ''}" for c in columns),
         "entities": sorted(entities),
+        "entity_context": entity_context,
         "extract_tool": extract_tool,
+        "prompt_version": EXTRACT_PROMPT_VERSION,
+        "temperature": EXTRACT_TEMPERATURE,
+        "seed": EXTRACT_SEED,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -644,6 +691,7 @@ def extract_cells(
     cfg: Config | None = None,
     diag: dict | None = None,
     use_cache: bool = True,
+    entity_context: str = "",
 ) -> list[ExtractedCell]:
     """Extract cells from a page using the configured extractor."""
     cells = []
@@ -659,7 +707,8 @@ def extract_cells(
     agg_timing: dict = {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
 
     def extract_chunk(chunk: str) -> tuple[dict[str, Any], dict]:
-        cache_key = _extract_cache_key(chunk, columns, entities, runtime_cfg.extract_tool)
+        cache_key = _extract_cache_key(
+            chunk, columns, entities, runtime_cfg.extract_tool, entity_context)
         if use_cache:
             cached = _read_extract_cache(cache_key)
             if cached is not None:
@@ -675,13 +724,13 @@ def extract_cells(
         )
         with _LLM_CALL_SEMAPHORE:
             if runtime_cfg.extract_tool == "sgai":
-                chunk_data, timing = _extract_with_sgai(chunk_page, columns, entities)
+                chunk_data, timing = _extract_with_sgai(chunk_page, columns, entities, entity_context)
             elif runtime_cfg.extract_tool == "llmapi":
-                chunk_data, timing = _extract_with_llmapi(chunk_page, columns, entities)
+                chunk_data, timing = _extract_with_llmapi(chunk_page, columns, entities, entity_context)
             elif runtime_cfg.extract_tool == "azure":
-                chunk_data, timing = _extract_with_azure(chunk_page, columns, entities)
+                chunk_data, timing = _extract_with_azure(chunk_page, columns, entities, entity_context)
             elif runtime_cfg.extract_tool == "claude":
-                chunk_data, timing = _extract_with_claude(chunk_page, columns, entities)
+                chunk_data, timing = _extract_with_claude(chunk_page, columns, entities, entity_context)
             else:
                 print(f"      X Unknown EXTRACT_TOOL: {runtime_cfg.extract_tool}")
                 return {}, {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}

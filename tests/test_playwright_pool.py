@@ -222,6 +222,62 @@ def test_hybrid_backend_is_valid_and_selectable():
     print("OK test_hybrid_backend_is_valid_and_selectable passed")
 
 
+# ── full-page rescue (Trafilatura husk on link-grid info pages) ──────────────
+
+# Short "info card" page: facts live in link labels + an address block that
+# Trafilatura strips (observed 2026-07-22: forjmedical /locations -> 0 items).
+_LINK_GRID_HTML = (
+    "<html><body><nav>"
+    + "".join(f'<a href="/loc/{i}">Facility {i} Somewhere</a>' for i in range(30))
+    + "</nav><p>Headquarters: 1635 Energy Park Drive, St. Paul, MN 55108</p>"
+    + "</body></html>"
+)
+
+# A husk that clears MIN_CHARS but fails link-density against the grid HTML.
+_HUSK_TEXT = " ".join(f"Facility {i} Somewhere" for i in range(12))
+
+
+def test_gate_rescue_ships_full_text_for_link_grid_page():
+    text, passed, reason = f._gate_with_rescue(_HUSK_TEXT, _LINK_GRID_HTML)
+    assert passed is True
+    assert "full_page_rescue" in reason, "original failure must stay documented"
+    assert "St. Paul" in text, "rescued text must carry the facts Trafilatura dropped"
+    print("OK test_gate_rescue_ships_full_text_for_link_grid_page passed")
+
+
+def test_gate_rescue_refuses_huge_link_farm():
+    farm = ("<html><body>"
+            + "".join(f'<a href="/p/{i}">Product listing entry number {i}</a>'
+                      for i in range(600))
+            + "</body></html>")
+    husk = " ".join(f"Product listing entry number {i}" for i in range(12))
+    text, passed, reason = f._gate_with_rescue(husk, farm)
+    assert passed is False and "full_page_rescue" not in reason
+    assert text == husk, "oversized link farms must stay gate-failed, not rescued"
+    print("OK test_gate_rescue_refuses_huge_link_farm passed")
+
+
+def test_gate_rescue_refuses_empty_shell():
+    text, passed, reason = f._gate_with_rescue("x", _JUNK_HTML)
+    assert passed is False, "a JS shell must not be rescued into skipping content"
+    print("OK test_gate_rescue_refuses_empty_shell passed")
+
+
+def test_hybrid_render_link_grid_page_is_rescued(monkeypatch):
+    """End-to-end: static junk -> render -> Trafilatura husk -> full-page rescue."""
+    _quiet_politeness(monkeypatch)
+    monkeypatch.setattr(f.httpx, "get", lambda url, **kw: _FakeStaticResponse(_JUNK_HTML))
+    monkeypatch.setattr(pp, "fetch_rendered_html", lambda url, **kw: _LINK_GRID_HTML)
+    # Simulate the observed Trafilatura behaviour on link-grid pages: a husk.
+    monkeypatch.setattr(f, "_extract_text_from_html", lambda html: _HUSK_TEXT)
+
+    text, html, prov = f.fetch_page_with_provenance("https://linkgrid.com/locations", _hybrid_cfg())
+    assert prov["backend"] == "pooled_hybrid_render" and prov["gate_passed"] is True
+    assert "full_page_rescue" in prov["gate_reason"]
+    assert "St. Paul" in text
+    print("OK test_hybrid_render_link_grid_page_is_rescued passed")
+
+
 # ── consent-overlay strip (2026-07-10 bake-off finding) ──────────────────────
 
 _CONSENT_DIV = (

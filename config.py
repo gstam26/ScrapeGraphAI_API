@@ -102,6 +102,16 @@ QUALITY_MAX_LINK_DENSITY = 0.60
 # Very low retention means almost all content was classified as boilerplate and stripped.
 QUALITY_MIN_CONTENT_RATIO = 0.10
 
+# Full-page rescue (2026-07-23): when Trafilatura's extraction fails the gate
+# but the page's FULL visible text is between QUALITY_MIN_CHARS and this cap,
+# ship the full text instead of the husk. Short link-grid "info card" pages
+# (locations / contact / leadership / about) carry their facts in link labels
+# and address blocks that Trafilatura strips — smoke run 2026-07-22:
+# forjmedical /locations extracted 837 husk chars -> 0 items while the HQ
+# address sat in the DOM. Above the cap, a Trafilatura-failed page is a real
+# link farm (the gate's original prey) and stays failed.
+FULL_PAGE_RESCUE_MAX_CHARS = 12_000
+
 REQUEST_HEADERS = {
     "User-Agent": "Mozilla/5.0 entity-extraction-pipeline"
 }

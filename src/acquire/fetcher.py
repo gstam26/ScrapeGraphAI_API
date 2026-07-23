@@ -7,6 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from config import (
+    FULL_PAGE_RESCUE_MAX_CHARS,
     QUALITY_MIN_CHARS,
     QUALITY_MAX_LINK_DENSITY,
     QUALITY_MIN_CONTENT_RATIO,
@@ -141,6 +142,34 @@ def content_quality_gate(text: str, html: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _gate_with_rescue(text: str, html: str) -> tuple[str, bool, str]:
+    """Quality gate with a full-page-text rescue for Trafilatura failures.
+
+    Trafilatura underperforms on short, link-dense "info card" pages
+    (locations / contact / leadership / about grids): the facts live in link
+    labels and address blocks it strips as boilerplate, the gate then fails,
+    and extraction sees a husk (2026-07-22 smoke run: forjmedical /locations
+    837 husk chars -> 0 items while the HQ address sat in the DOM). When the
+    gate fails but the FULL visible text is substantial-yet-bounded
+    (QUALITY_MIN_CHARS..FULL_PAGE_RESCUE_MAX_CHARS), ship the full text:
+    rescued pages PASS, with the original failure kept in the reason for
+    diagnosis. Oversized failures are real link farms and stay failed.
+
+    Applied AFTER the render decision in each backend — the static legs keep
+    the plain gate so escalation to a browser render still triggers, and a
+    JS shell can never be "rescued" into skipping its render.
+    Returns (text, gate_passed, gate_reason).
+    """
+    passed, reason = content_quality_gate(text, html)
+    if passed:
+        return text, True, ""
+    full = _html_to_text(html)
+    n = len(full.strip())
+    if QUALITY_MIN_CHARS <= n <= FULL_PAGE_RESCUE_MAX_CHARS:
+        return full, True, f"full_page_rescue({n}_chars) [{reason}]"
+    return text, False, reason
+
+
 def _thin_content_gate(text: str) -> tuple[bool, str]:
     """Minimum-character check for non-local backends (no HTML available for full gate)."""
     content_chars = len(text.strip())
@@ -250,7 +279,7 @@ def _fetch_playwright_pooled(url: str, cfg: Config) -> tuple[str, str, FetchProv
 
     html = _strip_consent_overlays(html)
     text = _extract_text_from_html(html)
-    gate_passed, gate_reason = content_quality_gate(text, html)
+    text, gate_passed, gate_reason = _gate_with_rescue(text, html)
     return text, html, FetchProvenance(
         backend="playwright_pooled", render_fallback=False,
         gate_passed=gate_passed, gate_reason=gate_reason,
@@ -317,34 +346,38 @@ def _fetch_playwright_pooled_hybrid(url: str, cfg: Config) -> tuple[str, str, Fe
         )
     except Exception as e:
         if static_html:
-            # Keep the gate-failed static content rather than losing it; the
-            # failure stays recorded — same contract as the local backend.
-            return static_text, static_html, FetchProvenance(
+            # Keep the gate-failed static content rather than losing it (the
+            # failure stays recorded), rescued to full-page text where that
+            # is the better payload — same contract as the local backend.
+            r_text, r_passed, r_reason = _gate_with_rescue(static_text, static_html)
+            return r_text, static_html, FetchProvenance(
                 backend="pooled_hybrid_static", render_fallback=False,
-                gate_passed=False, gate_reason=f"{static_reason}; render_error={e}",
+                gate_passed=r_passed,
+                gate_reason=f"{r_reason or static_reason}; render_error={e}",
             )
         raise
 
     html = _strip_consent_overlays(html)
     text = _extract_text_from_html(html)
-    render_passed, render_reason = content_quality_gate(text, html)
+    text, render_passed, render_reason = _gate_with_rescue(text, html)
 
     # Escalation must not LOSE good static content. Some SPA pages wipe the
     # server-rendered HTML on hydration, so the render can be far thinner than
     # the static extraction (observed 2026-07-13: Neogen /categories static
     # 20,346 chars -> render 1,560 -> the escalation used to ship the 1,560).
-    # Keep the render only when it passes the gate or is at least as rich as the
-    # static text; otherwise fall back to the richer static extraction. Mirrors
-    # the Firecrawl path's len() guard (_fetch_firecrawl_with_fallback).
+    # Keep the render only when it passes the gate (incl. rescued) or is at
+    # least as rich as the static text; otherwise fall back to the richer
+    # static extraction. Mirrors the Firecrawl path's len() guard.
     if render_passed or not static_html or len(text.strip()) >= len(static_text.strip()):
         return text, html, FetchProvenance(
             backend="pooled_hybrid_render", render_fallback=True,
             gate_passed=render_passed, gate_reason=render_reason,
         )
-    return static_text, static_html, FetchProvenance(
+    r_text, r_passed, r_reason = _gate_with_rescue(static_text, static_html)
+    return r_text, static_html, FetchProvenance(
         backend="pooled_hybrid_static", render_fallback=False,
-        gate_passed=static_passed,
-        gate_reason=f"{static_reason}; render_thinner_{len(text.strip())}<{len(static_text.strip())}",
+        gate_passed=r_passed,
+        gate_reason=f"{r_reason or static_reason}; render_thinner_{len(text.strip())}<{len(static_text.strip())}",
     )
 
 
@@ -402,16 +435,18 @@ def _fetch_local(url: str, cfg: Config) -> tuple[str, str, FetchProvenance]:
     try:
         render_html = _strip_consent_overlays(_render_page_html(url, cfg))
         render_text = _extract_text_from_html(render_html)
-        render_passed, render_reason = content_quality_gate(render_text, render_html)
+        render_text, render_passed, render_reason = _gate_with_rescue(render_text, render_html)
         return render_text, render_html, FetchProvenance(
             backend="local_render", render_fallback=True,
             gate_passed=render_passed, gate_reason=render_reason,
         )
     except Exception as e:
-        # Playwright failed — return original static content; gate failure stays recorded
-        return text, static_html, FetchProvenance(
+        # Playwright failed — return static content (rescued where that is the
+        # better payload); the gate failure stays recorded.
+        r_text, r_passed, r_reason = _gate_with_rescue(text, static_html)
+        return r_text, static_html, FetchProvenance(
             backend="local_static", render_fallback=False,
-            gate_passed=False, gate_reason=f"{gate_reason}; playwright_error={e}",
+            gate_passed=r_passed, gate_reason=f"{r_reason or gate_reason}; playwright_error={e}",
         )
 
 

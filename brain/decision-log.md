@@ -5,6 +5,18 @@
 
 -----
 
+## 2026-07-24 — Extraction reproducibility MEASURED (controlled A/B, e2a vs e2b): temp-0+seed stabilises discrete facts but full determinism is not available from Azure; run-to-run variance is now a quantified system property
+
+**Setup:** identical page texts (cache-served), extract cache cleared between runs, prompt e2 both sides — the only variable is the Azure generation itself. First controlled reproducibility measurement of the extractor.
+
+**Numbers:** claims A=430 / B=409; exact-row (value+quote) Jaccard 0.551; distinct-value Jaccard 0.656 (118 shared values incl. every major numeric: CHF 883M, 2+ billion, 3,000 employees); cells with identical value-sets 24/47. Variance decomposition: prose-description paraphrases (dominant), residual Not-disclosed slippage (itself stochastic, 11 in A), quote-choice variance, and OCCASIONAL FACT FLUTTER — run B missed Benchmark's Tempe HQ entirely and instead extracted "Winona, United States" from a facility sentence.
+
+**Reading:** Azure `seed` is best-effort by documentation; long JSON generations diverge at one token and cascade. The summary layer's 1.000 self-agreement is not contradicted — short generations over terse inputs are reproducible; 8k-char pages × 17 questions are not. No further determinism is buyable except N-sample voting (N× cost — against deployability; not before the GT eval shows variance costs accuracy).
+
+**Decision:** baseline green-lit as a single run. The 0.66/24-of-47 figures go into the dissertation as the measured noise floor under ANY single-run comparison (pre-registered implication: layer A/Bs on prose-ish metrics must beat this floor or use pinned-replay + value-level semantic comparison). GT eval robustness: CE matcher scores semantically, absorbing paraphrase/format variance; fact flutter becomes part of measured accuracy, honestly.
+
+-----
+
 ## 2026-07-23 (evening) — Extract layer pre-baseline review: determinism root cause FIXED (no temperature/seed was sent), prompt-blind cache key FIXED, page-level "Not disclosed" suppressed at source, per-entity context mechanism added
 
 **Context:** last leg of George's layer-by-layer pre-baseline review. Queue: (1) 5-vs-10-items nondeterminism on byte-identical input (tecan.com/services, both CMO smoke runs); (2) acquired-entity attribution (Forj pages yield zero Minnetronix claims — entity-faithful but makes 6 successor-seeded rows near-empty); (3) stochastic per-page "Not disclosed" claims polluting cells ("Yes [C0002]; Not disclosed [C0079]").

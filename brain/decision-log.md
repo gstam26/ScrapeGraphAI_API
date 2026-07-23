@@ -5,6 +5,25 @@
 
 -----
 
+## 2026-07-23 — Filter layer pre-baseline review: passthrough CONFIRMED for the CMO baseline; threshold routing measured a no-op on CMO; keyword gate made discriminative; page-level answerability screen recorded as the CE-shaped opportunity
+
+**Context:** George's layer-by-layer pre-baseline review (acquire done same day: full-page rescue 6cf1d36 + URL param strip b93df79). Ask: explain the filter, determine from the latest run whether active filtering would have helped ("I want this layer to be useful"), and revisit cross-encoder-vs-cosine for this layer.
+
+**Measurement (`diagnostics/filter_counterfactual.py`, new permanent tool, on the 4-entity CMO rescue run — 119 pages × 17 questions = 2,023 logged routing decisions):**
+- Threshold replay: at 0.55, **39/2,023 pairs excluded (2%), 0 pages skipped, 1 verified claim lost**; at 0.60, 143 pairs / 8 claims (6 verified) lost. At 0.45–0.50: nothing happens at all.
+- Why: cosine compression — all 2,023 scores in [0.455, 0.809], median 0.651 (nomic anisotropy, known); AND the keyword gate fired on 60% of pairs because CMO question names share generic terms ("company" in 12/17 questions, "manufacturing" in 5) that appear on every page of any manufacturer's site.
+- The real waste sits at a different grain: **45/119 extract calls (38%) yielded zero items** (event/category/careers pages). But page-level embedding scores separate zero-yield from productive pages at only **AUC 0.63–0.67** — the bi-encoder sees topical similarity, and junk pages on a medtech site are topical. The current scorer cannot be turned into a useful page gate either.
+
+**Decisions:**
+1. **FILTER_MODE stays passthrough for the CMO baseline** (recall-first policy, 2026-06-22, reaffirmed with CMO-specific evidence: activating it buys ~nothing and any losses would masquerade as extraction failures in the imminent GT eval).
+2. **Keyword gate made discriminative** (shipped): `_discriminative_keywords` drops terms shared by ≥ half the question set (cutoff 0.5, sets < 4 questions untouched). No production effect while passthrough; makes the gate honest whenever threshold mode is used. Tests added; suite 267.
+3. **No CE swap for pair routing — reaffirmed, with a NEW reason beyond the 07-21 tie:** on CMO the page×question routing grain is nearly information-free (a manufacturer's whole site is topically relevant to all 17 questions); even a perfect pair scorer has almost nothing to safely exclude. The 07-21 A/B verdict (tie on 3, CE win only on Diagnostics, dependency cost) stands unchanged.
+4. **Recorded opportunity — page-level ANSWERABILITY screen:** predict "will this page yield any claim for any question" and skip the extract call (38% of calls on CMO). That is ms-marco's literal passage-ranking task, where the CE could genuinely differ from the bi-encoder's 0.63 AUC. **Post-baseline A/B only** (needs GT-run evidence that skipped pages lose nothing); harness = filter_counterfactual.py pattern + CE rescore of the zero-yield split. Until measured, nothing routes through it.
+
+**Status:** suite 267 passed; no routing behaviour changed for the baseline.
+
+-----
+
 ## 2026-07-21 — Eval framework promoted to src/eval/ (R4 executed) and generalised: GT converter, Matrix mode, matcher validation, cross-encoder experiment
 
 **Context:** George wants the evaluation framework to be the fully generalisable "plug any analyst GT + any pipeline output → metrics" tool the dissertation needs, and asked whether ms-marco-MiniLM-L6-v2 (available locally) can replace cosine similarity. Deferred restructure item R4 (`proposals/code-restructure.md`) was gated on the summary eval no longer being in flight — that shipped 2026-07-15/20, so the gate is open. George gave the go for all of it in one organised pass.

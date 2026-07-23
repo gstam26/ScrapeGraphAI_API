@@ -16,6 +16,33 @@ def _columns() -> list[ColumnSpec]:
     return [ColumnSpec(name="Sustainability claims")]
 
 
+def test_discriminative_keywords_drop_set_generic_terms():
+    """'company' appears in most CMO questions -> no routing signal, dropped;
+    question-specific words (tooling, revenue) survive."""
+    cols = [
+        ColumnSpec(name="Does the company have tooling capability?"),
+        ColumnSpec(name="Does the company have plastic moulding capability?"),
+        ColumnSpec(name="What is the company's yearly revenue?"),
+        ColumnSpec(name="How many employees does the company have?"),
+    ]
+    kws = filter_mod._discriminative_keywords(cols)
+    for name, words in kws.items():
+        assert "company" not in words, f"'company' must be dropped from {name!r}"
+    assert "tooling" in kws["Does the company have tooling capability?"]
+    assert "revenue" in kws["What is the company's yearly revenue?"]
+    # 'capability' is in 2/4 questions = at the 0.5 cutoff -> dropped too.
+    assert "capability" not in kws["Does the company have tooling capability?"]
+    print("OK test_discriminative_keywords_drop_set_generic_terms passed")
+
+
+def test_discriminative_keywords_leave_small_sets_alone():
+    """With < 4 questions a shared word can still discriminate — untouched."""
+    cols = [ColumnSpec(name="Company type"), ColumnSpec(name="Parent company")]
+    kws = filter_mod._discriminative_keywords(cols)
+    assert "company" in kws["Company type"] and "company" in kws["Parent company"]
+    print("OK test_discriminative_keywords_leave_small_sets_alone passed")
+
+
 def test_passthrough_routes_below_threshold_column(monkeypatch):
     """In passthrough mode a column scoring below threshold is still included,
     the score is still logged, and the reason is 'passthrough'."""

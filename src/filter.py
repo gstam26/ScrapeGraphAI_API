@@ -100,6 +100,36 @@ def _keywords(column_name: str) -> set[str]:
     }
 
 
+# A keyword shared by at least this fraction of the question set carries no
+# routing signal for THAT question set and is dropped from the gate.
+_KEYWORD_MAX_QUESTION_FRACTION = 0.5
+
+
+def _discriminative_keywords(columns: list[ColumnSpec]) -> dict[str, set[str]]:
+    """Per-column gate keywords with set-generic terms removed.
+
+    The gate exists to catch pages the embedding under-scores, keyed on words
+    specific to ONE question. Words shared across much of the question set
+    ("company" in 12/17 CMO questions, "manufacturing" in 5) fire on virtually
+    every page of any corporate site, turning the gate into a pass-everything
+    OR (2026-07-23 CMO counterfactual: gate fired on 60% of 2,023 page-column
+    pairs). Dropping terms present in >= half the questions keeps only the
+    discriminative ones (tooling, revenue, headquarters, moulding...).
+    Small sets (< 4 questions) are left untouched — a shared word can still
+    discriminate when there are few questions to share it.
+    """
+    per_col = {col.name: _keywords(col.name) for col in columns}
+    if len(per_col) >= 4:
+        counts: dict[str, int] = {}
+        for kws in per_col.values():
+            for kw in kws:
+                counts[kw] = counts.get(kw, 0) + 1
+        cutoff = _KEYWORD_MAX_QUESTION_FRACTION * len(per_col)
+        generic = {kw for kw, c in counts.items() if c >= cutoff}
+        per_col = {name: kws - generic for name, kws in per_col.items()}
+    return per_col
+
+
 def score_page_columns(text: str, columns: list[ColumnSpec]) -> dict[str, float]:
     """
     Return max-chunk cosine similarity per column name.
@@ -171,9 +201,12 @@ def filter_page(
         # The keyword gate stays on the column NAME only (never the
         # instruction): instruction words like "check", "pages", "company"
         # are generic and would over-fire the gate on almost every page.
+        # Names are additionally cross-question filtered — see
+        # _discriminative_keywords.
+        gate_keywords = _discriminative_keywords(all_columns)
         col_info: dict[str, tuple[float, bool]] = {}
         for name, max_score in scores.items():
-            kw_gate = any(kw in page_text_lower for kw in _keywords(name))
+            kw_gate = any(kw in page_text_lower for kw in gate_keywords.get(name, set()))
             col_info[name] = (max_score, kw_gate)
 
         # Step 2: decide which columns are relevant based on mode.

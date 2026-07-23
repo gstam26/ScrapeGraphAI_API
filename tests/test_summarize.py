@@ -552,10 +552,15 @@ def test_ai_summary_sheet_is_matrix_shaped_in_reading_order(tmp_path):
 
     ws = wb["AI Summary"]
     header = [c.value for c in ws[1]]
-    # Matrix form: Entity column (carrying the disclaimer) + one column per question.
-    assert header[0].startswith("Entity")
-    assert "AI-synthesized prose" in header[0]
+    # Matrix form: clean Entity column + one column per question; the
+    # synthesized-prose disclaimer lives in a hover comment on the header
+    # (2026-07-23: it cluttered the deliverable as header text).
+    assert header[0] == "Entity"
+    assert ws["A1"].comment is not None
+    assert "AI-synthesized prose" in ws["A1"].comment.text
     assert header[1] == "Recent news" and header[2] == "R&D location"
+    # Entity column frozen for horizontal scrolling through question columns.
+    assert ws.freeze_panes == "B2"
     assert ws.max_row == 2  # one row per entity, not per (entity, question)
     assert ws.cell(row=2, column=1).value == "Acme"
     assert ws.cell(row=2, column=2).value == _GOOD_SUMMARY

@@ -35,19 +35,23 @@ _RED_FONT = "C62828"
 _ORANGE_FILL = "FFE0B2"
 _LORANGE_FILL = "FFF3E0"  # light orange for mixed verified/unverified
 
+# Tab palette (George, 2026-07-23: professional, grouped by meaning).
+# Blues = the deliverable pair (AI Summary darkest = the front page); steel =
+# the grouped-evidence pair (Digest + Grouped Themes, deliberately identical);
+# blue-grey = the Provenance ledger; uniform grey = diagnostics logs.
 _TAB_COLORS = {
-    "Summary": "2E4057",
-    "Matrix": "4CAF50",
-    "Digest": "8BC34A",
-    "Provenance": "009688",
-    "Grouped Themes": "8BC34A",
-    "AI Summary": "AB47BC",
-    "Summary Log": "CE93D8",
-    "Acquire Log": "FF9800",
-    "Crawl Candidates": "FF9800",
-    "Filter Log": "2196F3",
-    "Extract Log": "F44336",
-    "Verify Log": "9C27B0",
+    "Summary": "44546A",
+    "AI Summary": "1F4E79",
+    "Matrix": "2E75B6",
+    "Digest": "8497B0",
+    "Grouped Themes": "8497B0",
+    "Provenance": "546E7A",
+    "Summary Log": "A6A6A6",
+    "Acquire Log": "A6A6A6",
+    "Crawl Candidates": "A6A6A6",
+    "Filter Log": "A6A6A6",
+    "Extract Log": "A6A6A6",
+    "Verify Log": "A6A6A6",
 }
 
 _SUPPORTED_CONFIG_KEYS = {
@@ -663,9 +667,11 @@ def _make_digest_df(
     return df, digest_links
 
 
-# Header-suffix disclaimer on the AI Summary sheet's Entity header (design
-# §3): the deterministic/synthesized boundary must be visible from the sheet
-# itself, top-left where a reader starts.
+# AI Summary provenance disclaimer (design §3): the deterministic/synthesized
+# boundary must be visible from the sheet itself. Originally a suffix on the
+# Entity header text; moved to a cell COMMENT on that header (George,
+# 2026-07-23: the explanation cluttered the deliverable's first column and
+# inflated its width) — hover the Entity header to read it.
 _AI_SUMMARY_NOTE = (
     "AI-synthesized prose (Azure GPT-4.1-mini). Not verified text — every "
     "statement cites Claim IDs; check them in Provenance."
@@ -695,13 +701,12 @@ def _make_ai_summary_df(
     Returns (df, cell_fills) like the Matrix builder.
     """
     by_cell = {(s.get("entity", ""), s.get("question", "")): s for s in cell_summaries}
-    entity_header = f"Entity — {_AI_SUMMARY_NOTE}"
-    col_order = [entity_header] + [c.name for c in columns]
+    col_order = ["Entity"] + [c.name for c in columns]
     fills: dict[tuple[int, int], str] = {}
     out_rows = []
     for row_idx, row in enumerate(result.rows):
         excel_row = row_idx + 2  # 1-indexed + header
-        out_row: dict = {entity_header: row.entity}
+        out_row: dict = {"Entity": row.entity}
         for col_idx, col in enumerate(columns, start=2):
             s = by_cell.get((row.entity, col.name))
             if s is None:
@@ -778,7 +783,13 @@ def _make_summary_log_df(cell_summaries: list[dict]) -> pd.DataFrame:
 
 def _style_sheet(ws, tab_color: str, matrix_fills: dict | None = None) -> None:
     ws.sheet_properties.tabColor = tab_color
-    ws.freeze_panes = "A2"
+    # Deliverable matrices freeze the Entity column too, so scrolling right
+    # through 17 question columns keeps the row's company visible.
+    ws.freeze_panes = "B2" if ws.title in ("Matrix", "AI Summary") else "A2"
+
+    if ws.title == "AI Summary":
+        from openpyxl.comments import Comment
+        ws["A1"].comment = Comment(_AI_SUMMARY_NOTE, "pipeline", height=90, width=340)
 
     h_fill = PatternFill("solid", fgColor=_HEADER_FILL)
     h_font = Font(name="Arial", bold=True, color=_HEADER_FONT, size=10)
@@ -831,6 +842,7 @@ def _style_sheet(ws, tab_color: str, matrix_fills: dict | None = None) -> None:
             elif any(kw in vl for kw in ("timed out", "timeout", "status: error")):
                 cell.fill = PatternFill("solid", fgColor=_RED_FILL)
 
+    deliverable = ws.title in ("Matrix", "AI Summary")
     for col in ws.columns:
         letter = get_column_letter(col[0].column)
         max_len = 0
@@ -838,15 +850,28 @@ def _style_sheet(ws, tab_color: str, matrix_fills: dict | None = None) -> None:
             if cell.value is not None:
                 longest = max((len(line) for line in str(cell.value).split("\n")), default=0)
                 max_len = max(max_len, longest)
-        ws.column_dimensions[letter].width = min(max(max_len + 2, 10), 60)
+        # Deliverable answer columns get a wider floor so wrapped prose is
+        # readable without manual resizing (George, 2026-07-23).
+        floor = 30 if deliverable and col[0].column > 1 else 10
+        ws.column_dimensions[letter].width = min(max(max_len + 2, floor), 60)
 
-    if ws.title in ("Matrix", "AI Summary"):
+    if deliverable:
         for row_idx in range(2, ws.max_row + 1):
             max_lines = 1
-            for col in ws.iter_cols(min_row=row_idx, max_row=row_idx):
-                if col[0].value:
-                    max_lines = max(max_lines, str(col[0].value).count("\n") + 1)
-            ws.row_dimensions[row_idx].height = min(max(max_lines * 14, 16), 200)
+            for cells in ws.iter_cols(min_row=row_idx, max_row=row_idx):
+                cell = cells[0]
+                if not cell.value:
+                    continue
+                width = ws.column_dimensions[get_column_letter(cell.column)].width or 60
+                # Wrapped display lines: explicit newlines plus soft wraps of
+                # each line at the column width, so tall cells actually show
+                # their full content instead of clipping at the old cap.
+                lines = sum(
+                    max(1, -(-len(line) // max(int(width) - 2, 10)))
+                    for line in str(cell.value).split("\n")
+                )
+                max_lines = max(max_lines, lines)
+            ws.row_dimensions[row_idx].height = min(max(max_lines * 14, 16), 320)
 
 
 # Main entry point

@@ -28,7 +28,11 @@ Question-text edits vs the client sheet (flag these back to the client):
 The filled template converts with:
   python src/eval/gt_convert.py cmo_gt_analyst_TEMPLATE.xlsx \
       --output cmo_ground_truth.xlsx --sheet "Ground Truth" \
-      --ignore-cols "Website,Supporting quotes / sources"
+      --ignore-cols "Website,Supporting quotes / sources" \
+      --single "Summary description of company's services,What is their typical production volume?"
+(--single keeps prose cells as ONE GT value even if the analyst used line
+breaks; without it a two-sentence description would split into fake list
+items.)
 (the guidance row has an empty entity cell, which gt_convert already skips).
 
 Usage (from repo root):

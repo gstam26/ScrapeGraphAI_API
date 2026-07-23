@@ -5,6 +5,21 @@
 
 -----
 
+## 2026-07-23 (later) — CE answerability A/B EXECUTED (Dell, same day as the recorded opportunity): per-question routing is structurally capped at ~5% safe exclusion vs a 78% oracle; page-skip REFUTED; filter stays passthrough + diagnostic; harness promoted as the per-case-study instrument
+
+**Context:** George pressed: "the filter layer needs to be doing something — removal of the irrelevant, maybe per question — test this and tell me; generalizable." Same-day execution of the entry below's recorded opportunity, on this machine: refetched all 119 pages of the CMO rescue run (`diagnostics/fetch_run_pages.py`, 119/119 ok), scored all 2,023 (page × question) pairs with ms-marco-MiniLM-L6-v2 in two query forms, targets = the run's own Provenance yields.
+
+**Results (full numbers in `diagnostics/ce_answerability_ab.py` header + cmo-inputs/ce_ab_pair_scores.csv):**
+- **Oracle value is real:** only 454/2,023 pairs (22%) yield claims → perfect per-question routing removes 78% of question-slots; the 17-question block (2,962 chars) exceeds the median page (2,605 chars), so perfect routing ≈ halves prompt size.
+- **Pair-yield AUC: CE name-only 0.772 > embedding 0.671** (name+instruction 0.704 — the 07-21 "instructions hurt the CE" finding replicates on a second domain). BUT at recall-first operating points the capture is marginal: zero-loss exclusion CE 5% vs embedding 1%; at 95% recall CE 22% (losing 20 claim-pairs). The scorer ranking improved; the SAFE harvest did not.
+- **Page-yield (skip the extract call): REFUTED.** CE max-over-questions 0.620 ≈ embedding 0.625; zero-loss skip = 4/119 pages (3%). Diagnosis: max-over-17-questions destroys specificity, and zero-yield is often ENTITY-ATTRIBUTION (Forj pages: perfectly relevant text, zero Minnetronix-attributable claims) or extractor judgment — invisible to any text-relevance scorer in principle, not just to these two.
+
+**Decision:** the filter layer's imagined job (safe removal of the irrelevant) is not achievable at meaningful rates on this workload BY ANY tested scorer — the removal of the irrelevant is done by the crawler (before fetch, budget-bound) and the extractor (at read time, a per-question None costs ~nothing). The layer's real, kept jobs: per-pair relevance telemetry (what enabled this whole analysis) + the recall-first routing switch for workloads where the numbers clear a bar. **Generalizability is the harness, not a fixed setting:** per case study, run `filter_counterfactual.py` (+ this A/B when CE is available); activate threshold routing only where it clears a pre-registered bar (suggested: ≥30% exclusion at ≥98% claim recall). CMO does not clear it; ADLM (AUC 0.728, specialised questions) plausibly might — that's the point of deciding per workload.
+
+**Status:** harness promoted (fetch_run_pages.py + ce_answerability_ab.py, both argument-driven); no routing change; baseline unaffected.
+
+-----
+
 ## 2026-07-23 — Filter layer pre-baseline review: passthrough CONFIRMED for the CMO baseline; threshold routing measured a no-op on CMO; keyword gate made discriminative; page-level answerability screen recorded as the CE-shaped opportunity
 
 **Context:** George's layer-by-layer pre-baseline review (acquire done same day: full-page rescue 6cf1d36 + URL param strip b93df79). Ask: explain the filter, determine from the latest run whether active filtering would have helped ("I want this layer to be useful"), and revisit cross-encoder-vs-cosine for this layer.

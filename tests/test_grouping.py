@@ -351,8 +351,8 @@ def test_grouped_themes_sheet_written_with_cap_marker(tmp_path):
 
     wb = openpyxl.load_workbook(out)
     assert "Grouped Themes" in wb.sheetnames
-    # Deliverable-facing: sits right after Provenance.
-    assert wb.sheetnames.index("Grouped Themes") == wb.sheetnames.index("Provenance") + 1
+    # Deliverable-facing; reading order puts it before the Provenance ledger.
+    assert wb.sheetnames.index("Grouped Themes") == wb.sheetnames.index("Provenance") - 1
 
     ws = wb["Grouped Themes"]
     header = [c.value for c in ws[1]]

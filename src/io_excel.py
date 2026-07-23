@@ -938,7 +938,7 @@ def write_output_excel(
     if claim_groups:
         themes_df, theme_links = _make_grouped_themes_df(claim_groups, claim_index)
         digest_df, digest_links = _make_digest_df(claim_groups, claim_index)
-        sheets.insert(2, ("Digest", digest_df))  # after Matrix, before Provenance
+        sheets.insert(2, ("Digest", digest_df))
         sheets.append(("Grouped Themes", themes_df))
         digest_text = {
             (r["Entity"], r["Question"]): r["Digest"] for _, r in digest_df.iterrows()
@@ -951,11 +951,13 @@ def write_output_excel(
     ai_fills: dict[tuple[int, int], str] = {}
     if cell_summaries:
         ai_df, ai_fills = _make_ai_summary_df(cell_summaries, digest_text, result, columns)
-        digest_pos = next((i for i, (name, _) in enumerate(sheets) if name == "Digest"), None)
-        if digest_pos is not None:
-            sheets.insert(digest_pos + 1, ("AI Summary", ai_df))  # after Digest (§3)
-        else:
-            sheets.append(("AI Summary", ai_df))
+        sheets.append(("AI Summary", ai_df))
+
+    # Reading order (George, 2026-07-23): answers before evidence. Stable
+    # sort so any sheet not named here (none today) trails the deliverables.
+    _READING_ORDER = {name: i for i, name in enumerate(
+        ["Summary", "AI Summary", "Matrix", "Digest", "Grouped Themes", "Provenance"])}
+    sheets.sort(key=lambda s: _READING_ORDER.get(s[0], len(_READING_ORDER)))
 
     if write_diag:
         if cell_summaries:

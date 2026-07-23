@@ -542,11 +542,12 @@ def _summary_record(**overrides):
     return base
 
 
-def test_ai_summary_sheet_is_matrix_shaped_after_digest(tmp_path):
+def test_ai_summary_sheet_is_matrix_shaped_in_reading_order(tmp_path):
     wb = _write_workbook(tmp_path, [_summary_record()])
     names = wb.sheetnames
-    assert "AI Summary" in names
-    assert names.index("AI Summary") == names.index("Digest") + 1
+    # Reading order (2026-07-23): answers before evidence.
+    assert names[:6] == ["Summary", "AI Summary", "Matrix", "Digest",
+                         "Grouped Themes", "Provenance"]
     assert "Summary Log" in names  # DIAGNOSTICS=True in config
 
     ws = wb["AI Summary"]

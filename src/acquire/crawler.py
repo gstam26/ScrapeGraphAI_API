@@ -82,8 +82,28 @@ def _select_links_to_follow(
 
 # ── URL helpers ───────────────────────────────────────────────────────────────
 
+# Presentation/tracking query params that never change page content: utm_*
+# (analytics) and hsLang (HubSpot locale mirror — 2026-07-23 Tecan A/B fetched
+# /services AND /services?hsLang=en, two budget slots for one page). Content-
+# selecting params (?id=, ?p=, ?page=) are deliberately untouched.
+_JUNK_QUERY_PARAMS_EXACT = {"hslang", "gclid", "fbclid", "msclkid"}
+
+
 def _normalise_url(url: str) -> str:
-    return url.split("#")[0].rstrip("/")
+    url = url.split("#")[0]
+    parsed = urlparse(url)
+    if parsed.query:
+        kept = [
+            pair for pair in parsed.query.split("&")
+            if pair and not (
+                (name := pair.split("=", 1)[0].lower()).startswith("utm_")
+                or name in _JUNK_QUERY_PARAMS_EXACT
+            )
+        ]
+        query = "&".join(kept)
+        base = url.split("?")[0]
+        url = f"{base}?{query}" if query else base
+    return url.rstrip("/")
 
 
 def _same_domain(start_url: str, candidate_url: str) -> bool:

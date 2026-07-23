@@ -191,6 +191,20 @@ def test_locale_key_collapses_language_homepages():
     print("OK test_locale_key_collapses_language_homepages passed")
 
 
+def test_normalise_url_strips_tracking_and_lang_params():
+    """utm_*/hsLang/click-id params never change content; keeping them fetched
+    the same page twice (2026-07-23 Tecan A/B: /services + /services?hsLang=en).
+    Content-selecting params must survive."""
+    from src.acquire.crawler import _normalise_url
+    assert _normalise_url("https://t.com/services?hsLang=en") == "https://t.com/services"
+    assert _normalise_url("https://t.com/a?utm_source=x&utm_campaign=y") == "https://t.com/a"
+    assert _normalise_url("https://t.com/a?utm_source=x&id=5") == "https://t.com/a?id=5"
+    assert _normalise_url("https://t.com/index.php?id=128&product=1938") == \
+        "https://t.com/index.php?id=128&product=1938"
+    assert _normalise_url("https://t.com/a?gclid=abc#frag") == "https://t.com/a"
+    print("OK test_normalise_url_strips_tracking_and_lang_params passed")
+
+
 def test_locale_key_keeps_distinct_content_pages():
     """Sites that nest ALL content under a locale prefix (aladdinsci /us_en/,
     sebia /en-us/) must NOT have distinct pages collapsed; query strings that

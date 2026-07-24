@@ -11,3 +11,12 @@ playwright
 scrapegraph-py
 firecrawl-py
 openai
+# eval + diagnostics (CE matcher is the DEFAULT eval backend since 2026-07-22;
+# generic_eval falls back to embeddings/lexical if absent, but a machine
+# without this silently runs the weaker matcher — install it)
+sentence-transformers
+numpy
+# plots (scripts/plot_cmo_depth_sweep.py)
+matplotlib
+# test suite
+pytest

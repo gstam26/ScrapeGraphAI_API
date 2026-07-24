@@ -263,3 +263,65 @@ if __name__ == "__main__":
     test_lexical_only_double_penalises_paraphrase()
     test_fuzzy_dedup_collapses_reorderings()
     print("run via pytest for the monkeypatch-based tests")
+
+
+# ── Page-local "Not disclosed" suppression (pre-registered 2026-07-22) ───────
+# The extractor emits per-page absence claims beside substantive answers in
+# the same cell ("Yes [C0002]; Not disclosed [C0079]"). Page-local absence is
+# not a competing answer: suppressed from precision when a substantive claim
+# exists, but kept (null_match-able) when the cell has ONLY null claims.
+
+def test_page_local_null_suppressed_beside_substantive_answer():
+    gt = [_gt("Acme", "Does the company have tooling capability?", "Yes")]
+    ai = [_ai("Acme", "Does the company have tooling capability?", "Yes"),
+          _ai("Acme", "Does the company have tooling capability?", "Not disclosed")]
+    r = evaluate(gt, ai, semantic=False)
+    assert r.overall["TP"] == 1 and r.overall["FP"] == 0
+    assert r.overall["suppressed_nulls"] == 1
+    print("OK test_page_local_null_suppressed_beside_substantive_answer passed")
+
+
+def test_only_null_claims_still_null_match():
+    # A cell whose ONLY AI claims are nulls must keep them: a GT null is a
+    # true negative the pipeline correctly reported (null_match), and
+    # suppression must not fire without a substantive claim in the cell.
+    gt = [_gt("Acme", "What is the company's yearly revenue?",
+              "None (not disclosed)")]
+    ai = [_ai("Acme", "What is the company's yearly revenue?", "Not disclosed")]
+    r = evaluate(gt, ai, semantic=False)
+    verdicts = [p.verdict for c in r.cells for p in c.gt_pairs]
+    assert "null_match" in verdicts
+    assert r.overall["FP"] == 0
+    assert r.overall["suppressed_nulls"] == 0
+    print("OK test_only_null_claims_still_null_match passed")
+
+
+def test_suppression_makes_gt_null_a_genuine_miss():
+    # GT says not-disclosed but the tool's displayed verdict is a substantive
+    # "Yes": the Yes is the answer being graded (FP), and the page-local null
+    # must NOT sneak in as a null_match that would also credit the cell.
+    gt = [_gt("Acme", "Does the company have tooling capability?",
+              "None (not disclosed)")]
+    ai = [_ai("Acme", "Does the company have tooling capability?", "Yes"),
+          _ai("Acme", "Does the company have tooling capability?", "Not disclosed")]
+    r = evaluate(gt, ai, semantic=False)
+    verdicts = [p.verdict for c in r.cells for p in c.gt_pairs]
+    assert "null_match" not in verdicts
+    assert r.overall["FP"] == 1
+    assert r.overall["suppressed_nulls"] == 1
+    print("OK test_suppression_makes_gt_null_a_genuine_miss passed")
+
+
+def test_multiple_page_local_nulls_all_suppressed():
+    gt = [_gt("Acme", "In which country/countries does manufacturing take place?",
+              "United Kingdom", is_list=True)]
+    ai = [_ai("Acme", "In which country/countries does manufacturing take place?",
+              "United Kingdom"),
+          _ai("Acme", "In which country/countries does manufacturing take place?",
+              "Not disclosed"),
+          _ai("Acme", "In which country/countries does manufacturing take place?",
+              "not disclosed on site")]
+    r = evaluate(gt, ai, semantic=False)
+    assert r.overall["TP"] == 1 and r.overall["FP"] == 0
+    assert r.overall["suppressed_nulls"] == 2
+    print("OK test_multiple_page_local_nulls_all_suppressed passed")

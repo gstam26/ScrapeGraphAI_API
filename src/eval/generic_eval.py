@@ -161,6 +161,7 @@ class CellResult:
     gt_pairs: list[PairResult]
     ai_only: list[AIRow]              # AI claims not matched to any GT (FP)
     redundant: list[AIRow] = field(default_factory=list)  # restatements of a credited claim (not FP)
+    suppressed_nulls: list[AIRow] = field(default_factory=list)  # page-local "Not disclosed" beside a substantive answer (not FP, not matched)
 
 
 @dataclass
@@ -589,6 +590,20 @@ def _align_cell(
     ai_null  = [a for a in ai_dedup if _is_null(a.value)]
     ai_real  = [a for a in ai_dedup if not _is_null(a.value)]
 
+    # Page-local absence normalization (pre-registered 2026-07-22): the
+    # extractor emits per-page "Not disclosed" claims beside substantive
+    # answers in the same cell ("Yes [C0002]; Not disclosed [C0079]") —
+    # page-local absence, not a competing answer. When the cell carries at
+    # least one substantive claim, its null claims are suppressed: neither
+    # matched against a GT null (the tool's displayed verdict is the
+    # substantive value, so a GT null in such a cell is a genuine miss) nor
+    # counted as false positives. Suppressions are counted and surfaced in
+    # the report and Detail sheet — never silent.
+    suppressed_nulls: list[AIRow] = []
+    if ai_real and ai_null:
+        suppressed_nulls = ai_null
+        ai_null = []
+
     pairs: list[PairResult] = []
     used_ai: set[int] = set()
 
@@ -718,13 +733,16 @@ def _align_cell(
         if j not in used_null_ai:
             ai_only.append(a)
 
-    # For cells where GT has a null claim and AI extracted a REAL claim: hallucination
-    if gt_null and not gt_real:
-        ai_only.extend(ai_real)
+    # NOTE: cells where GT is null but AI extracted real claims need no extra
+    # handling — the leftover loop above already counts every unmatched real
+    # claim as FP. An explicit `ai_only.extend(ai_real)` here (removed
+    # 2026-07-24) DOUBLE-counted each such claim: once from the loop, once
+    # from the extension (caught by test_suppression_makes_gt_null_a_genuine_miss).
 
     return CellResult(
         entity=entity, question=question, is_list=is_list,
         gt_pairs=pairs, ai_only=ai_only, redundant=redundant,
+        suppressed_nulls=suppressed_nulls,
     )
 
 
@@ -851,6 +869,7 @@ def evaluate(
         1 for c in results for p in c.gt_pairs if p.verdict == "semantic_review"
     )
     overall["redundant_dropped"] = sum(len(c.redundant) for c in results)
+    overall["suppressed_nulls"] = sum(len(c.suppressed_nulls) for c in results)
     # Split headline: single-answer questions are the TRUSTWORTHY metric; list
     # questions have non-exhaustive GT (the pipeline finds real items the GT
     # never enumerated), so their precision is only a LOWER BOUND — reported
@@ -920,6 +939,10 @@ def print_report(result: EvalResult, verbose: bool = False) -> None:
     if o.get("redundant_dropped"):
         print(f"  ({o['redundant_dropped']} AI claim(s) dropped as redundant "
               f"restatements of a credited claim — not counted as hallucination)")
+    if o.get("suppressed_nulls"):
+        print(f"  ({o['suppressed_nulls']} page-local 'Not disclosed' claim(s) "
+              f"suppressed in cells that also carry a substantive answer — "
+              f"not counted as hallucination)")
 
     if verbose:
         print()
@@ -989,6 +1012,14 @@ def write_report_excel(result: EvalResult, output_path: str) -> None:
                 "gt_value": "", "ai_value": a.value,
                 "value_score": 0, "quote_score": 0, "semantic": 0, "combined": 0,
                 "verdict": "redundant",
+            })
+        for a in cell.suppressed_nulls:
+            detail_rows.append({
+                "entity": cell.entity, "question": cell.question,
+                "is_list": cell.is_list,
+                "gt_value": "", "ai_value": a.value,
+                "value_score": 0, "quote_score": 0, "semantic": 0, "combined": 0,
+                "verdict": "suppressed_null",
             })
 
     with pd.ExcelWriter(output_path, engine="openpyxl") as w:

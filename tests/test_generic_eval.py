@@ -325,3 +325,17 @@ def test_multiple_page_local_nulls_all_suppressed():
     assert r.overall["TP"] == 1 and r.overall["FP"] == 0
     assert r.overall["suppressed_nulls"] == 2
     print("OK test_multiple_page_local_nulls_all_suppressed passed")
+
+
+def test_partial_gt_excludes_uncovered_entities():
+    # A GT that covers one entity must not count another entity's claims as
+    # hallucinations — they are unmeasured, not wrong (the CMO partial-GT
+    # case: 5 analyst rows vs 57 pipeline entities).
+    gt = [_gt("Covered Co", "Does the company have tooling capability?", "Yes")]
+    ai = [_ai("Covered Co", "Does the company have tooling capability?", "Yes"),
+          _ai("Uncovered Co", "Does the company have tooling capability?", "No"),
+          _ai("Uncovered Co", "Where is the company headquarters located?", "Paris")]
+    r = evaluate(gt, ai, semantic=False)
+    assert r.overall["TP"] == 1 and r.overall["FP"] == 0
+    assert r.overall["entities"] == 1
+    print("OK test_partial_gt_excludes_uncovered_entities passed")

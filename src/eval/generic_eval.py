@@ -755,6 +755,19 @@ def evaluate(
     semantic: bool = True,
     semantic_backend: str = "cross-encoder",
 ) -> EvalResult:
+    # PARTIAL-GT SCOPING (2026-07-24): score only entities the GT covers.
+    # With a partially-filled GT (e.g. an analyst answered 5 of 69 rows),
+    # AI claims for unassessed entities are not wrong — they are unmeasured.
+    # Without this filter every claim from an uncovered entity counted as a
+    # false positive (first CMO scoring run: FP=2085 from 52 uncovered
+    # entities swamping 5 covered ones). Exclusions are printed, not silent.
+    gt_entities = {g.entity_norm for g in gt}
+    ai_uncovered = {a.entity for a in ai if a.entity_norm not in gt_entities}
+    if ai_uncovered:
+        ai = [a for a in ai if a.entity_norm in gt_entities]
+        print(f"  [partial GT] {len(ai_uncovered)} pipeline entities have no GT "
+              f"rows and are excluded from scoring (unmeasured, not wrong)")
+
     # Build the semantic scorer ONCE for the whole run (for the embedding
     # backend that means one Ollama batch, then O(1) lookups during
     # alignment). None => lexical-only.

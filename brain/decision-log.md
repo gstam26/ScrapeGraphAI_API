@@ -5,6 +5,20 @@
 
 -----
 
+## 2026-07-24 — FIRST GT SCORING of the frozen CMO baseline (Caitlin's 5 entities): Matrix F1 0.611 / recall 0.733; misses split cleanly into acquire-starvation and the assert-vs-not-disclosed judgment boundary
+
+**Setup:** frozen baseline `cmo_output_v2_FULL_baseline_2026-07-24.xlsx` (69 entities, 41m10s, fresh cache) scored against Caitlin's analyst GT (5 fully-answered rows: Adapt EMS, Arrk, Asteelflash, Automatic Manufacturing, Avenue Mould; website-only scope; clean format — consistent Not-disclosed markers, newline lists, 2 honest blanks). `gt_convert` verified: 105 flat rows, blank acquirer + independent=Yes → n/a sentinel by design; blank cells skipped as not-assessed. CE matcher decisive, both new normalizations live.
+
+**Three evaluator defects found and fixed during scoring (suite 278):** (1) page-local "Not disclosed" suppression implemented as pre-registered — suppressed claims counted + surfaced (`suppressed_null`), null-only cells still null_match; (2) writing its tests exposed a pre-existing FP DOUBLE-COUNT on GT-null cells (leftover loop + explicit extend both fired — historical task1-3 hallucination rates on GT-null cells slightly inflated); (3) PARTIAL-GT SCOPING: first run scored 5 GT entities against all 57 pipeline entities → FP=2085 nonsense; uncovered entities are unmeasured, not wrong — evaluate() now filters and prints the exclusion.
+
+**Headline (Matrix = deliverable grain): single-answer P=0.485 R=0.662 F1=0.560; lists (P=lower bound) R=0.903; combined F1=0.611.** Provenance grain: singles R=0.432 (claim-level 1:1 matching is stricter than the aggregated cell). Perfect questions: exclusively-China 1.000/1.000, acquirer 1.000/1.000, revenue 1.000/1.000 (Not-disclosed nulls matched). Weakest: description and typical-volume (P≈0.11 — one GT prose sentence vs many per-page prose claims; grain mismatch, expected).
+
+**Misses split into exactly two classes:** (a) ACQUIRE STARVATION — Arrk 9 FN (2 pages fetched; arrk.com is a splash site, GT HQ is Osaka not the US regional site the tool read) and Automatic 8 FN (3 pages, .com.hk) carry 17 of 25 single FN; (b) ASSERT-VS-NOT-DISCLOSED boundary — ~9 FN are cells where GT says "Not disclosed" but the tool asserted Yes/No (Adapt moulding/integration, Avenue EOL/NPI/PCB/volume, Asteelflash EOL) = the weak-evidence-Yes class measured at last, plus its mirror (tool "No" where the guidance says tie→Not-disclosed). Avenue's Nolato-China contamination scores as FP as decided (Shenzhen displayed unverified in a conflict cell). Artifacts: `outputs/cmo_eval_{provenance,matrix}.xlsx`, GT `outputs/cmo_gt_caitlin.xlsx`.
+
+**Next analyses queued:** NLI support-scores vs eval verdicts join (does low quote-support predict the assert-vs-not-disclosed errors? — the verify-tier ship gate); per-question plots for the case study; instructions A/B arm comparison when run.
+
+-----
+
 ## 2026-07-24 — NLI entailment CE (nli-deberta-v3-base) VIABLE for the verify support tier once the premise carries entity context; uncalibrated, annotate-only, ship gate = human-labelled pairs
 
 **Context:** immediate follow-up to the ms-marco refutation (entry below). New permanent tool `diagnostics/nli_quote_support.py`: premise = verbatim quote, hypothesis = declarative(entity, question, value) from 17 CMO-v2 templates, support = P(entailment) — or P(contradiction) for binary-No claims (one affirmative hypothesis, polarity read off the class probabilities). Expectations pre-registered in the docstring before the first run.

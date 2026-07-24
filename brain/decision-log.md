@@ -5,6 +5,20 @@
 
 -----
 
+## 2026-07-24 — NLI entailment CE (nli-deberta-v3-base) VIABLE for the verify support tier once the premise carries entity context; uncalibrated, annotate-only, ship gate = human-labelled pairs
+
+**Context:** immediate follow-up to the ms-marco refutation (entry below). New permanent tool `diagnostics/nli_quote_support.py`: premise = verbatim quote, hypothesis = declarative(entity, question, value) from 17 CMO-v2 templates, support = P(entailment) — or P(contradiction) for binary-No claims (one affirmative hypothesis, polarity read off the class probabilities). Expectations pre-registered in the docstring before the first run.
+
+**Run 1 (bare quotes): the model is a correct but context-blind judge.** Real signal exists — top-8 all genuinely supported, including inference in the right direction ("Manufacturing Facilities in the US and Mexico" CONTRADICTS exclusively-China → support 1.000 for the No) — but 66% of claims flagged unsupported because marketing quotes are fragments without subjects (Tecan's literal HQ address → 0.000) or say we/"the company" (coreference → neutral).
+
+**Run 2 (`--context-premise`, "From {entity}'s website: <quote>"): the fix works.** Median support 0.009→0.962, unsupported 66%→43%, and the tier's core property appears — WITHIN-QUESTION separation on capability binaries: EOL-testing now splits "Full product test and validation" 0.988 from "Test Development" 0.001 and "Environmental Stress Screening" 0.000 — exactly the weak menu-label Yes-evidence the e2a review flagged, now machine-separable from strong evidence. Independence-Yes boilerplate stays low while the two genuinely informative quotes ("founded in 1920 and debt-free" 0.761, "veteran owned, debt free" 0.691) rise to the top — the right ordering for an absence-type question.
+
+**Residual flag classes are interpretable, not noise:** HQ address fragments (candidate fix: page title in the context premise); acquirer template wording ("wholly owned subsidiary of X" ⊬ "acquired by X" — template fix); description cells (value synthesizes multiple pages — single-quote entailment is the wrong grain); strict-numeric hypotheses (low-volumes "around 500-1000" unentailable from number-free quotes — arguably a correct flag).
+
+**Decision:** NLI CE is the live candidate for verify's entailment gap, ms-marco's role formally closed. NOT shipped into the pipeline: thresholds are uncalibrated (0.3/0.7 bands are flagging conveniences), and per the 2026-06-24 contract + semantic-verify.md any tier annotates, never gates. Ship gate = a human-labelled (quote, hypothesis, supported?) set — the same George-labels pattern that validated the CE matcher. Deployability: ~740 MB model, CPU inference 414 claims in ~1 min; work laptop needs an offline copy (Paulo_cross_encoder pattern), `--model <local_path>`.
+
+-----
+
 ## 2026-07-24 — ms-marco CE REFUTED as a quote-support (verify entailment-gap) tier: scores degenerate to lexical overlap on marketing prose; NLI entailment is the next candidate
 
 **Context:** George proposed the cross-encoder for the verify layer's known entailment gap (layers/verify.md): the current verifier proves the quote EXISTS on the page, not that it SUPPORTS the answer — exactly the e2a failure class (menu label "Test Development" → EOL-testing Yes; independence-Yes citing quotes that don't address ownership). Question→quote is genuinely asymmetric, which IS ms-marco's trained shape (query→passage), and the 07-23 answerability A/B gave it AUC 0.772 on question→page. New permanent tool: `diagnostics/ce_quote_support.py` — scores CE(question, quote) + CE(value, quote) for every Provenance claim, per-question distributions, suspect-class placement. No page fetch needed; runs off the workbook alone.

@@ -5,6 +5,20 @@
 
 -----
 
+## 2026-07-24 — ms-marco CE REFUTED as a quote-support (verify entailment-gap) tier: scores degenerate to lexical overlap on marketing prose; NLI entailment is the next candidate
+
+**Context:** George proposed the cross-encoder for the verify layer's known entailment gap (layers/verify.md): the current verifier proves the quote EXISTS on the page, not that it SUPPORTS the answer — exactly the e2a failure class (menu label "Test Development" → EOL-testing Yes; independence-Yes citing quotes that don't address ownership). Question→quote is genuinely asymmetric, which IS ms-marco's trained shape (query→passage), and the 07-23 answerability A/B gave it AUC 0.772 on question→page. New permanent tool: `diagnostics/ce_quote_support.py` — scores CE(question, quote) + CE(value, quote) for every Provenance claim, per-question distributions, suspect-class placement. No page fetch needed; runs off the workbook alone.
+
+**Pre-registered prediction:** the known-bad claims score HIGH (relevant-but-not-entailing — ms-marco measures relevance, so it would be blind to weak support).
+
+**Result (e2a, 414 claims): prediction wrong in a worse way — the score distribution COLLAPSES.** 67.6% of all claims < 0.01; 14/17 questions have median ≤ 0.05 including perfect evidence (Tecan's literal street address scores 0.000 against the headquarters question, while a Tempe quote scores 0.633 only because it contains the word "HEADQUARTERS"). The three high-scoring questions (employees 0.89 / NPI 0.97 / PCB 0.74 medians) are exactly those whose quotes share literal query terms. Good and bad EOL evidence are indistinguishable (0.001 vs 0.001). ce_v_quote is equally uninformative the other way (median 0.996 — values are verbatim substrings of their quotes, so it measures string identity).
+
+**Why the A/B and this disagree without contradiction:** AUC is rank-only over max-of-12-chunk page scores — ranking survives a compressed distribution; a verify tier needs per-claim absolute separation, which does not exist. Short fragment quotes ("Test Development" = two words) are far outside MS MARCO's passage distribution.
+
+**Decision:** ms-marco does NOT get a verify-tier role. The entailment gap remains open; next candidate = NLI cross-encoder (premise=quote, hypothesis=declarative(question,value), P(entailment) as support) — being tested next with the same diagnostic pattern and the same pre-register-then-run discipline. Semantic-verify contract unchanged: any tier flags, never silently gates.
+
+-----
+
 ## 2026-07-24 — Extraction reproducibility MEASURED (controlled A/B, e2a vs e2b): temp-0+seed stabilises discrete facts but full determinism is not available from Azure; run-to-run variance is now a quantified system property
 
 **Setup:** identical page texts (cache-served), extract cache cleared between runs, prompt e2 both sides — the only variable is the Azure generation itself. First controlled reproducibility measurement of the extractor.

@@ -12,7 +12,7 @@
 - Deliberately deterministic — LLM keep/reject verification rejected 2026-06-24 (reproducibility of the verify→score chain is the dissertation's trust claim).
 
 ## Known issues
-- **Entailment gap:** verified = quote exists, NOT quote supports the value. The gap consultants would care about. Addressed by `proposals/semantic-verify.md` (Phase A: tier the existing semantic_score; Phase B: proxy LLM judge gated on a human-labelled eval; annotation only, never a silent gate).
+- **Entailment gap:** verified = quote exists, NOT quote supports the value. The gap consultants would care about. Addressed by `proposals/semantic-verify.md` (Phase A: tier the existing semantic_score; Phase B: proxy LLM judge gated on a human-labelled eval; annotation only, never a silent gate). **ms-marco CE refuted for this role 2026-07-24** (`diagnostics/ce_quote_support.py` on e2a: scores collapse to lexical overlap — 67.6% of claims < 0.01, street-address evidence scores 0.000 vs its HQ question; decision-log entry). NLI entailment CE is the live candidate.
 - `char_span` computed but not written to the Provenance sheet (report-deltas §5.5) — one io_excel column to fix.
 - Known FN: Oatly GHG table-caption quote (markdown rendering defeats fuzzy+anchors). Single case, not generalised.
 

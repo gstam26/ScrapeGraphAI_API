@@ -198,6 +198,18 @@ def _numeric_value(text: str) -> Optional[float]:
         return None
 
 
+_BINARY_TOKENS = {"yes": True, "true": True, "no": False, "false": False}
+
+
+def _binary_value(text: str) -> Optional[bool]:
+    """Parse a BARE binary value ("Yes", "no.", "True") or None.
+
+    Anything beyond the bare token ("Yes, in the UK") stays None and takes
+    the normal string path — this exists only for the polarity-blind-CE trap
+    (see _pair_score), the binary twin of _numeric_value."""
+    return _BINARY_TOKENS.get(_norm(text).rstrip("."))
+
+
 def _token_f1(a: str, b: str) -> float:
     ta = {t for t in a.lower().split() if t}
     tb = {t for t in b.lower().split() if t}
@@ -305,6 +317,17 @@ def _pair_score(
     gt_num, ai_num = _numeric_value(gt.value), _numeric_value(ai.value)
     if gt_num is not None and ai_num is not None:
         score = 1.0 if gt_num == ai_num else 0.0
+        return score, 0.0, score, 0.0
+
+    # Same rule for bare binary values: polarity decides, semantic never
+    # consulted. To a relevance CE "Yes" and "No" are topically identical —
+    # it credited Arrk independence No↔Yes at 0.97 (caught 2026-07-29; two
+    # false credits in the frozen-baseline scoring had the same signature).
+    # Cross-form matches ("No"↔"false") are correct by construction here,
+    # where fuzzy matching would have missed them.
+    gt_bin, ai_bin = _binary_value(gt.value), _binary_value(ai.value)
+    if gt_bin is not None and ai_bin is not None:
+        score = 1.0 if gt_bin == ai_bin else 0.0
         return score, 0.0, score, 0.0
 
     vs_lex = fuzz.token_sort_ratio(_norm(gt.value), _norm(ai.value)) / 100.0

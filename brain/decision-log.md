@@ -5,6 +5,18 @@
 
 -----
 
+## 2026-07-29 — STARVED-2 RE-CRAWL RESULT (Arrk arm) + TWO EVAL BUGS the scoring surfaced (typed-binary false credits; missing mirror scoping); Automatic arm pending cache-trigger fix
+
+**Arrk (site scope, live): WORKED, with a plot twist.** 2→10 pages (all subdomains). Substantive matches 14→22, auto_miss 9→6: NPI/systems-integration/tooling all flipped to correct Yes. THE TWIST: the crawl found **Arrk is owned by Mitsui Chemicals** (acquirer named, revenue $10.5B, employees 18,000 extracted) — Caitlin's GT says independent=Yes because the splash site never mentions it. So the eval counts the tool's (real-world-correct) acquisition claims as FP/FN → **2-entity aggregate F1 ~flat (0.625→0.634) while composition shifts from silence-agreements to real answers**. Adjudication item for Caitlin; if GT flips, several FPs become TPs. Residuals: revenue/employees are the KNOWN acquired-entity attribution leak (Mitsui's numbers on Arrk's row); HQ came back Nuneaton-UK not Osaka because the jp.arrk.com pages the budget bought were cookie/privacy junk — junk-path blocklist again.
+
+**Automatic: trigger never fired — cache-hit seeds were excluded from render-for-discovery (my design error, not a test artifact: every warm-cache run would keep the blind spot). FIXED 4bedb0e** (`backend == "cache"` counts as static; cached pages carry no HTML so discovery already fell back to a live static fetch). Laptop re-run pending.
+
+**Eval bug 1 — typed-binary false credits (a452340):** the decisive relevance CE scored bare "No"↔"Yes" at 0.97 (topically identical to a relevance model) — Arrk independence credited wrongly, and 2 false credits found in the frozen-baseline scoring (Avenue medical-device, Avenue systems-integration). Fix: `_binary_value` polarity rule beside the typed-numeric rule — bare Yes/No/True/False match by polarity only, semantic never consulted; cross-form (No↔false) now matches where fuzzy missed. **HONEST BASELINE CORRECTED: Matrix combined F1 0.611 → 0.595 (single-answer 0.560 → 0.537).** CE matcher label-validation (0.967/1.000) never covered this pair class — worth a line in the matcher-limits note.
+
+**Eval bug 2 — mirror scoping (cc0b52c):** partial-GT scoping (07-24) only dropped pipeline entities without GT; GT entities absent from a partial RUN still counted as pure FN (starved-2 scoring: 3 absent entities = FN flood). Fix: `read_run_entities` (Matrix/Summary rows = attempted universe) → GT rows for not-attempted entities excluded loudly; attempted-but-empty entities keep their rows and rightly score FN. Suite 286.
+
+-----
+
 ## 2026-07-29 — ACQUIRE STARVATION ROOT-CAUSED (Arrk + Automatic = 17/25 GT single-FN): two generalizable link-discovery gaps, both fixed flag-gated, both live-verified; Firecrawl switch NOT needed
 
 **Context:** after the v3/NLI refutations, acquire starvation became the dominant measured lever. Diagnosis from the baseline's own Crawl Candidates log (crawler followed 100% of discovered links — discovery, not fetch or scoring, was starved) + live Dell probes (the ADLM per-site playbook).

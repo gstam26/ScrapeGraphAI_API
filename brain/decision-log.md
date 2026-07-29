@@ -5,6 +5,18 @@
 
 -----
 
+## 2026-07-29 — ACQUIRE STARVATION ROOT-CAUSED (Arrk + Automatic = 17/25 GT single-FN): two generalizable link-discovery gaps, both fixed flag-gated, both live-verified; Firecrawl switch NOT needed
+
+**Context:** after the v3/NLI refutations, acquire starvation became the dominant measured lever. Diagnosis from the baseline's own Crawl Candidates log (crawler followed 100% of discovered links — discovery, not fetch or scoring, was starved) + live Dell probes (the ADLM per-site playbook).
+
+**Root cause 1 — Arrk (2 pages): SUBDOMAIN SCOPING.** arrk.com is a hub homepage; 46 of its 56 static-HTML links point to its own subdomains (us./spg./engineering./asia./composites.arrk.com) and `_same_domain` (exact-host match) discarded every one. Not a JS problem, not a fetch problem; Firecrawl would be scoped identically. **Fix: `CRAWL_SCOPE="site"`** (env-overridable, default "host" = historical) — registered-domain comparison via `_registered_domain` (builtin cc-second-level set: com.hk/co.uk/…; no public-suffix dependency; unlisted exotic suffix degrades to slightly-wide scope, never drops a valid candidate). `_locale_key` extended to collapse locale SUBDOMAINS (es./fr.arrk.com) so site scope doesn't burn budget on translated homepages. **Live-verified: 1 → 15 candidates (10 after locale dedup), incl. spg (tooling/prototyping = GT capability questions) and jp.arrk.com (GT HQ = Osaka).**
+
+**Root cause 2 — Automatic (3 pages): JS-INJECTED NAV × HYBRID'S STATIC-PASS BLIND SPOT.** automatic.com.hk prints its menu via printHeader.js; static text (1,133 chars) passed the quality gate so the hybrid never rendered, and static discovery saw only Contact.php. The real site map (AboutUs/Division/News/Career/Awards) was invisible. **Fix: `CRAWL_RENDER_FOR_DISCOVERY=true`** (env-overridable, default off) — a statically-fetched depth-0 seed yielding < CRAWL_DISCOVERY_MIN_LINKS=3 candidates is rendered once (`_render_page_html`, pooled politeness) and discovery re-runs on the DOM, union-merged. Seed-only by design: a starved seed strands the entity; a starved leaf costs one page. **Live-verified: 2 → 8 candidates incl. Division.html/AboutUs.html (GT: manufacturing=Vietnam, employees=670).**
+
+**Both defaults UNCHANGED (validation gates before promotion):** crawl-behaviour changes require the locked plant-milk benchmark + an ADLM sample re-validation (standing rule). Deployment path for CMO meanwhile = laptop .env per the machine-local-override convention. Suite 283 (5 new tests: scope semantics, cc-second-level registered domains, locale subdomains, render trigger matrix). **Pre-registered for the laptop re-crawl of these 2 entities (flags on, depth 1, budget 40): Arrk recovers HQ-Osaka + tooling/moulding capabilities; Automatic recovers Vietnam + employees-670; jointly ≥8 of their 17 GT FN cells flip. Convergent find: jp.arrk.com/company/en/cookiepolicy shows up in-scope — the queued junk-path blocklist pairs naturally with site scope.**
+
+-----
+
 ## 2026-07-29 — v3 RESULT: instruction-specificity REFUTED for judgment-norm enforcement; NLI-demotion counterfactual ALSO refuted; assert-vs-not-disclosed boundary ACCEPTED as measured residual
 
 **Run:** laptop, replay-pinned 79 pages / 5 GT entities, first attempt discarded (Ollama down = verify-layer confound, caught from the run log), redo with verify parity (86.3% verified, semantic scores present). Scored on Dell vs the same GT: single-answer F1 **0.538 vs baseline 0.560**, combined 0.607 vs 0.611 — flat-to-down, within the measured noise floor.

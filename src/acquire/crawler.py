@@ -9,10 +9,13 @@ import requests
 from bs4 import BeautifulSoup
 
 from config import (
+    CRAWL_DISCOVERY_MIN_LINKS,
     CRAWL_LOCALE_DEDUP,
     CRAWL_MAX_DEPTH,
     CRAWL_MAX_LINKS_PER_PAGE,
     CRAWL_MIN_SCORE_EMBED,
+    CRAWL_RENDER_FOR_DISCOVERY,
+    CRAWL_SCOPE,
     CRAWL_STRATEGY,
     SCORER_TOOL,
 )
@@ -106,10 +109,30 @@ def _normalise_url(url: str) -> str:
     return url.rstrip("/")
 
 
+# Country-code second-level labels under which the registered domain needs
+# THREE labels (automatic.com.hk, bbc.co.uk), not two. Deliberately a small
+# builtin set rather than a public-suffix-list dependency: covers the corporate
+# patterns seen in the cohorts; an unlisted exotic suffix degrades to slightly
+#-too-wide scope, never to dropping a valid candidate.
+_SECOND_LEVEL_LABELS = {"co", "com", "org", "net", "gov", "edu", "ac"}
+
+
+def _registered_domain(netloc: str) -> str:
+    labels = netloc.lower().split(":")[0].split(".")
+    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL_LABELS:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:]) if len(labels) >= 2 else netloc.lower()
+
+
 def _same_domain(start_url: str, candidate_url: str) -> bool:
-    start_domain = urlparse(start_url).netloc.replace("www.", "")
-    candidate_domain = urlparse(candidate_url).netloc.replace("www.", "")
-    return start_domain == candidate_domain
+    start_netloc = urlparse(start_url).netloc.replace("www.", "")
+    candidate_netloc = urlparse(candidate_url).netloc.replace("www.", "")
+    if CRAWL_SCOPE == "site":
+        # Same registered domain: own subdomains are in scope, so hub
+        # homepages that delegate content to engineering.example.com /
+        # asia.example.com stay crawlable (the Arrk starvation mechanism).
+        return _registered_domain(start_netloc) == _registered_domain(candidate_netloc)
+    return start_netloc == candidate_netloc
 
 
 _JUNK_EXTS = (
@@ -146,7 +169,16 @@ def _locale_key(url: str) -> str:
             segments.append("{locale}.html" if seg.endswith(".html") else "{locale}")
         else:
             segments.append(seg)
-    key = f"{parsed.netloc.replace('www.', '')}{'/'.join(segments)}"
+    netloc = parsed.netloc.replace("www.", "")
+    # Locale SUBDOMAINS (es.arrk.com / fr.arrk.com) are the host-level twin of
+    # locale path segments; only reachable under CRAWL_SCOPE="site", where
+    # they would otherwise burn budget on translated homepage copies. Same
+    # known trade-off as path segments: a genuine 2-letter content subdomain
+    # collapses too — first variant is kept.
+    host_labels = netloc.split(".")
+    if len(host_labels) >= 3 and _LOCALE_SEG_RE.match(host_labels[0].lower()):
+        netloc = ".".join(["{locale}"] + host_labels[1:])
+    key = f"{netloc}{'/'.join(segments)}"
     if parsed.query:
         key += f"?{parsed.query}"
     return key
@@ -293,6 +325,24 @@ def _discover_links(
         html = response.text
 
     return _discover_links_from_html(page_url, start_url, depth, html)
+
+
+def _needs_discovery_render(depth: int, backend: str | None, n_links: int) -> bool:
+    """Seed page, statically fetched, link-starved -> render once for links.
+
+    Depth-0 only by design: a starved SEED strands the whole entity (the
+    Automatic mechanism), while a starved deep page costs one leaf. Cache hits
+    (backend="cache") are excluded — no HTML to compare and the original
+    backend is unknown; rendered-page and Firecrawl fetches already expose
+    their nav links.
+    """
+    return (
+        CRAWL_RENDER_FOR_DISCOVERY
+        and depth == 0
+        and backend is not None
+        and backend.endswith("static")
+        and n_links < CRAWL_DISCOVERY_MIN_LINKS
+    )
 
 
 # ── Guided crawl ─────────────────────────────────────────────────────────────
@@ -455,6 +505,25 @@ def crawl_entity(
             page_text=page.text,
             cfg=cfg,
         )
+
+        if _needs_discovery_render(current.depth, page.backend, len(child_links)):
+            # Static text passed the quality gate, so the hybrid never
+            # rendered — but a JS-injected nav menu (automatic.com.hk's
+            # printHeader.js) is invisible to static link discovery. One
+            # render, discovery re-run on the rendered DOM, results merged.
+            try:
+                from src.acquire.fetcher import _render_page_html
+                print(f"    Link discovery starved ({len(child_links)} links, "
+                      f"static seed) — rendering for discovery: {current.url}")
+                rendered_html = _render_page_html(current.url, cfg)
+                seen_urls = {c.url for c in child_links}
+                child_links += [
+                    c for c in _discover_links_from_html(
+                        current.url, start_url, current.depth + 1, rendered_html)
+                    if c.url not in seen_urls
+                ]
+            except Exception as exc:
+                print(f"    ! Discovery render failed ({exc}); static links kept")
 
         unvisited = []
         batch_locale_keys: set[str] = set()

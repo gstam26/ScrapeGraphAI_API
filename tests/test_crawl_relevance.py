@@ -356,3 +356,70 @@ if __name__ == "__main__":
     test_locale_key_released_after_fetch_failure()
     test_discovery_no_longer_truncates_before_scoring()
     print("\nAll crawl relevance tests passed!")
+
+
+# ── Link-discovery starvation fixes (2026-07-29 Arrk/Automatic diagnosis) ────
+
+def test_same_domain_host_scope_rejects_subdomains(monkeypatch):
+    """Default scope: historical behaviour, exact host only."""
+    import src.acquire.crawler as crawler
+    monkeypatch.setattr(crawler, "CRAWL_SCOPE", "host")
+    assert crawler._same_domain("https://www.arrk.com", "https://www.arrk.com/about")
+    assert not crawler._same_domain("https://www.arrk.com", "https://engineering.arrk.com")
+    assert not crawler._same_domain("https://www.arrk.com", "https://other.com")
+
+
+def test_same_domain_site_scope_accepts_own_subdomains(monkeypatch):
+    """site scope: own subdomains in, foreign domains still out (Arrk fix)."""
+    import src.acquire.crawler as crawler
+    monkeypatch.setattr(crawler, "CRAWL_SCOPE", "site")
+    assert crawler._same_domain("https://www.arrk.com", "https://engineering.arrk.com")
+    assert crawler._same_domain("https://www.arrk.com", "https://asia.arrk.com/products")
+    assert not crawler._same_domain("https://www.arrk.com", "https://arrk.evil.com")
+    assert not crawler._same_domain("https://www.arrk.com", "https://other.com")
+
+
+def test_registered_domain_handles_cc_second_level():
+    """automatic.com.hk must register as automatic.com.hk, not com.hk —
+    otherwise site scope would treat every .com.hk site as one domain."""
+    from src.acquire.crawler import _registered_domain
+    assert _registered_domain("www.automatic.com.hk") == "automatic.com.hk"
+    assert _registered_domain("sub.bbc.co.uk") == "bbc.co.uk"
+    assert _registered_domain("engineering.arrk.com") == "arrk.com"
+    assert _registered_domain("arrk.com") == "arrk.com"
+    # Two same-cc-suffix companies are NOT the same site.
+    assert _registered_domain("a.com.hk") != _registered_domain("b.com.hk")
+
+
+def test_locale_key_collapses_locale_subdomains():
+    """es.arrk.com / fr.arrk.com are translated homepages (reachable only
+    under site scope); a real content subdomain must NOT collapse."""
+    from src.acquire.crawler import _locale_key
+    assert _locale_key("https://es.arrk.com") == _locale_key("https://fr.arrk.com")
+    assert _locale_key("https://engineering.arrk.com") != _locale_key("https://es.arrk.com")
+    assert _locale_key("https://composites.arrk.com") != _locale_key("https://engineering.arrk.com")
+
+
+def test_needs_discovery_render_trigger():
+    """Render-for-discovery fires only on link-starved static seeds."""
+    import src.acquire.crawler as crawler
+    trig = crawler._needs_discovery_render
+    on = {"CRAWL_RENDER_FOR_DISCOVERY": True}
+
+    def with_flag(**kw):
+        import unittest.mock as mock
+        with mock.patch.multiple(crawler, **on):
+            return trig(**kw)
+
+    assert with_flag(depth=0, backend="pooled_hybrid_static", n_links=0)
+    assert with_flag(depth=0, backend="pooled_hybrid_static", n_links=2)
+    # Enough links: no render.
+    assert not with_flag(depth=0, backend="pooled_hybrid_static", n_links=3)
+    # Deep pages: never.
+    assert not with_flag(depth=1, backend="pooled_hybrid_static", n_links=0)
+    # Rendered / cache / unknown backends: no basis or no need.
+    assert not with_flag(depth=0, backend="pooled_hybrid_render", n_links=0)
+    assert not with_flag(depth=0, backend="cache", n_links=0)
+    assert not with_flag(depth=0, backend=None, n_links=0)
+    # Flag off (default): never fires regardless.
+    assert not trig(depth=0, backend="pooled_hybrid_static", n_links=0) or crawler.CRAWL_RENDER_FOR_DISCOVERY

@@ -163,6 +163,29 @@ CRAWL_STRATEGY = os.getenv("CRAWL_STRATEGY", "bfs")  # "bfs" | "best_first"
 # pattern-based rule, no site list. Set False for before/after comparison runs.
 CRAWL_LOCALE_DEDUP = True
 
+# --- Link-discovery starvation fixes (2026-07-29 Arrk/Automatic diagnosis) ---
+
+# Crawl scope: "host" keeps the historical behaviour (candidate must share the
+# seed's exact host, www-stripped). "site" widens to the registered domain, so
+# a hub homepage that delegates content to its own subdomains stays crawlable
+# (arrk.com -> engineering.arrk.com / asia.arrk.com; 46 of Arrk's 56 homepage
+# links were own-subdomain and ALL were discarded under "host" — 2 pages
+# fetched, 9 GT misses). Off by default pending validation: widening scope
+# changes crawl behaviour, so the locked plant-milk benchmark and an ADLM
+# sample must be re-validated before this becomes the default.
+CRAWL_SCOPE = os.getenv("CRAWL_SCOPE", "host")  # "host" | "site"
+
+# Render-for-discovery: the hybrid fetcher renders only when the static fetch
+# fails the quality gate — so a seed whose TEXT is fine but whose nav menu is
+# JS-injected (automatic.com.hk prints its menu from printHeader.js) passes
+# the gate and the crawl never sees the menu (3 pages fetched, 8 GT misses).
+# When enabled, a statically-fetched SEED page whose link discovery yields
+# fewer than CRAWL_DISCOVERY_MIN_LINKS candidates is rendered once and
+# discovery re-runs on the rendered DOM (union). Depth-0 only: one render per
+# starved seed, politeness handled by the pooled renderer's per-domain gate.
+CRAWL_RENDER_FOR_DISCOVERY = os.getenv("CRAWL_RENDER_FOR_DISCOVERY", "false").lower() == "true"
+CRAWL_DISCOVERY_MIN_LINKS = 3
+
 # --- Relevance scorer ---
 
 # Baseline preserves the current production scorer. Experimental is opt-in for

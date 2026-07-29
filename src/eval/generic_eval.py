@@ -554,6 +554,27 @@ def read_pipeline_matrix(filepath: str) -> list[AIRow]:
     return rows
 
 
+def read_run_entities(filepath: str) -> Optional[set[str]]:
+    """The set of entities this run ATTEMPTED (normalised), from the Matrix
+    sheet's entity rows (falling back to Summary). Every attempted entity has
+    a row there even when all its cells are empty — which is what makes
+    "attempted but empty" (scores FN) distinguishable from "not in the run"
+    (unmeasured; see evaluate()'s mirror scoping). None if neither sheet
+    exists (old/partial workbooks): mirror scoping is then skipped."""
+    xls = pd.ExcelFile(filepath)
+    for name in ("matrix", "summary"):
+        sheet = next((s for s in xls.sheet_names if s.lower() == name), None)
+        if sheet is None:
+            continue
+        df = pd.read_excel(xls, sheet_name=sheet)
+        ent_col = next((c for c in df.columns if _norm(str(c)) == "entity"),
+                       df.columns[0])
+        entities = {_norm(_clean(v)) for v in df[ent_col] if _clean(v)}
+        if entities:
+            return entities
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Dedup AI claims per cell (keep best provenance per normalised value)
 # ---------------------------------------------------------------------------
@@ -777,6 +798,7 @@ def evaluate(
     ai: list[AIRow],
     semantic: bool = True,
     semantic_backend: str = "cross-encoder",
+    run_entities: Optional[set[str]] = None,
 ) -> EvalResult:
     # PARTIAL-GT SCOPING (2026-07-24): score only entities the GT covers.
     # With a partially-filled GT (e.g. an analyst answered 5 of 69 rows),
@@ -790,6 +812,22 @@ def evaluate(
         ai = [a for a in ai if a.entity_norm in gt_entities]
         print(f"  [partial GT] {len(ai_uncovered)} pipeline entities have no GT "
               f"rows and are excluded from scoring (unmeasured, not wrong)")
+
+    # MIRROR SCOPING (2026-07-29): drop GT entities the RUN never attempted.
+    # A 2-entity diagnostic run scored against a 5-entity GT counted the 3
+    # absent entities' GT rows as pure FN (starved-2 re-crawl scoring). Not
+    # attempted = unmeasured — distinct from attempted-but-empty, which keeps
+    # its rows (a Matrix row of "No data found" cells) and rightly scores FN.
+    # run_entities comes from the workbook itself (Matrix rows / Summary
+    # sheet), never inferred from claim presence, exactly to preserve that
+    # distinction.
+    if run_entities is not None:
+        gt_not_run = {g.entity for g in gt if g.entity_norm not in run_entities}
+        if gt_not_run:
+            gt = [g for g in gt if g.entity_norm in run_entities]
+            print(f"  [partial run] {len(gt_not_run)} GT entities are not in this "
+                  f"run and are excluded from scoring (not attempted, not missed): "
+                  f"{sorted(gt_not_run)}")
 
     # Build the semantic scorer ONCE for the whole run (for the embedding
     # backend that means one Ollama batch, then O(1) lookups during
@@ -1105,7 +1143,8 @@ def main() -> None:
     print(f"Loaded  : {len(gt)} GT rows, {len(ai)} AI claims")
 
     result = evaluate(gt, ai, semantic=not args.no_semantic,
-                      semantic_backend=args.semantic_backend)
+                      semantic_backend=args.semantic_backend,
+                      run_entities=read_run_entities(args.pipeline_output))
     print_report(result, verbose=args.verbose)
 
     if args.output:

@@ -5,6 +5,22 @@
 
 -----
 
+## 2026-07-29 — v3 INSTRUCTIONS ARM BUILT (norm-specific Y/N guidance, replay-pinned) — PRE-REGISTERED EXPECTATIONS, written before the run
+
+**Context:** the instructions experiment, aimed by the NLI join at the assert-vs-not-disclosed class. `scripts/build_cmo_input_v3.py` composes `build_replay_input` (baseline page set pinned at depth 0, gate_failed pages KEPT for parity with the 07-23 rescue behaviour; 79 pages / 5 GT entities) and patches the 9 Y/N questions' shared guidance v2→v3. v3 adds exactly two rules to the same norm: (1) an evidence bar for Yes (menu label / category name / marketing phrase insufficient); (2) implied No must rest on stated FACTS, not focus/specialization wording. Prose/numeric questions untouched. Caitlin's template untouched (v3 aligns the tool with the analyst's revealed interpretation). Extract cache key contains instruction text, so v3 re-extracts while fetches stay cache-served; the baseline needs no re-run (a v2 replay would reproduce it from the extract cache by construction).
+
+**PRE-REGISTERED EXPECTATIONS (before any v3 run):**
+1. The 3 low-support weak-evidence Yes cells FLIP to Not disclosed → null_match: Adapt low-volumes Yes (0.000), Avenue NPI Yes (0.001), Asteelflash EOL Yes (0.012).
+2. The focus-based No cells FLIP to Not disclosed: Avenue PCB No, Avenue EOL No ("focuses exclusively on plastic injection moulding").
+3. Facts-based No SURVIVES: exclusively-China stays 5/5 (its inference is stated-facts); Asteelflash low-volumes No stays No (1.5M/day is a stated fact) and remains a GT miss — accepted residual, the norm boundary is genuinely fuzzy there.
+4. The supported-but-disputed Yes cells (Adapt systems-integration 0.924 / plastic-moulding 0.987, Avenue EOL-Yes 0.941) are the informative middle: if v3's evidence bar flips them, the norm was the whole story; if they persist, the residual is irreducible judgment disagreement.
+5. NET: matrix single-answer F1 rises from 0.560 (the ~19-cell assert-vs-ND class shrinks by ≥5 cells); watch for OVER-CORRECTION — genuine strong-evidence Yes TPs (e.g. Asteelflash EOL-adjacent capabilities with 0.98 support) turning timid ND = recall loss, which would count AGAINST v3.
+6. Confound acknowledged: single-run A/B over the measured Azure noise floor (0.656 value-Jaccard; Y/N cells were the stabler subset). Cell flips that match the predicted DIRECTION on the predicted CELLS are the evidence, not the raw F1 delta alone.
+
+**Laptop procedure:** git pull → `python scripts/build_cmo_input_v3.py --baseline outputs/cmo_output_v2_FULL_baseline_2026-07-24.xlsx` → `python main.py` (input `cmo-inputs/cmo_input_v3_replay.xlsx`, output name `cmo_output_v3_gt5_<date>.xlsx`) → score with generic_eval vs the same converted GT → compare to `outputs/cmo_eval_matrix.xlsx`.
+
+-----
+
 ## 2026-07-29 — NLI support-vs-eval-errors join REFUTES the verify tier as an error predictor: the assert-vs-not-disclosed boundary is a disclosure-standard norm, not an entailment gap; the fix lives in the instructions experiment
 
 **Context:** the join queued by the 07-24 GT-scoring entry — does low NLI quote-support predict the eval's measured errors? New permanent tool `diagnostics/nli_errors_join.py` (expectations pre-registered in the docstring before the first run); `nli_quote_support.py` gained `--entities` to score a GT subset of a big run. Data: 318 baseline claims for Caitlin's 5 entities scored with nli-deberta-v3-base `--context-premise`, joined to `cmo_eval_matrix.xlsx` Detail (115 of 129 answers matched a claim; 14 no-claim gaps counted).

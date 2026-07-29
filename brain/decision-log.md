@@ -5,6 +5,20 @@
 
 -----
 
+## 2026-07-29 — Semantic chunking REJECTED for now: seam-exposure diagnostic on the frozen CMO baseline shows fixed 8000/200 chunking is implicated in at most 1 of 28 GT misses; big-page problem is junk URLs, not seams
+
+**Context:** question raised whether the extract layer's chunking (fixed 8,000-char windows, 200-char overlap, `_chunk_text` in src/extract.py) loses facts at chunk seams, and whether semantic (embedding-boundary) chunking is worth building. Diagnostic ran on the frozen baseline `cmo_output_v2_FULL_baseline_2026-07-24.xlsx` (Acquire Log page lengths × eval FNs from `outputs/cmo_eval_matrix.xlsx`).
+
+**Measured:** 1,564 fetched pages — median 2,594 chars, only 162 (10.4%) exceed one chunk, and 138 of those are exactly 2 chunks (single seam, overlap-protected). Cross-referencing the 28 GT false negatives: Arrk (9 FN) and Automatic (8 FN) had ZERO multi-chunk pages (2 and 3 pages fetched — pure acquire starvation); the Adapt/Asteelflash/Avenue FNs are dominated by the assert-vs-not-disclosed judgment class. The entire chunk-seam exposure across all 28 misses is ONE Asteelflash cell whose about-us page was 8,913 chars (= 2 chunks), unproven even there. Any chunking A/B is also undetectable under the measured 0.656-Jaccard Azure extraction noise floor.
+
+**Generalizability caveat (the Oatly objection):** this exonerates chunking on the CMO corpus, not universally — content-rich giant pages (Oatly sustainability report, 113 KB = 15 chunks / 14 seams) are a regime CMO never samples. Counter-evidence there: the locked plant-milk 102-claim benchmark was built on this exact chunker and passes. If a future domain is seam-heavy, the measure-first move is a seam-exposure audit (locate Provenance verbatim quotes in cached page text, flag quotes straddling seams beyond the overlap) — cheap, deterministic, no LLM; boundary-snapping to sentence/paragraph breaks is the fix it would justify, NOT embedding-based chunking (extract-cache churn, new dependency, no measured failure).
+
+**Bonus finding → junk-path blocklist queued:** the pathological pages are boilerplate, not content — Sanmina privacy policy 234K chars (30 chunks = 30 Azure calls), German AGB pages, data-protection/cookie/ToS pages; Avenue's only multi-chunk pages were the nolato.com path-scope-escape contamination. A crawl-time URL-path blocklist (privacy|terms|agb|data-protection|cookie|whistleblowing...) is path-semantics not size-based (Oatly-safe), saves real extract cost, near-zero recall risk. Matches the baseline mid-run review's "no junk-path patterns" item.
+
+**Decision:** no chunking change; semantic chunking closed unless a seam-exposure audit on a new domain reopens it. Junk-path blocklist promoted to the build queue.
+
+-----
+
 ## 2026-07-24 — FIRST GT SCORING of the frozen CMO baseline (Caitlin's 5 entities): Matrix F1 0.611 / recall 0.733; misses split cleanly into acquire-starvation and the assert-vs-not-disclosed judgment boundary
 
 **Setup:** frozen baseline `cmo_output_v2_FULL_baseline_2026-07-24.xlsx` (69 entities, 41m10s, fresh cache) scored against Caitlin's analyst GT (5 fully-answered rows: Adapt EMS, Arrk, Asteelflash, Automatic Manufacturing, Avenue Mould; website-only scope; clean format — consistent Not-disclosed markers, newline lists, 2 honest blanks). `gt_convert` verified: 105 flat rows, blank acquirer + independent=Yes → n/a sentinel by design; blank cells skipped as not-assessed. CE matcher decisive, both new normalizations live.

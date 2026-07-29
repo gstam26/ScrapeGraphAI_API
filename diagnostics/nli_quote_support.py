@@ -135,9 +135,20 @@ def main() -> None:
                          "tests whether run-1 failures are missing premise "
                          "context (fragments, we/the-company coreference) "
                          "rather than entailment itself")
+    ap.add_argument("--entities", nargs="+", default=None,
+                    help="score only these entities (substring match, "
+                         "case-insensitive) — e.g. the GT-covered subset of "
+                         "a big run instead of all its claims")
     ns = ap.parse_args()
 
     prov = pd.read_excel(ns.workbook, "Provenance")
+    if ns.entities:
+        wanted = [e.lower() for e in ns.entities]
+        mask = prov["Entity"].astype(str).str.lower().apply(
+            lambda name: any(w in name for w in wanted))
+        print(f"entity filter: {sorted(prov[mask]['Entity'].unique())} "
+              f"({mask.sum()}/{len(prov)} claims)")
+        prov = prov[mask]
     rows = prov.dropna(subset=["Verbatim Quote"]).copy()
     rows["Verbatim Quote"] = rows["Verbatim Quote"].astype(str)
     rows["Claim"] = rows["Claim"].astype(str)

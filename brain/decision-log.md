@@ -5,6 +5,18 @@
 
 -----
 
+## 2026-07-29 — NLI support-vs-eval-errors join REFUTES the verify tier as an error predictor: the assert-vs-not-disclosed boundary is a disclosure-standard norm, not an entailment gap; the fix lives in the instructions experiment
+
+**Context:** the join queued by the 07-24 GT-scoring entry — does low NLI quote-support predict the eval's measured errors? New permanent tool `diagnostics/nli_errors_join.py` (expectations pre-registered in the docstring before the first run); `nli_quote_support.py` gained `--entities` to score a GT subset of a big run. Data: 318 baseline claims for Caitlin's 5 entities scored with nli-deberta-v3-base `--context-premise`, joined to `cmo_eval_matrix.xlsx` Detail (115 of 129 answers matched a claim; 14 no-claim gaps counted).
+
+**Headline: REFUTED at eval grain.** AUC 0.535 all / 0.514 non-prose — support does not separate TP from FP; both classes are support-bimodal (TP median 0.979, FP median 0.987). The assert-vs-not-disclosed FPs split 3 low / 7 HIGH: the low tail is the weak menu-label class (Adapt low-volumes Yes 0.000, Avenue NPI Yes 0.001, Asteelflash EOL Yes 0.012 — exactly what e2a run 2 separated), but the majority are textually well-supported assertions — "Avenue Mould focuses exclusively on plastic injection moulding" genuinely entails PCB-No at 1.000, while the GT says Not-disclosed under Caitlin's tie→Not-disclosed guidance. **The disagreement is about what evidence licenses asserting Yes/No (a disclosure-standard norm), not whether the quote supports the assertion — no support scorer can arbitrate a norm.** One eval-plumbing find en route: Detail splits an assert-on-null cell into auto_miss (GT side) + ai_only (assertion side), so the FP rows never carry the "not disclosed" marker — the join identifies GT-null cells first (fixed in the tool).
+
+**What survives:** e2a's within-question strong-vs-weak-evidence separation is real but measures evidence QUALITY, not GT agreement. The NLI tier's honest role remains annotate-only evidence-strength flagging (per the 2026-06-24 contract it was never going to gate); its calibration labelling is now LOWER priority — it will not move the GT F1. Also re-confirmed: acquirer-template wording failure ("Asteelflash was acquired by USI." scores 0.000 vs the "acquired or absorbed" hypothesis — template fix, known 07-24 class) puts real TPs in the low tail, an over-flag risk if anything ever gated on support.
+
+**Decision:** verify-tier NLI work deprioritised. The assert-vs-not-disclosed miss class (~9 FN + ~10 FP on 5 entities) is a decision-rule alignment problem: encode the GT guidance's "No needs positive evidence; tie → Not disclosed" norm in the extraction instructions — which is precisely the already-planned instructions experiment. That experiment is now the highest-value lever on the measured error classes (the other class, acquire starvation, is seed-quality).
+
+-----
+
 ## 2026-07-29 — Semantic chunking REJECTED for now: seam-exposure diagnostic on the frozen CMO baseline shows fixed 8000/200 chunking is implicated in at most 1 of 28 GT misses; big-page problem is junk URLs, not seams
 
 **Context:** question raised whether the extract layer's chunking (fixed 8,000-char windows, 200-char overlap, `_chunk_text` in src/extract.py) loses facts at chunk seams, and whether semantic (embedding-boundary) chunking is worth building. Diagnostic ran on the frozen baseline `cmo_output_v2_FULL_baseline_2026-07-24.xlsx` (Acquire Log page lengths × eval FNs from `outputs/cmo_eval_matrix.xlsx`).

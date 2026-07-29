@@ -417,9 +417,12 @@ def test_needs_discovery_render_trigger():
     assert not with_flag(depth=0, backend="pooled_hybrid_static", n_links=3)
     # Deep pages: never.
     assert not with_flag(depth=1, backend="pooled_hybrid_static", n_links=0)
-    # Rendered / cache / unknown backends: no basis or no need.
+    # Cache hits count as static: cached pages carry no HTML, discovery fell
+    # back to a live static fetch — the 2026-07-29 Automatic re-test proved
+    # excluding them preserves the blind spot on every warm-cache run.
+    assert with_flag(depth=0, backend="cache", n_links=0)
+    # Rendered / unknown backends: nav links already exposed, or no basis.
     assert not with_flag(depth=0, backend="pooled_hybrid_render", n_links=0)
-    assert not with_flag(depth=0, backend="cache", n_links=0)
     assert not with_flag(depth=0, backend=None, n_links=0)
     # Flag off (default): never fires regardless.
     assert not trig(depth=0, backend="pooled_hybrid_static", n_links=0) or crawler.CRAWL_RENDER_FOR_DISCOVERY

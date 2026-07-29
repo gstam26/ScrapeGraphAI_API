@@ -328,19 +328,21 @@ def _discover_links(
 
 
 def _needs_discovery_render(depth: int, backend: str | None, n_links: int) -> bool:
-    """Seed page, statically fetched, link-starved -> render once for links.
+    """Seed page, not already rendered, link-starved -> render once for links.
 
     Depth-0 only by design: a starved SEED strands the whole entity (the
-    Automatic mechanism), while a starved deep page costs one leaf. Cache hits
-    (backend="cache") are excluded — no HTML to compare and the original
-    backend is unknown; rendered-page and Firecrawl fetches already expose
-    their nav links.
+    Automatic mechanism), while a starved deep page costs one leaf. Cache
+    hits count as static: cached pages carry no HTML, so discovery already
+    fell back to a live static fetch — excluding them (the first cut of this
+    trigger) silently preserved the blind spot on every warm-cache run, which
+    is exactly how the 2026-07-29 Automatic re-test failed to fire. Rendered
+    and Firecrawl fetches are excluded: their HTML already exposes nav links.
     """
     return (
         CRAWL_RENDER_FOR_DISCOVERY
         and depth == 0
         and backend is not None
-        and backend.endswith("static")
+        and (backend == "cache" or backend.endswith("static"))
         and n_links < CRAWL_DISCOVERY_MIN_LINKS
     )
 

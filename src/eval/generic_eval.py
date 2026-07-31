@@ -161,7 +161,7 @@ class CellResult:
     gt_pairs: list[PairResult]
     ai_only: list[AIRow]              # AI claims not matched to any GT (FP)
     redundant: list[AIRow] = field(default_factory=list)  # restatements of a credited claim (not FP)
-    suppressed_nulls: list[AIRow] = field(default_factory=list)  # page-local "Not disclosed" beside a substantive answer (not FP, not matched)
+    suppressed_nulls: list[AIRow] = field(default_factory=list)  # "Not disclosed" claims: abstentions, never FP, never matched
 
 
 @dataclass
@@ -772,10 +772,18 @@ def _align_cell(
         if j in used_ai:
             continue
         (redundant if _is_restatement(a) else ai_only).append(a)
-    # AI null claims that don't match any GT null are also precision-side
+    # AI null claims left over after GT-null matching are ABSTENTIONS, not
+    # false claims (2026-07-31). "None (not disclosed)" asserts nothing, so it
+    # cannot be wrong on the precision side; when GT holds a real value the
+    # miss is already charged as FN through the unmatched-gt_real path above.
+    # Counting it again here billed one behaviour twice — and billed the
+    # HONEST behaviour, inverting the incentive the whole pipeline is built
+    # on (abstain rather than infer). Found scoring the starved-2 render arm:
+    # 3 of 21 FPs there, 6 of 22 in its control. Suppressed rather than
+    # dropped, so every one stays auditable as `suppressed_null` in Detail.
     for j, a in enumerate(ai_null):
         if j not in used_null_ai:
-            ai_only.append(a)
+            suppressed_nulls.append(a)
 
     # NOTE: cells where GT is null but AI extracted real claims need no extra
     # handling — the leftover loop above already counts every unmatched real
@@ -1014,9 +1022,9 @@ def print_report(result: EvalResult, verbose: bool = False) -> None:
         print(f"  ({o['redundant_dropped']} AI claim(s) dropped as redundant "
               f"restatements of a credited claim — not counted as hallucination)")
     if o.get("suppressed_nulls"):
-        print(f"  ({o['suppressed_nulls']} page-local 'Not disclosed' claim(s) "
-              f"suppressed in cells that also carry a substantive answer — "
-              f"not counted as hallucination)")
+        print(f"  ({o['suppressed_nulls']} 'Not disclosed' claim(s) suppressed — "
+              f"an abstention asserts nothing, so it is never a hallucination; "
+              f"any GT answer it failed to find is still charged as a miss)")
 
     if verbose:
         print()

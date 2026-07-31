@@ -296,6 +296,24 @@ def test_only_null_claims_still_null_match():
     print("OK test_only_null_claims_still_null_match passed")
 
 
+def test_abstention_is_a_miss_but_never_a_hallucination():
+    # The tool answers "Not disclosed" for a question GT does answer. That is
+    # a miss (FN) — and ONLY a miss. An abstention asserts nothing, so it
+    # cannot be a false positive; billing it on both sides punishes the tool
+    # twice for the honest behaviour the pipeline is designed to prefer.
+    # (Found scoring the starved-2 render arm, 2026-07-31: Automatic's
+    # systems-integration cell, GT "Yes" vs a lone "None (not disclosed)".)
+    gt = [_gt("Acme", "Does the company have systems integration capability?",
+              "Yes")]
+    ai = [_ai("Acme", "Does the company have systems integration capability?",
+              "None (not disclosed)")]
+    r = evaluate(gt, ai, semantic=False)
+    assert r.overall["FN"] == 1
+    assert r.overall["FP"] == 0
+    assert r.overall["suppressed_nulls"] == 1
+    print("OK test_abstention_is_a_miss_but_never_a_hallucination passed")
+
+
 def test_suppression_makes_gt_null_a_genuine_miss():
     # GT says not-disclosed but the tool's displayed verdict is a substantive
     # "Yes": the Yes is the answer being graded (FP), and the page-local null

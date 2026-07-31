@@ -5,6 +5,31 @@
 
 -----
 
+## 2026-07-31 (late) — EVAL BUG 3 FIXED: an abstention is a miss, never a hallucination
+
+**Context:** found while scoring the render arm (entry below). When the tool's only claim in a cell is `None (not disclosed)` and GT holds a real value, the cell scored **FN + FP** — the miss was right, but an explicit refusal to answer was billed as a fabricated claim. The 07-22 page-local suppression rule only fired when a substantive claim sat beside the null (`if ai_real and ai_null`), so a cell whose sole claim was an abstention fell straight through to the precision side.
+
+**Options considered:**
+1. Leave it — abstaining when the answer was findable is a real failure, so let it cost twice.
+2. Drop unmatched null claims entirely (silent).
+3. Route them to the existing `suppressed_nulls` channel — not FP, still surfaced.
+
+**Decision: option 3.** One behaviour should be charged once. The miss is already charged as FN through the unmatched-`gt_real` path; precision asks "of what the tool *asserted*, how much was wrong", and an abstention asserts nothing. Option 1 also inverts the incentive the whole pipeline is built on — abstain rather than infer ([[the infer-instead-of-null work]]): a scorer that treats "not disclosed" as equivalent to a fabricated answer rewards guessing. Option 2 was rejected on the standing rule that no credit or exemption is silent — every suppression stays auditable as `suppressed_null` in the Detail sheet and in the report line.
+
+**Result — both arms re-scored under the corrected ruler:**
+
+| | control (pre-fix crawl) | render arm |
+|---|---|---|
+| old ruler F1 | 0.634 | 0.705 |
+| **corrected ruler F1** | **0.674** | **0.726** |
+| corrected TP / FN / FP | 32 / 15 / 16 | 37 / 10 / 18 |
+
+The control is recomputed exactly from its own Detail sheet by reclassifying its 6 abstention-FPs — the code change touches nothing but that bucket, so TP and FN are untouched and the reclassification is arithmetic, not an estimate. **The gain NARROWS, +0.071 → +0.052**, because the control carried twice as many abstention-FPs as the render arm and therefore benefits more from the correction. The starvation result holds comfortably either way. Suite 288.
+
+**Not re-baselined:** the frozen 69-entity baseline (combined 0.595 / single 0.537 after the 07-29 corrections) still carries abstention-FPs and would move UP under this ruler. Re-scoring it needs no pipeline re-run, only the frozen workbook — flagged for George rather than done unilaterally, since it moves a published headline a third time.
+
+-----
+
 ## 2026-07-31 (evening) — AUTOMATIC ARM FIRED AND SCORED: the starvation lever is CONFIRMED, with Arrk as a byte-identical control; a third eval bug found (abstentions counted as hallucinations)
 
 **Run:** laptop, warm cache, `CRAWL_SCOPE=site CRAWL_RENDER_FOR_DISCOVERY=true`, output `cmo_output_starved2_20260731_render.xlsx` (46s). The trigger fired on the warm-cache leg exactly as the probe predicted — `Link discovery starved (2 new links, static seed)` — and Automatic went **3 → 8 pages**, picking up AboutUs/Division/News/Career/Index. Pre-registered prediction (3pp → ~8-9pp) landed. *(A first attempt earlier the same day ran against un-pulled code — the fix was committed but not pushed — and reproduced the pre-fix behaviour exactly: 3 pages, no trigger line. Kept as a same-day control.)*
@@ -13,15 +38,19 @@
 
 | | control 07-29 | render 07-31 |
 |---|---|---|
-| TP / FN / FP | 64 / 30 / 44 | **74 / 20 / 42** |
+| TP / FN / FP | 32 / 15 / 22 | **37 / 10 / 21** |
 | combined P / R / F1 | 0.593 / 0.681 / 0.634 | **0.638 / 0.787 / 0.705** |
 | single-answer F1 | — | 0.615 |
+
+*(Counts read from the Summary sheet's OVERALL row. Summing that sheet's rows double-counts — it carries per-question rows AND an OVERALL row; the F1s are unaffected, being scale-invariant ratios.)*
 
 **Arrk's verdict counts are IDENTICAL across the two runs** (20 auto_match / 7 auto_miss / 14 ai_only / 7 redundant / 1 semantic_review) — every Arrk page was a cache hit, so even Azure nondeterminism was held out. The whole delta is Automatic: **auto_match 7 → 12, auto_miss 8 → 3**. `Division.html` delivered the manufacturing-country answers — **China + Thailand + Vietnam all matched**, the list question going to R=1.000 — and `AboutUs.html` (the page the JS nav was hiding) supplied independence=Yes, plastic moulding=Yes and tooling=Yes.
 
 **Automatic's 3 residual misses:** systems integration (GT Yes, tool abstained), employees 670 (never on the site), and typical production volume — where the GT value is *"Over 25,000 square meter manufacturing facility"*, a floor area answering a volume question. **That third one is a GT-side item for Caitlin, not a tool miss.**
 
-**EVAL BUG 3 — abstentions scored as hallucinations (found, NOT fixed; flagged for decision).** When the tool answers `None (not disclosed)` and GT holds a real value, the cell scores **FN + FP**: the miss is right, but an explicit refusal to answer is counted as a fabricated claim. The 07-22 suppression rule only fires when a substantive claim sits beside the null (`if ai_real and ai_null`), so a cell whose ONLY claim is an abstention falls through. Affects 3 of 21 FPs in this run and 6 of 22 in the control — i.e. the control was penalised harder, so **fixing it would widen the measured gain, not narrow it**. Same species as the two bugs found 07-29: the ruler, not the pipeline. Not fixed unilaterally because it moves published headline numbers a third time; George decides whether to re-baseline.
+**EVAL BUG 3 — abstentions scored as hallucinations (found, NOT fixed; flagged for decision).** When the tool answers `None (not disclosed)` and GT holds a real value, the cell scores **FN + FP**: the miss is right, but an explicit refusal to answer is counted as a fabricated claim. The 07-22 suppression rule only fires when a substantive claim sits beside the null (`if ai_real and ai_null`), so a cell whose ONLY claim is an abstention falls through. Affects 3 of 21 FPs in this run and 6 of 22 in the control. Same species as the two bugs found 07-29: the ruler, not the pipeline. **FIXED same day at George's direction — see the entry above.**
+
+*(Correction: this entry first claimed fixing it would WIDEN the measured gain. That was backwards. The control carried MORE abstention-FPs (6 vs 3), so the correction helps the control more — precision 0.593→0.667 there against 0.638→0.673 here — and the gap NARROWS: +0.071 → +0.052. The starvation result survives comfortably either way, but the direction was stated wrong and the measured numbers are in the entry above.)*
 
 **Also checked and dismissed:** the doubled `Azure extracting: AboutUs.html` line is ordinary chunking (12,879 chars vs `EXTRACT_CHUNK_SIZE=8000`), one Extract Log row, 13 items — not duplicate work.
 

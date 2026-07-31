@@ -330,6 +330,10 @@ def _discover_links(
 def _needs_discovery_render(depth: int, backend: str | None, n_links: int) -> bool:
     """Seed page, not already rendered, link-starved -> render once for links.
 
+    `n_links` must be the count of NOVEL candidates (not yet visited) — a
+    self-link or a link back to an already-fetched page grows the raw count
+    without growing the frontier. See the call site.
+
     Depth-0 only by design: a starved SEED strands the whole entity (the
     Automatic mechanism), while a starved deep page costs one leaf. Cache
     hits count as static: cached pages carry no HTML, so discovery already
@@ -508,14 +512,22 @@ def crawl_entity(
             cfg=cfg,
         )
 
-        if _needs_discovery_render(current.depth, page.backend, len(child_links)):
+        # Starvation is about links the crawler can actually FOLLOW. A seed
+        # that links to itself (automatic.com.hk's logo -> Index.html) or back
+        # to a page already fetched adds nothing to the frontier, so counting
+        # RAW discovered links overstates how much the seed offers: Automatic's
+        # 2 real candidates + 1 self-link read as 3 and missed the
+        # < CRAWL_DISCOVERY_MIN_LINKS trigger entirely (2026-07-31 probe).
+        n_novel = sum(1 for c in child_links if c.url not in visited)
+
+        if _needs_discovery_render(current.depth, page.backend, n_novel):
             # Static text passed the quality gate, so the hybrid never
             # rendered — but a JS-injected nav menu (automatic.com.hk's
             # printHeader.js) is invisible to static link discovery. One
             # render, discovery re-run on the rendered DOM, results merged.
             try:
                 from src.acquire.fetcher import _render_page_html
-                print(f"    Link discovery starved ({len(child_links)} links, "
+                print(f"    Link discovery starved ({n_novel} new links, "
                       f"static seed) — rendering for discovery: {current.url}")
                 rendered_html = _render_page_html(current.url, cfg)
                 seen_urls = {c.url for c in child_links}

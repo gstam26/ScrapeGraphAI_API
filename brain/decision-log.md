@@ -5,6 +5,36 @@
 
 -----
 
+## 2026-07-31 — SECOND BUG IN THE SAME TRIGGER: render-for-discovery counted RAW links, not novel ones — the cache fix alone would NOT have made the Automatic arm fire
+
+**Context:** the 07-29 re-test failed because cache-hit seeds were excluded from the render trigger (fixed 4bedb0e). Before spending a laptop pipeline run on the re-test, the trigger was re-verified live at the crawler layer alone — no Azure, no extraction (new permanent tool `diagnostics/discovery_probe.py`: fetches a seed cold then warm against the same cache dir and reports backend / candidate count / whether the render fired). The warm leg is the regression guard for 4bedb0e; the script exits 1 if any seed fires cold-only.
+
+**What the probe found:** on `http://www.automatic.com.hk/` the trigger still did **not** fire — cold *or* warm. Static discovery returns **3 raw links**, and `CRAWL_DISCOVERY_MIN_LINKS = 3` tests `n_links < 3`. But one of those three is the homepage's own logo self-link back to the seed, which `crawl_entity` had already added to `visited` before discovery ran. Two followable candidates (Awards.html, Contact.php) were reading as three.
+
+**Options considered:**
+1. Raise `CRAWL_DISCOVERY_MIN_LINKS` to 4 — makes Automatic fire, but tunes a magic number to one site and would fire the render on genuinely-healthy 3-link seeds.
+2. Count starvation on NOVEL candidates (not already visited) — the number the trigger's own docstring meant.
+3. Drop self-links in `_discover_links` globally.
+
+**Decision: option 2.** `n_novel = sum(1 for c in child_links if c.url not in visited)` at the call site; `_needs_discovery_render` documented as taking novel candidates; the starved-seed log line now reports new links. Option 3 was rejected as a wider blast radius for no extra benefit — the visited-set filter one line below already discards self-links for frontier purposes, so this only aligns the *measurement* with what the crawler actually does with them.
+
+**Why it matters beyond Automatic:** "how many links does this page offer" was being measured against the raw DOM rather than the frontier. Any seed whose nav is a logo-plus-two-links (common on small manufacturer sites — exactly this cohort) sat one phantom link above the starvation bar. The bug was invisible to the unit test because that test exercised the predicate directly with hand-passed counts; it needed a live page to surface. Both bugs are the same species: **the trigger was tested in isolation and never against a real starved seed end-to-end.**
+
+**Result — both fixes now live-verified on Dell (site scope, render-for-discovery on):**
+
+| seed | leg | backend | static (novel) | fired | total |
+|---|---|---|---|---|---|
+| automatic.com.hk | cold | pooled_hybrid_static | 2 | **True** | **7** |
+| automatic.com.hk | warm | cache | 2 | **True** | **7** |
+| arrk.com | cold | pooled_hybrid_static | 14 | False | 14 |
+| arrk.com | warm | cache | 14 | False | 14 |
+
+Automatic 2 → 7 candidates including AboutUs.html, **Division.html (the GT Vietnam answer)**, News.html, Career.html — and it now fires on the warm leg, which is what 4bedb0e bought. Arrk correctly does NOT fire (14 candidates under site scope = not starved), confirming the trigger stays off for healthy seeds. Suite 287.
+
+**Still owed:** the actual Automatic pipeline re-run + scoring — needs the work laptop (no Azure key, no CE model, near-empty cache on Dell). Regenerate the 2-entity slice there with `python scripts/build_cmo_gt_sheet.py --entities "Arrk Group,Automatic Manufacturing Ltd"` (writes `cmo-inputs/cmo_input_v2_test.xlsx`; currently holds the stale 4-entity smoke slice), run with `CRAWL_SCOPE=site CRAWL_RENDER_FOR_DISCOVERY=true`, then re-score against `cmo_gt_caitlin.xlsx`. Pre-registered expectation: Automatic 3pp → ~8-9pp; its 8 single-answer FN should drop materially, with Division.html supplying the manufacturing-location answers. Note the Arrk arm's numbers are unaffected by today's fix (it never fired the trigger).
+
+-----
+
 ## 2026-07-29 — STARVED-2 RE-CRAWL RESULT (Arrk arm) + TWO EVAL BUGS the scoring surfaced (typed-binary false credits; missing mirror scoping); Automatic arm pending cache-trigger fix
 
 **Arrk (site scope, live): WORKED, with a plot twist.** 2→10 pages (all subdomains). Substantive matches 14→22, auto_miss 9→6: NPI/systems-integration/tooling all flipped to correct Yes. THE TWIST: the crawl found **Arrk is owned by Mitsui Chemicals** (acquirer named, revenue $10.5B, employees 18,000 extracted) — Caitlin's GT says independent=Yes because the splash site never mentions it. So the eval counts the tool's (real-world-correct) acquisition claims as FP/FN → **2-entity aggregate F1 ~flat (0.625→0.634) while composition shifts from silence-agreements to real answers**. Adjudication item for Caitlin; if GT flips, several FPs become TPs. Residuals: revenue/employees are the KNOWN acquired-entity attribution leak (Mitsui's numbers on Arrk's row); HQ came back Nuneaton-UK not Osaka because the jp.arrk.com pages the budget bought were cookie/privacy junk — junk-path blocklist again.

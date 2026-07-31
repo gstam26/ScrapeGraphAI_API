@@ -426,3 +426,28 @@ def test_needs_discovery_render_trigger():
     assert not with_flag(depth=0, backend=None, n_links=0)
     # Flag off (default): never fires regardless.
     assert not trig(depth=0, backend="pooled_hybrid_static", n_links=0) or crawler.CRAWL_RENDER_FOR_DISCOVERY
+
+
+def test_discovery_starvation_counts_novel_links_only():
+    """Self-links and already-visited URLs must not mask a starved seed.
+
+    automatic.com.hk's homepage discovers 3 raw links — its own logo
+    self-link plus Awards.html and Contact.php. Counted raw that reads as 3
+    and clears CRAWL_DISCOVERY_MIN_LINKS, so the render never fires and the
+    JS-injected nav (AboutUs/Division/News) stays invisible; counted as
+    novel candidates it is 2 and correctly starved (2026-07-31 probe).
+    """
+    import src.acquire.crawler as crawler
+    from src.acquire.acquire_models import LinkCandidate
+
+    seed = "http://www.automatic.com.hk"
+    visited = {seed}
+    child_links = [
+        LinkCandidate(url=seed, anchor_text="", depth=1),
+        LinkCandidate(url=f"{seed}/Awards.html", anchor_text="", depth=1),
+        LinkCandidate(url=f"{seed}/Contact.php", anchor_text="Explore", depth=1),
+    ]
+    n_novel = sum(1 for c in child_links if c.url not in visited)
+    assert len(child_links) == 3
+    assert n_novel == 2
+    assert n_novel < crawler.CRAWL_DISCOVERY_MIN_LINKS

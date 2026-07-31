@@ -5,6 +5,23 @@
 
 -----
 
+## 2026-08-01 (2) — SINGLE-ANSWER DISPLAY DISCIPLINE BUILT (MATRIX_SINGLE_BEST, flag-gated off) + COUNTERFACTUAL PREVIEW: +0.010 F1, P +0.028 / R −0.018; prose cells exempted after the preview caught the confound
+
+**What:** flag-gated Matrix render change (render-time ONLY — Provenance/Grouped Themes/evidence keep every candidate): a single-answer cell with multiple candidates leads with the best one and points at Provenance for the rest (`[+N other candidate(s) — see Provenance]`, marker format already eval-invisible). Lead pick: **verified beats unverified regardless of counts** (the pipeline's core trust ordering), then attestation (how many independent evidence items back the value, fuzzy-matched at aggregate's own _DEDUP_RATIO=85), ties keep ranked-evidence order (deterministic). Conflict line + orange fill SURVIVE — the consultant still sees sources disagreed; the deliverable just answers the question first.
+
+**The preview caught a design flaw before it shipped wrong:** v1 demoted description cells too — but a 3-sentence summary is one COMPOSED answer, not competing candidates, and demoting its sentences fights the prose-cell join (v1 preview: 27 TPs lost, F1 0.551). **Prose cells (any candidate ≥ 80 chars — the same boundary as the summary router and the eval prose grain) are exempt.** v2: 164 cells demote 231 candidates.
+
+**Counterfactual preview on the flags-on run (lead pick recomputed from the workbook's own Provenance — faithful to the render logic; laptop A/B will confirm on the real render):**
+
+| headline-38, prose grain | TP | FN | FP | P | R | F1 |
+|---|---|---|---|---|---|---|
+| as-shipped | 470 | 274 | 512 | 0.479 | 0.632 | 0.545 |
+| single-best v2 (prose-exempt) | 457 | 287 | 445 | **0.507** | 0.614 | **0.555** |
+
+**Honest read:** the metric case is modest (+0.010 F1; 67 FPs removed, 13 TPs lost where attestation ranks a marketing-repeated wrong value above the correct rare one — e.g. the recurring-boilerplate trap). The PRODUCT case is the stronger one: a client asking "Where is HQ?" gets an answer, not a candidate list, with the conflict flag and full evidence one sheet away. Default stays OFF; George decides after seeing the real-render A/B (`$env:MATRIX_SINGLE_BEST="true"` + warm-cache re-run, minutes). Known residual: lead-pick errors are the new error class this introduces — bounded by the 13/457 preview rate. Suite 318.
+
+-----
+
 ## 2026-08-01 — FLAGS-ON 69-ENTITY RUN SCORED: every acquire recovery landed; single-answer F1 0.552→0.568, R 0.583→0.614; combined flat BECAUSE fed giants list their real factories (list-lower-bound, not hallucination)
 
 **Run (laptop, fresh cache, site scope + render-for-discovery + patched seeds):** 1,585 ok pages. Recoveries, pages: Arrk 2→9, Automatic 3→8 (trigger fired in production), Johnson Electric 0→29, Clinipol 0→13, OnCore 30 on neotech.com, Providien 22 on amphenol-cmt.com, **Flextronics 1→31 (site scope cracked the flex.com SPA — unplanned bonus)**. Gaudlitz + KingField remain 0 (bot walls, as predicted). Scored vs gt42, both grains (`outputs/cmo_eval_matrix_flagson{,_prose}.xlsx`).

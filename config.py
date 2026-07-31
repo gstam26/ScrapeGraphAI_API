@@ -258,6 +258,20 @@ BLOCKED_PATH_PATTERNS = (
 # Trade-off recorded: a fact sitting late in a very long legal page is lost.
 EXTRACT_MAX_CHUNKS_BOILERPLATE = 1
 
+# --- Single-answer display discipline (2026-08-01, flag-gated off) ----------
+#
+# A single-answer question gets ONE lead answer in the Matrix. The flags-on
+# 69-run showed the pattern at scale: fed entities answer more and every
+# co-displayed candidate on a single-answer cell ("Hong Kong; Dongguan,
+# China" for one HQ) reads as a competing claim. When enabled, the Matrix
+# leads with the best-attested candidate (verified first, then by how many
+# independent evidence items back it) and points at Provenance for the rest:
+# "[+2 other candidate(s) — see Provenance]". The conflict flag and orange
+# fill REMAIN — the consultant still sees that sources disagreed; the
+# deliverable just answers the question first. Render-time only: Provenance,
+# Grouped Themes and the evidence trail keep every candidate.
+MATRIX_SINGLE_BEST = os.getenv("MATRIX_SINGLE_BEST", "false").lower() == "true"
+
 # --- Relevance scorer ---
 
 # Baseline preserves the current production scorer. Experimental is opt-in for

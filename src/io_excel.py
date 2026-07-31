@@ -6,8 +6,11 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from config import MATRIX_MAX_DISPLAY_ITEMS
+from rapidfuzz import fuzz
+
+from config import MATRIX_MAX_DISPLAY_ITEMS, MATRIX_SINGLE_BEST
 from models import ColumnSpec, PipelineInput, PipelineResult, UrlSpec
+from src.aggregate import _DEDUP_RATIO, _is_list_column
 
 # Excel's hard per-cell character limit; text beyond it is silently truncated
 # by openpyxl/Excel. We clamp below it with an explicit marker instead.
@@ -412,6 +415,34 @@ def _match_type_str(verified: bool, score) -> str:
     return "none"
 
 
+def _attestation(value: str, evidence) -> int:
+    """How many independent evidence items back this display value.
+
+    Mirror of aggregate's fuzzy dedup (_DEDUP_RATIO): an evidence value that
+    aggregate would have merged into this display value counts toward it.
+    """
+    norm_v = " ".join(value.strip().lower().split())
+    count = 0
+    for ev in evidence:
+        ev_str = " ".join(str(ev.value).strip().lower().split()) if ev.value is not None else ""
+        if ev_str and (ev_str == norm_v
+                       or fuzz.token_sort_ratio(ev_str, norm_v) >= _DEDUP_RATIO):
+            count += 1
+    return count
+
+
+def _best_candidate(verified_vals: list[str], unverified_vals: list[str],
+                    evidence) -> str:
+    """Pick the lead answer for a single-answer cell.
+
+    Verified beats unverified regardless of counts (the pipeline's core
+    trust ordering); within a tier, most-attested wins; ties keep first-seen
+    order (deterministic — evidence is ranked upstream).
+    """
+    pool = verified_vals or unverified_vals
+    return max(pool, key=lambda v: (_attestation(v, evidence), -pool.index(v)))
+
+
 def _make_matrix_df(
     result: PipelineResult,
     columns: list[ColumnSpec],
@@ -454,6 +485,27 @@ def _make_matrix_df(
             verified_vals = [v for v in display_vals if ev_verified.get(v, agg_cell.verified)]
             unverified_vals = [v for v in display_vals if not ev_verified.get(v, agg_cell.verified)]
 
+            # Single-answer discipline (flag-gated): one lead answer, the
+            # rest demoted to Provenance. Verified-first, then attestation.
+            # Conflict flag and fill survive below — the consultant still
+            # sees that sources disagreed; the cell just answers first.
+            # PROSE cells are exempt: a multi-sentence description is one
+            # composed answer, not competing candidates (80-char boundary,
+            # same as the summary router and the eval's prose grain).
+            demoted = 0
+            _is_prose_cell = any(len(v) >= 80
+                                 for v in verified_vals + unverified_vals)
+            if (MATRIX_SINGLE_BEST and not _is_list_column(col.instruction)
+                    and not _is_prose_cell
+                    and len(verified_vals) + len(unverified_vals) > 1):
+                best = _best_candidate(verified_vals, unverified_vals,
+                                       agg_cell.evidence)
+                demoted = len(verified_vals) + len(unverified_vals) - 1
+                if best in verified_vals:
+                    verified_vals, unverified_vals = [best], []
+                else:
+                    verified_vals, unverified_vals = [], [best]
+
             # Cap rendered items (verified kept preferentially); everything
             # remains in Provenance and the overflow is stated in the cell.
             hidden = 0
@@ -486,6 +538,8 @@ def _make_matrix_df(
             else:
                 text = "\n".join("- " + v for v in verified_vals)
 
+            if demoted:
+                text += f"\n[+{demoted} other candidate(s) — see Provenance]"
             if hidden:
                 text += f"\n[+{hidden} more items — see Provenance]"
             matrix_row[col.name] = _clamp_cell_text(text)

@@ -5,6 +5,29 @@
 
 -----
 
+## 2026-07-31 (night, 3) — PROSE-CELL GRAIN SHIPPED (opt-in): headline 0.484 → 0.550, all movement on the FP side; seed patch applied; George's decision = no external adjudication, work with what we have
+
+**George's call:** no adjudication email to Caitlin — the Mitsui flip, the Automatic floor-area cell, and the GT-side conventions stay as-is for now. All work below uses only what is already in hand.
+
+**Prose-cell grain (`--prose-cells`, default OFF — headline-number discipline):** a single-answer cell whose GT value is ≥ `PROSE_GT_MIN_CHARS=80` chars is a composed description, not a value. The Matrix reader splits cells on newlines, so the s7 three-sentence summary became 3+ claims against 1 GT sentence — 1 TP + N−1 FP *even when the description was right*. Under `--prose-cells` the AI sentences join into ONE answer and the cell gets ONE verdict; a wrong description costs 1 FP + 1 FN, not N FP. Deliberately narrow: short-value cells (competing HQ variants, Yes/No) and list cells keep item grain — distinct wrong values there are genuinely separate false claims; tests pin both exclusions. Joined cells counted and surfaced (`prose_joined_cells`), never silent.
+
+**Measured on gt42 (frozen baseline, same workbook, only the flag differs):**
+
+| | old grain | prose grain |
+|---|---|---|
+| description question P / F1 | 0.106 / 0.182 | **0.691 / 0.691** |
+| headline-38 TP / FN / FP | 453 / 291 / 676 | 454 / 290 / **453** |
+| headline-38 P / R / F1 | 0.401 / 0.609 / 0.484 | **0.501 / 0.610 / 0.550** |
+| all-42 combined F1 | 0.485 | 0.548 |
+
+TP and FN are essentially unchanged — the fix removes double-billing without manufacturing credit, which is the signature of a legitimate grain correction (contrast: a threshold tweak would move TP). The description question at 0.691 means the summaries were mostly RIGHT; the old ruler read them as 89% hallucination. Artifact: `outputs/cmo_eval_matrix_baseline_gt42_prose.xlsx`. Default stays OFF; flipping it (and thereby restating the headline as 0.550) is George's explicit call.
+
+**Seed patch (`scripts/patch_cmo_seeds_20260731.py`, tracked + idempotent because the workbooks are gitignored per-machine):** OnCore → neotech.com (analyst: neotechcable.com is a cable company), Providien → amphenol-cmt.com. Applied on Dell, `cmo_input_v2.xlsx` regenerated. Flagged NOT patched (no replacement known): Medifiq, KMC Systems, Hans Koch. **Laptop before the next run: `git pull && python scripts/patch_cmo_seeds_20260731.py && python scripts/build_cmo_gt_sheet.py`.**
+
+**Remaining path with what we have:** (1) laptop 69-entity run, flags on, patched seeds — recovers Arrk/Automatic/Johnson Electric/Clinipol + the 2 re-seeded; (2) re-score with and without `--prose-cells`; (3) Gaudlitz/KingField stay access-failure findings (UA policy still open). Suite 296.
+
+-----
+
 ## 2026-07-31 (night, 2) — ZERO-PAGE SEEDS DIAGNOSED (2 transient-recovered, 2 bot walls); CAITLIN'S YELLOW CELLS = 3 WRONG SEEDS + 2 dead; F1 decomposition shows the 0.484 is composite, not tool quality
 
 **Zero-page probe (Dell, live):** the four gate_failed seeds split cleanly:

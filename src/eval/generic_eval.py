@@ -111,6 +111,11 @@ SEMANTIC_MIN = 0.60   # cosine floor for a semantic rescue to be believed
 
 _NULL_SENTINEL = "none (not disclosed)"
 
+# A single-answer cell whose GT value is at least this long is a PROSE answer
+# (a composed description), not a value. 80 chars mirrors the pipeline's own
+# short-value/prose routing boundary (SUMMARY_TAG_MAX_CHARS).
+PROSE_GT_MIN_CHARS = 80
+
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -162,6 +167,7 @@ class CellResult:
     ai_only: list[AIRow]              # AI claims not matched to any GT (FP)
     redundant: list[AIRow] = field(default_factory=list)  # restatements of a credited claim (not FP)
     suppressed_nulls: list[AIRow] = field(default_factory=list)  # "Not disclosed" claims: abstentions, never FP, never matched
+    prose_joined: int = 0             # AI items joined into one answer for a prose cell (0 = grain untouched)
 
 
 @dataclass
@@ -616,6 +622,7 @@ def _align_cell(
     ai_rows: list[AIRow],
     is_list: bool,
     sem=None,
+    prose_cells: bool = False,
 ) -> CellResult:
     entity   = gt_rows[0].entity if gt_rows else (ai_rows[0].entity if ai_rows else "?")
     question = gt_rows[0].question if gt_rows else (ai_rows[0].question if ai_rows else "?")
@@ -647,6 +654,31 @@ def _align_cell(
     if ai_real and ai_null:
         suppressed_nulls = ai_null
         ai_null = []
+
+    # PROSE-CELL GRAIN (2026-07-31, opt-in): a single-answer cell whose GT is
+    # a composed description gets ONE judgement, not one per sentence. The
+    # Matrix reader splits cells on newlines, so the s7 three-sentence summary
+    # became 3+ claims against one GT sentence — every unmatched sentence
+    # billed as a hallucination (236 of 676 FP on the gt42 scoring came from
+    # the description question alone, P=0.106 there). One question, one
+    # answer, one verdict: the AI items are sentences of one answer, joined
+    # before matching. A wrong prose answer now costs 1 FP + 1 FN, not N FP.
+    # Deliberately NARROW: list cells and short-value cells (competing HQ
+    # variants, Yes/No) keep item-level grain — distinct wrong values there
+    # are genuinely separate false claims.
+    prose_joined = 0
+    if (prose_cells and not is_list and len(gt_real) == 1 and len(ai_real) > 1
+            and len(gt_real[0].value.strip()) >= PROSE_GT_MIN_CHARS):
+        prose_joined = len(ai_real)
+        base = ai_real[0]
+        ai_real = [AIRow(
+            entity=base.entity, entity_norm=base.entity_norm,
+            question=base.question, question_norm=base.question_norm,
+            value=" ".join(a.value for a in ai_real),
+            quote=" ".join(a.quote for a in ai_real if a.quote),
+            verified=all(a.verified for a in ai_real),
+            match_type=base.match_type, source_url=base.source_url,
+        )]
 
     pairs: list[PairResult] = []
     used_ai: set[int] = set()
@@ -794,7 +826,7 @@ def _align_cell(
     return CellResult(
         entity=entity, question=question, is_list=is_list,
         gt_pairs=pairs, ai_only=ai_only, redundant=redundant,
-        suppressed_nulls=suppressed_nulls,
+        suppressed_nulls=suppressed_nulls, prose_joined=prose_joined,
     )
 
 
@@ -807,6 +839,7 @@ def evaluate(
     semantic: bool = True,
     semantic_backend: str = "cross-encoder",
     run_entities: Optional[set[str]] = None,
+    prose_cells: bool = False,
 ) -> EvalResult:
     # PARTIAL-GT SCOPING (2026-07-24): score only entities the GT covers.
     # With a partially-filled GT (e.g. an analyst answered 5 of 69 rows),
@@ -888,7 +921,8 @@ def evaluate(
     for key, slot in cells.items():
         if not slot["gt"] and not slot["ai"]:
             continue
-        results.append(_align_cell(slot["gt"], slot["ai"], slot["is_list"], sem))
+        results.append(_align_cell(slot["gt"], slot["ai"], slot["is_list"], sem,
+                                   prose_cells=prose_cells))
 
     results.sort(key=lambda c: (c.entity, c.question))
 
@@ -952,6 +986,7 @@ def evaluate(
     )
     overall["redundant_dropped"] = sum(len(c.redundant) for c in results)
     overall["suppressed_nulls"] = sum(len(c.suppressed_nulls) for c in results)
+    overall["prose_joined_cells"] = sum(1 for c in results if c.prose_joined)
     # Split headline: single-answer questions are the TRUSTWORTHY metric; list
     # questions have non-exhaustive GT (the pipeline finds real items the GT
     # never enumerated), so their precision is only a LOWER BOUND — reported
@@ -1025,6 +1060,9 @@ def print_report(result: EvalResult, verbose: bool = False) -> None:
         print(f"  ({o['suppressed_nulls']} 'Not disclosed' claim(s) suppressed — "
               f"an abstention asserts nothing, so it is never a hallucination; "
               f"any GT answer it failed to find is still charged as a miss)")
+    if o.get("prose_joined_cells"):
+        print(f"  ({o['prose_joined_cells']} prose cell(s) scored cell-level — "
+              f"AI sentences joined into one answer, one verdict per cell)")
 
     if verbose:
         print()
@@ -1133,6 +1171,14 @@ def main() -> None:
                              "falls back to embeddings if the model is absent); "
                              "'ollama' = mean-centred nomic-embed cosine, "
                              "additive rescue only")
+    parser.add_argument("--prose-cells", action="store_true",
+                        help="Score single-answer PROSE cells (GT >= "
+                             f"{PROSE_GT_MIN_CHARS} chars) cell-level: AI "
+                             "sentences join into one answer, one verdict per "
+                             "cell — a wrong description costs 1 FP, not one "
+                             "per sentence. Off by default (headline-number "
+                             "discipline); short-value and list grain "
+                             "unchanged either way.")
     parser.add_argument("--sheet", choices=["provenance", "matrix"],
                         default="provenance",
                         help="Which pipeline sheet to score: 'provenance' = what "
@@ -1152,7 +1198,8 @@ def main() -> None:
 
     result = evaluate(gt, ai, semantic=not args.no_semantic,
                       semantic_backend=args.semantic_backend,
-                      run_entities=read_run_entities(args.pipeline_output))
+                      run_entities=read_run_entities(args.pipeline_output),
+                      prose_cells=args.prose_cells)
     print_report(result, verbose=args.verbose)
 
     if args.output:

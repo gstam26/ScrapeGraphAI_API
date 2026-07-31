@@ -296,6 +296,58 @@ def test_only_null_claims_still_null_match():
     print("OK test_only_null_claims_still_null_match passed")
 
 
+def test_prose_cell_scored_as_one_answer():
+    """A prose description split into sentences is ONE answer, one verdict.
+
+    The Matrix reader splits cells on newlines, so a 3-sentence summary became
+    3 claims vs 1 GT sentence — 1 TP + 2 FP even when the description was
+    right (236/676 FP on the gt42 scoring came from this). With prose_cells,
+    the sentences join and the cell gets one judgement.
+    """
+    gt_text = ("Acme designs and manufactures precision medical devices for "
+               "global healthcare clients, offering end-to-end services.")
+    gt = [_gt("Acme", "Summary description of company's services", gt_text)]
+    ai = [_ai("Acme", "Summary description of company's services",
+              "Acme designs and manufactures precision medical devices."),
+          _ai("Acme", "Summary description of company's services",
+              "It serves global healthcare clients."),
+          _ai("Acme", "Summary description of company's services",
+              "Services span design through end-to-end manufacturing.")]
+
+    # Default grain: sentence-level (1 possible TP, 2 leftover sentences).
+    r_old = evaluate(gt, ai, semantic=False)
+    assert r_old.overall["FP"] + r_old.overall["FN"] >= 2
+
+    # Cell grain: one joined answer, one verdict, never more than 1 FP.
+    r = evaluate(gt, ai, semantic=False, prose_cells=True)
+    assert r.overall["prose_joined_cells"] == 1
+    assert (r.overall["TP"], r.overall["FP"]) in ((1, 0), (0, 1))
+    print("OK test_prose_cell_scored_as_one_answer passed")
+
+
+def test_prose_grain_never_touches_short_value_or_list_cells():
+    """Competing short values stay separate false claims; lists keep item grain."""
+    gt = [_gt("Acme", "Where is the company headquarters located?", "Hong Kong")]
+    ai = [_ai("Acme", "Where is the company headquarters located?", "Hong Kong"),
+          _ai("Acme", "Where is the company headquarters located?", "Dongguan, China")]
+    r = evaluate(gt, ai, semantic=False, prose_cells=True)
+    assert r.overall["prose_joined_cells"] == 0
+    assert r.overall["TP"] == 1 and r.overall["FP"] == 1  # wrong HQ still billed
+
+    gt2 = [_gt("Acme", "In which country/countries does manufacturing take place?",
+               "China", is_list=True),
+           _gt("Acme", "In which country/countries does manufacturing take place?",
+               "Vietnam", is_list=True)]
+    ai2 = [_ai("Acme", "In which country/countries does manufacturing take place?",
+               "China"),
+           _ai("Acme", "In which country/countries does manufacturing take place?",
+               "Vietnam")]
+    r2 = evaluate(gt2, ai2, semantic=False, prose_cells=True)
+    assert r2.overall["prose_joined_cells"] == 0
+    assert r2.overall["TP"] == 2
+    print("OK test_prose_grain_never_touches_short_value_or_list_cells passed")
+
+
 def test_abstention_is_a_miss_but_never_a_hallucination():
     # The tool answers "Not disclosed" for a question GT does answer. That is
     # a miss (FN) — and ONLY a miss. An abstention asserts nothing, so it

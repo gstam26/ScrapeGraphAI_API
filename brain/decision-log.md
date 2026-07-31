@@ -5,6 +5,30 @@
 
 -----
 
+## 2026-07-31 (evening) — AUTOMATIC ARM FIRED AND SCORED: the starvation lever is CONFIRMED, with Arrk as a byte-identical control; a third eval bug found (abstentions counted as hallucinations)
+
+**Run:** laptop, warm cache, `CRAWL_SCOPE=site CRAWL_RENDER_FOR_DISCOVERY=true`, output `cmo_output_starved2_20260731_render.xlsx` (46s). The trigger fired on the warm-cache leg exactly as the probe predicted — `Link discovery starved (2 new links, static seed)` — and Automatic went **3 → 8 pages**, picking up AboutUs/Division/News/Career/Index. Pre-registered prediction (3pp → ~8-9pp) landed. *(A first attempt earlier the same day ran against un-pulled code — the fix was committed but not pushed — and reproduced the pre-fix behaviour exactly: 3 pages, no trigger line. Kept as a same-day control.)*
+
+**Scored vs Caitlin's 5-entity GT (`--sheet matrix`, CE matcher), against the 07-29 starved-2 scoring as control:**
+
+| | control 07-29 | render 07-31 |
+|---|---|---|
+| TP / FN / FP | 64 / 30 / 44 | **74 / 20 / 42** |
+| combined P / R / F1 | 0.593 / 0.681 / 0.634 | **0.638 / 0.787 / 0.705** |
+| single-answer F1 | — | 0.615 |
+
+**Arrk's verdict counts are IDENTICAL across the two runs** (20 auto_match / 7 auto_miss / 14 ai_only / 7 redundant / 1 semantic_review) — every Arrk page was a cache hit, so even Azure nondeterminism was held out. The whole delta is Automatic: **auto_match 7 → 12, auto_miss 8 → 3**. `Division.html` delivered the manufacturing-country answers — **China + Thailand + Vietnam all matched**, the list question going to R=1.000 — and `AboutUs.html` (the page the JS nav was hiding) supplied independence=Yes, plastic moulding=Yes and tooling=Yes.
+
+**Automatic's 3 residual misses:** systems integration (GT Yes, tool abstained), employees 670 (never on the site), and typical production volume — where the GT value is *"Over 25,000 square meter manufacturing facility"*, a floor area answering a volume question. **That third one is a GT-side item for Caitlin, not a tool miss.**
+
+**EVAL BUG 3 — abstentions scored as hallucinations (found, NOT fixed; flagged for decision).** When the tool answers `None (not disclosed)` and GT holds a real value, the cell scores **FN + FP**: the miss is right, but an explicit refusal to answer is counted as a fabricated claim. The 07-22 suppression rule only fires when a substantive claim sits beside the null (`if ai_real and ai_null`), so a cell whose ONLY claim is an abstention falls through. Affects 3 of 21 FPs in this run and 6 of 22 in the control — i.e. the control was penalised harder, so **fixing it would widen the measured gain, not narrow it**. Same species as the two bugs found 07-29: the ruler, not the pipeline. Not fixed unilaterally because it moves published headline numbers a third time; George decides whether to re-baseline.
+
+**Also checked and dismissed:** the doubled `Azure extracting: AboutUs.html` line is ordinary chunking (12,879 chars vs `EXTRACT_CHUNK_SIZE=8000`), one Extract Log row, 13 items — not duplicate work.
+
+**Status: the acquire-starvation lever is closed on both arms.** Arrk (site scope) and Automatic (render-for-discovery) were the two entities carrying 17/25 of the GT single-answer FN; both root causes are fixed, flag-gated, and now measured. Remaining gate before the flags default on: plant-milk + ADLM re-validation.
+
+-----
+
 ## 2026-07-31 — SECOND BUG IN THE SAME TRIGGER: render-for-discovery counted RAW links, not novel ones — the cache fix alone would NOT have made the Automatic arm fire
 
 **Context:** the 07-29 re-test failed because cache-hit seeds were excluded from the render trigger (fixed 4bedb0e). Before spending a laptop pipeline run on the re-test, the trigger was re-verified live at the crawler layer alone — no Azure, no extraction (new permanent tool `diagnostics/discovery_probe.py`: fetches a seed cold then warm against the same cache dir and reports backend / candidate count / whether the render fired). The warm leg is the regression guard for 4bedb0e; the script exits 1 if any seed fires cold-only.

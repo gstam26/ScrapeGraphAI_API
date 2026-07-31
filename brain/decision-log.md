@@ -5,6 +5,29 @@
 
 -----
 
+## 2026-07-31 (night, 2) — ZERO-PAGE SEEDS DIAGNOSED (2 transient-recovered, 2 bot walls); CAITLIN'S YELLOW CELLS = 3 WRONG SEEDS + 2 dead; F1 decomposition shows the 0.484 is composite, not tool quality
+
+**Zero-page probe (Dell, live):** the four gate_failed seeds split cleanly:
+- **Johnson Electric — RECOVERED TODAY:** render now returns a nav-heavy DOM that fails link-density and is caught by full-page rescue (4,082 chars, gate=True). On 07-24 the render returned 50 chars (below the rescue floor — nothing to rescue). Transient render/consent flake; a fresh run picks it up.
+- **Clinipol — RECOVERED TODAY:** static pass now yields 4,284 chars, gate clean. 07-24's 19-char render was a flake or site change.
+- **Gaudlitz + KingField — HARD 403 BOT WALLS:** both static AND rendered fetches get server 403 pages ("You don't have permission"). Caitlin answered both fully from a normal browser → GT exists, tool locked out, scores as pure FN. Policy question recorded, not decided: a stock-browser User-Agent might pass (current UA honestly self-identifies as a pipeline); masquerading is George's call. Until then these are access-failure findings, not extraction failures — client-deliverable framing: "site blocks automated access".
+
+**Caitlin's yellow cells (template `_CH_JH`, fill FFFFFF00; lavender is template styling):** 3 WRONG SEEDS the run inherited — **OnCore: neotechcable.com is a cable company, should be neotech.com** (her note, explicit); **Providien: providienmedical.com → should be amphenol-cmt.com** (Amphenol CMT acquisition); **Medifiq: mediq.co.uk is a DIFFERENT COMPANY (Mediq pharmacy ≠ Medifiq)**. Plus Hans Koch (domain parked — for-sale page is the seed), Kitron ("website failed to load" for the analyst too — matches the historical probe timeout), KMC Systems (hiarc.inc "does not correlate with CMO name?"). The wrong-seed class means some acquired-cohort and fed-cohort FNs are seed-error, not extraction error.
+
+**F1 decomposition (headline cohort, from the gt42 Detail sheet — each row is arithmetic on verdicts, no re-scoring):**
+
+| slice | ents | P | R | F1 |
+|---|---|---|---|---|
+| headline as scored | 38 | 0.401 | 0.609 | 0.484 |
+| minus description-grain question | 38 | 0.492 | 0.603 | **0.542** |
+| minus desc + starved-7 | 31 | 0.452 | 0.628 | 0.526 |
+
+Description grain alone is worth −0.058 F1. The starved-7 removal trades precision for recall (starved entities assert little, so they carry FN not FP). **Honest residual: 437 FP on 31 fed entities is NOT all artifact** — countries/HQ/volume carry real attribution leaks and marketing-text extraction alongside the list-lower-bound and GT-norm effects. That is the true quality gap to work, and it is much smaller than 0.484 makes it look.
+
+**Mitsui quantification:** ~4-5 Arrk cells hinge on the adjudication (independence, acquirer, revenue, employees). Small in aggregate; large as an exhibit — under the website-only GT rule the evidence IS on the website (composites.arrk.com states the ownership), so the GT should flip on its own terms.
+
+-----
+
 ## 2026-07-31 (night) — EXPANDED GT SCORED: 42 entities (was 5), honest baseline F1 0.484; starvation confirmed as a CLASS (7 entities incl. a NEW zero-page mechanism); description-grain FPs are the largest single artifact
 
 **GT drop:** Caitlin+Jenni returned the template (`_CH_JH`) with **50 of 69 entity rows touched → 42 entities with substantive GT (823 flat rows)**, 8 rows whose only content is an analyst navigation note ("Same as above", "Website failed to load", "See entries for Jabil") — blanked to not-assessed during conversion (staged copy `outputs/cmo_gt_template_v2_staged.xlsx`, every blank printed; the notes duplicate `george_note` inventory verdicts). 19 rows untouched. Conversion: `gt_convert --ignore-cols "Website,Supporting quotes / sources" --single "<description>,<volume>"`; multi-line HQ (Adapt EMS two UK sites) and revenue (Johnson Electric group + medical-segment figures) are GENUINE multi-value cells, is_list inference correct. Flat GT: `outputs/cmo_gt_caitlin_v2.xlsx`. 300 null markers.

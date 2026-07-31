@@ -5,6 +5,19 @@
 
 -----
 
+## 2026-07-31 (night, 5) — LOCAL WEB UI SHIPPED, STDLIB-ONLY BY DESIGN (React rejected for the handoff week)
+
+**Context:** George asked "are we doing a React UI that opens with a link?" for next week's user handoff. Decision (George picked from explicit options): **local web page** — the link experience without the React cost.
+
+**Options considered:**
+1. Full React SPA — rejected for this week: needs a Node build toolchain on corporate machines where even HF downloads are IT-blocked; realistically eats the week and displaces the quality work.
+2. FastAPI + plain HTML — the obvious middle, but fastapi/uvicorn/python-multipart are NOT installed, and every new pip install on a Sagentia laptop is an IT negotiation.
+3. **Stdlib-only (`http.server` ThreadingHTTPServer)** — chosen. Zero new dependencies = zero IT risk = the standing deployability>elegance principle. Entirely sufficient for a two-screen localhost tool.
+
+**Shipped (`webapp/` + `run_ui.bat`, suite 312):** double-click launcher → browser opens `http://127.0.0.1:8000` → drag workbook in → live log (pipeline stdout tee'd to a ring buffer) → download results. Template downloadable from the page. Multipart avoided entirely — the browser POSTs the file as raw body bytes with an `X-Filename` header (the one thing `http.server` can't parse cleanly is the one thing we don't need). One run at a time (409 on concurrent), `read_input`'s row-numbered validation errors surface in the UI failure banner, page reload picks up an in-progress run. **The JSON API (`/api/status`, `/api/run`, `/api/download`, `/api/template`) is the contract — a React front-end later replaces one HTML file and touches nothing else.** Data never leaves the machine (localhost bind, uploads under `outputs/webapp_inputs/`, gitignored via `outputs/`). Tests: live server on port 0 with `execute_run` monkeypatched — lifecycle, 409, failure-surfacing, template, rejections.
+
+-----
+
 ## 2026-07-31 (night, 4) — PRODUCTIONIZATION PASS 1: non-interactive CLI, workbook-config crawl flags, row-numbered input validation, honest run summary, quickstart + template
 
 **Context:** George wants the tool in users' hands next week ("production level, professional"). Five changes, all UX/plumbing, none touching crawl or extraction behaviour (his flags-on run stays clean).

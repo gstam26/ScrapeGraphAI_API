@@ -42,6 +42,14 @@ Tips that matter:
 
 ## 2. Run
 
+**Easiest — the web page:** double-click `run_ui.bat` (or run
+`python -m webapp`). Your browser opens a local page: drag your workbook in,
+press **Run pipeline**, watch the live log, download the results when done.
+You can also download a blank input template from the page. Everything runs
+on your machine — nothing is uploaded anywhere.
+
+**Or the command line:**
+
 ```
 python main.py --input my_project.xlsx --output my_results.xlsx
 ```

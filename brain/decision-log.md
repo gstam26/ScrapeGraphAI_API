@@ -5,6 +5,29 @@
 
 -----
 
+## 2026-07-31 (night) — EXPANDED GT SCORED: 42 entities (was 5), honest baseline F1 0.484; starvation confirmed as a CLASS (7 entities incl. a NEW zero-page mechanism); description-grain FPs are the largest single artifact
+
+**GT drop:** Caitlin+Jenni returned the template (`_CH_JH`) with **50 of 69 entity rows touched → 42 entities with substantive GT (823 flat rows)**, 8 rows whose only content is an analyst navigation note ("Same as above", "Website failed to load", "See entries for Jabil") — blanked to not-assessed during conversion (staged copy `outputs/cmo_gt_template_v2_staged.xlsx`, every blank printed; the notes duplicate `george_note` inventory verdicts). 19 rows untouched. Conversion: `gt_convert --ignore-cols "Website,Supporting quotes / sources" --single "<description>,<volume>"`; multi-line HQ (Adapt EMS two UK sites) and revenue (Johnson Electric group + medical-segment figures) are GENUINE multi-value cells, is_list inference correct. Flat GT: `outputs/cmo_gt_caitlin_v2.xlsx`. 300 null markers.
+
+**FROZEN 07-24 BASELINE scored against it (corrected ruler, CE decisive): combined F1 0.485 all-42.** Pre-registered acquired-cohort split (successor-seeded, per inventory ACQUIRED/NOW_IS notes — 4 of the 6 are in GT: Greatbatch, Minnetronix, OnCore, Rexam Pharma; Lake Region + Nypo were nav-notes):
+
+| cohort | ents | TP/FN/FP | P | R | F1 |
+|---|---|---|---|---|---|
+| **HEADLINE (non-acquired)** | 38 | 453/291/676 | 0.401 | 0.609 | **0.484** |
+| acquired-seeded | 4 | 30/49/8 | **0.789** | 0.380 | 0.513 |
+
+The acquired cohort inverts exactly as predicted 07-23: the entity-faithful extractor abstains rather than mis-attribute successor-site facts — highest precision of any slice, lowest recall. The 5-entity 0.595 was an optimistic sample; 0.484 on 38 is the honest number, and it decomposes into three findings rather than one vibe:
+
+**(1) Description-grain FPs = the largest single artifact: 236 of 676 FP (35%) from one question** (P=0.106, HALL=0.894 on that column). The s7 prose summary is split into claims at eval time; one GT sentence matches one claim and every other sentence bills as a hallucination. Same species as the eval bugs — the ruler's grain is wrong for prose cells, the pipeline is not fabricating 236 things. Volume (84 FP, marketing-text-vs-floor-area) and countries (116 FP, list non-exhaustiveness + acquired-attribution leaks) follow. A description-cell-level judgement (cell-vs-cell, not claim-vs-claim) would be the fix — NOT built tonight.
+
+**(2) STARVATION IS A CLASS, and it has a THIRD mechanism.** 7 of 38 headline entities fetched ≤5 ok pages and carry 73 of 291 FN (25%; 10.4 FN/entity vs 7.0 for fed entities). Composition: Arrk (2pp, scoping — FIXED flag-gated) and Automatic (3pp, JS nav — FIXED flag-gated) are the known two; Flextronics (1pp, SPA — known); **NEW: Johnson Electric, Gaudlitz, Clinipol, KingField Electronics = 0 ok pages, seed itself gate_failed, entity extracted from nothing (41 FN between them).** Un-diagnosed: whether these are render-escalation failures, bot walls, or rescue-window misses — the per-site probe playbook applies. This is the next acquire lever and it is measured, not hypothesised.
+
+**(3) The fed cohort's 218 FN** (31 entities averaging 7.0) is the residual mix (assert-vs-ND boundary, budget allocation, extraction judgment) — no single dominant mechanism at first look.
+
+Artifacts: `outputs/cmo_eval_matrix_baseline_gt42.xlsx`, plots regenerated on 42 entities (`plot_eval_per_question.png`, `plot_eval_per_entity.png` with fetched-page annotation). NOTE: this scoring supersedes the 5-entity 0.595/0.537 headline — bigger n, corrected ruler, stated as such; no more re-litigating the small-sample numbers. The crawl-fix flags were OFF in the frozen baseline, so this is the PRE-FIX picture by construction; the post-fix full-cohort number needs a fresh 69-entity laptop run with flags on (~40 min) — queued, George's call.
+
+-----
+
 ## 2026-07-31 (late) — JUNK-PATH BLOCKLIST: the queued design was REFUTED by its own motivating case; shipped as classify-and-cap instead
 
 **Context:** the blocklist has been queued since 2026-07-29 on the stated rationale "path-semantics not size-based (Oatly-safe), saves real extract cost, **near-zero recall risk**". Built it, then checked what the blocked pages had actually contributed on the run that motivated it.

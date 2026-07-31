@@ -5,6 +5,25 @@
 
 -----
 
+## 2026-08-01 — FLAGS-ON 69-ENTITY RUN SCORED: every acquire recovery landed; single-answer F1 0.552→0.568, R 0.583→0.614; combined flat BECAUSE fed giants list their real factories (list-lower-bound, not hallucination)
+
+**Run (laptop, fresh cache, site scope + render-for-discovery + patched seeds):** 1,585 ok pages. Recoveries, pages: Arrk 2→9, Automatic 3→8 (trigger fired in production), Johnson Electric 0→29, Clinipol 0→13, OnCore 30 on neotech.com, Providien 22 on amphenol-cmt.com, **Flextronics 1→31 (site scope cracked the flex.com SPA — unplanned bonus)**. Gaudlitz + KingField remain 0 (bot walls, as predicted). Scored vs gt42, both grains (`outputs/cmo_eval_matrix_flagson{,_prose}.xlsx`).
+
+**Headline-38, prose grain:**
+
+| | TP | FN | FP | P | R | F1 |
+|---|---|---|---|---|---|---|
+| baseline (pre-fix) | 454 | 290 | 453 | 0.501 | 0.610 | 0.550 |
+| flags-on | 470 | 274 | 512 | 0.479 | **0.632** | 0.545 |
+| **single-answer only, baseline** | 326 | 233 | 297 | 0.523 | 0.583 | 0.552 |
+| **single-answer only, flags-on** | 343 | 216 | 306 | 0.529 | **0.614** | **0.568** |
+
+**The combined number is flat and that is EXPLAINED, not disappointing:** feeding the starved entities converted misses into hits AND into assertions. Johnson Electric went 14→4 FN but 0→52 FP; Flextronics 15→8 FN, 0→40 FP. Of those ~92 new FPs, **78 are manufacturing-country list items — Costa Rica, Canada, Malaysia — which these global manufacturers genuinely operate; Caitlin's GT lists the subset she found.** This is the pre-registered list-lower-bound (GT non-exhaustive), already flagged in every report as "precision = LOWER BOUND". The trustworthy single-answer block — George's own 2026-07-16 methodology ruling — improves on every axis: P, R, and F1, with recall +0.031. Recovered-entity detail: Automatic 11/8→15/4 (TP/FN), Providien 11 TP with FP 4→0 (right site = cleaner claims).
+
+**Cohort note:** starvation-class recall is now delivered (7 starved entities → 2 bot-walls only). Remaining levers, in measured order: (1) single-answer aggregation discipline (the FP side of fed entities on HQ/acquirer/volume — the warm-cache A/B is next); (2) `--prose-cells` default decision; (3) bot-wall UA policy. The acquire chapter of this case study is CLOSED: every seed either yields pages or is a named access-failure finding.
+
+-----
+
 ## 2026-07-31 (night, 5) — LOCAL WEB UI SHIPPED, STDLIB-ONLY BY DESIGN (React rejected for the handoff week)
 
 **Context:** George asked "are we doing a React UI that opens with a link?" for next week's user handoff. Decision (George picked from explicit options): **local web page** — the link experience without the React cost.

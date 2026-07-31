@@ -8,9 +8,12 @@ from config import (
     ACQUIRE_TOOL,
     API_KEY,
     CACHE_DIR,
+    CRAWL_BLOCK_INFRA_PATHS,
     CRAWL_MAX_PAGES,
     CRAWL_MIN_SCORE,
     CRAWL_MIN_SCORE_EMBED,
+    CRAWL_RENDER_FOR_DISCOVERY,
+    CRAWL_SCOPE,
     CRAWL_SCORER,
     DEFAULT_DEPTH,
     EXTRACT_TOOL,
@@ -42,6 +45,11 @@ def _build_config(overrides: dict[str, Any] | None = None) -> Config:
         crawl_min_score_embed=CRAWL_MIN_SCORE_EMBED,
         crawl_max_pages=CRAWL_MAX_PAGES,
         crawl_scorer=CRAWL_SCORER,
+        # Env-var values seed the config; the workbook's config sheet can
+        # override per run (default < env < workbook).
+        crawl_scope=CRAWL_SCOPE,
+        crawl_render_for_discovery=CRAWL_RENDER_FOR_DISCOVERY,
+        crawl_block_infra_paths=CRAWL_BLOCK_INFRA_PATHS,
     )
 
     override_map = {
@@ -51,16 +59,32 @@ def _build_config(overrides: dict[str, Any] | None = None) -> Config:
         "CRAWL_MIN_SCORE_EMBED": "crawl_min_score_embed",
         "CRAWL_MAX_PAGES": "crawl_max_pages",
         "CRAWL_SCORER": "crawl_scorer",
+        "CRAWL_SCOPE": "crawl_scope",
+        "CRAWL_RENDER_FOR_DISCOVERY": "crawl_render_for_discovery",
+        "CRAWL_BLOCK_INFRA_PATHS": "crawl_block_infra_paths",
         "DEFAULT_DEPTH": "default_depth",
         # Lets a caller isolate the on-disk page cache per run (e.g. a
         # depth-sweep script comparing the same seeds at different max_depth
         # in one process) without touching the production cache/ directory.
         "CACHE_DIR": "cache_dir",
     }
+    _BOOL_FIELDS = {"crawl_render_for_discovery", "crawl_block_infra_paths"}
     for key, value in (overrides or {}).items():
         attr = override_map.get(key.upper())
-        if attr:
-            setattr(cfg, attr, value)
+        if not attr:
+            continue
+        # Excel cells arrive as strings; parse booleans explicitly so a
+        # workbook "false" never lands as a truthy non-empty string.
+        if attr in _BOOL_FIELDS and isinstance(value, str):
+            value = value.strip().lower() in ("true", "1", "yes", "on")
+        if attr == "crawl_scope":
+            value = str(value).strip().lower()
+            if value not in ("host", "site"):
+                raise ValueError(
+                    f"config sheet: CRAWL_SCOPE must be 'host' or 'site', "
+                    f"got {value!r}"
+                )
+        setattr(cfg, attr, value)
 
     return cfg
 

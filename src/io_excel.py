@@ -61,6 +61,10 @@ _SUPPORTED_CONFIG_KEYS = {
     "CRAWL_MIN_SCORE_EMBED",
     "CRAWL_SCORER",
     "CRAWL_MAX_PAGES",
+    "CRAWL_SCOPE",                  # "host" | "site"
+    "CRAWL_RENDER_FOR_DISCOVERY",   # true/false
+    "CRAWL_BLOCK_INFRA_PATHS",      # true/false
+    "CACHE_DIR",
     "DEFAULT_DEPTH",
 }
 
@@ -142,15 +146,35 @@ def _read_entities_sheet(xls: pd.ExcelFile, sheet_name: str) -> list[str]:
 def _read_urls_sheet(xls: pd.ExcelFile, sheet_name: str) -> list[UrlSpec]:
     df = pd.read_excel(xls, sheet_name=sheet_name)
     url_col = _find_url_column(df)
+    if url_col is None:
+        raise ValueError(
+            f"'{sheet_name}' sheet: no URL column found. Expected a column "
+            f"named 'url' (or 'website'/'link'). Columns present: "
+            + ", ".join(str(c) for c in df.columns)
+        )
     depth_col = _find_column(df, "depth")
     entities_col = _find_column(df, "entities")
     context_col = _find_column(df, "context")
 
     url_specs: list[UrlSpec] = []
-    for _, row in df.iterrows():
+    for idx, row in df.iterrows():
+        excel_row = idx + 2  # header is row 1, pandas index is 0-based
         url = _clean_str(row.get(url_col))
         if not url:
             continue
+
+        # Real client sheets carry scheme-less URLs ("www.acme.com"). Fixing
+        # them beats erroring — but never silently: the note names the row.
+        if not url.lower().startswith(("http://", "https://")):
+            if "." not in url or " " in url:
+                raise ValueError(
+                    f"'{sheet_name}' sheet row {excel_row}: {url!r} does not "
+                    f"look like a URL. Give a full address such as "
+                    f"https://www.example.com"
+                )
+            print(f"  note: '{sheet_name}' row {excel_row}: no http(s) scheme "
+                  f"on {url!r} — using https://{url}")
+            url = f"https://{url}"
 
         depth = _parse_depth(row.get(depth_col)) if depth_col is not None else 0
         entities = _parse_entity_list(row.get(entities_col)) if entities_col is not None else []
@@ -168,10 +192,19 @@ def _read_questions_sheet(xls: pd.ExcelFile, sheet_name: str) -> list[ColumnSpec
 
     instructions_col = _find_column(df, "instructions")
     columns: list[ColumnSpec] = []
-    for _, row in df.iterrows():
+    seen: dict[str, int] = {}
+    for idx, row in df.iterrows():
+        excel_row = idx + 2
         question = _clean_str(row.get(question_col))
         if not question:
             continue
+        if question in seen:
+            raise ValueError(
+                f"'{sheet_name}' sheet row {excel_row}: duplicate question "
+                f"{question!r} (first seen at row {seen[question]}). Each "
+                f"question becomes one output column — names must be unique."
+            )
+        seen[question] = excel_row
         instruction = _clean_str(row.get(instructions_col)) if instructions_col is not None else ""
         columns.append(ColumnSpec(name=question, instruction=instruction or None))
     return columns
@@ -181,8 +214,14 @@ def _coerce_config_value(key: str, value: Any) -> Any:
     if value is None or pd.isna(value):
         return None
 
-    if key in {"ACQUIRE_TOOL", "EXTRACT_TOOL", "CRAWL_SCORER"}:
+    if key in {"ACQUIRE_TOOL", "EXTRACT_TOOL", "CRAWL_SCORER", "CRAWL_SCOPE",
+               "CACHE_DIR"}:
         return str(value).strip()
+
+    if key in {"CRAWL_RENDER_FOR_DISCOVERY", "CRAWL_BLOCK_INFRA_PATHS"}:
+        # Excel may deliver a real boolean (TRUE cell) or a string ("true");
+        # pipeline._build_config parses strings, booleans pass through.
+        return value if isinstance(value, bool) else str(value).strip()
 
     if key in {"CRAWL_MAX_PAGES", "DEFAULT_DEPTH"}:
         return int(float(value))
@@ -246,7 +285,15 @@ def read_input(filepath: str) -> PipelineInput:
 
     If the workbook has no entities sheet, each URL becomes its own entity.
     """
-    xls = pd.ExcelFile(filepath)
+    try:
+        xls = pd.ExcelFile(filepath)
+    except FileNotFoundError:
+        raise ValueError(f"Input workbook not found: {filepath!r}") from None
+    except Exception as e:
+        raise ValueError(
+            f"Could not open {filepath!r} as an Excel workbook ({e}). "
+            f"The input must be a .xlsx file — see docs/QUICKSTART.md."
+        ) from e
     try:
         entities_sheet = _find_sheet(xls, "entities")
         urls_sheet = _find_sheet(xls, "urls")

@@ -2,6 +2,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from config import (
+    CRAWL_BLOCK_INFRA_PATHS as _ENV_CRAWL_BLOCK_INFRA_PATHS,
+    CRAWL_RENDER_FOR_DISCOVERY as _ENV_CRAWL_RENDER_FOR_DISCOVERY,
+    CRAWL_SCOPE as _ENV_CRAWL_SCOPE,
+)
+
 
 class ColumnSpec(BaseModel):
     """User-defined extraction question."""
@@ -61,6 +67,14 @@ class Config(BaseModel):
     crawl_min_score_embed: float = 0.50  # Ollama absolute cosine threshold
     crawl_max_pages: int = 2
     crawl_scorer: str = "baseline"       # "baseline" | "experimental"
+    # Crawl-behaviour flags. Hierarchy: builtin default < env var (these
+    # defaults read the env at import, so directly-constructed Configs in
+    # scripts/diagnostics honour it too) < the input workbook's config sheet
+    # (applied in pipeline._build_config) — so an analyst can turn a flag on
+    # for one engagement without touching global defaults or the shell.
+    crawl_scope: str = _ENV_CRAWL_SCOPE                              # "host" | "site"
+    crawl_render_for_discovery: bool = _ENV_CRAWL_RENDER_FOR_DISCOVERY
+    crawl_block_infra_paths: bool = _ENV_CRAWL_BLOCK_INFRA_PATHS
 
 
 class SourceQuote(BaseModel):

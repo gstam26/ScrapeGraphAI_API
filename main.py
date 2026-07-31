@@ -26,14 +26,77 @@ def format_elapsed(seconds: int) -> str:
     return " ".join(parts)
 
 
+def print_run_summary(result, pipeline_input, diag: dict, elapsed: int) -> None:
+    """One honest paragraph at the end of every run.
+
+    Users trust a tool that reports its own limits: alongside the successes,
+    this names the sites that yielded nothing — an unreachable or bot-walled
+    site is a *finding* about that company, not a silent gap in the output.
+    """
+    acquire = diag.get("acquire_log", [])
+    ok_pages = sum(1 for e in acquire if e.get("status") == "ok")
+    failed = [e for e in acquire if e.get("status") in ("gate_failed", "error")]
+
+    # Entities whose crawl produced no usable page at all.
+    ok_by_seed: dict[str, int] = {}
+    for e in acquire:
+        seed = str(e.get("entity_url", ""))
+        ok_by_seed.setdefault(seed, 0)
+        if e.get("status") == "ok":
+            ok_by_seed[seed] += 1
+    dead_seeds = sorted(s for s, n in ok_by_seed.items() if n == 0)
+
+    # LLM extraction calls: cache hits are logged with 0ms and cost nothing.
+    extract = diag.get("extract_log", [])
+    llm_calls = sum(1 for e in extract if e.get("extraction_time_ms", 0) > 0)
+    cached = len(extract) - llm_calls
+
+    n_questions = len(pipeline_input.columns)
+    n_entities = len(result.rows)
+    total_cells = n_entities * n_questions if n_questions else 0
+    populated = sum(
+        1 for row in result.rows for c in row.cells
+        if c.value is not None and str(c.value).strip()
+    )
+
+    print("\n" + "=" * 60)
+    print(" RUN SUMMARY")
+    print("=" * 60)
+    print(f"  Entities:        {n_entities}  ({n_questions} questions each)")
+    print(f"  Pages fetched:   {ok_pages} usable"
+          + (f", {len(failed)} failed/low-quality" if failed else ""))
+    print(f"  LLM calls:       {llm_calls}"
+          + (f"  (+{cached} served from cache)" if cached else ""))
+    if total_cells:
+        print(f"  Cells answered:  {populated}/{total_cells} "
+              f"({populated / total_cells:.0%})")
+    print(f"  Runtime:         {format_elapsed(elapsed)}")
+    if dead_seeds:
+        print(f"  No content from {len(dead_seeds)} site(s) — unreachable, "
+              f"blocked, or empty (a finding, not an error):")
+        for s in dead_seeds:
+            print(f"    - {s}")
+    print("=" * 60)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Entity extraction pipeline")
+    parser.add_argument("--input", default="", metavar="XLSX",
+                        help="Path to the input workbook. Omit to be prompted.")
+    parser.add_argument("--output", default="", metavar="NAME",
+                        help="Output filename (written under outputs/). "
+                             "Omit to be prompted.")
     parser.add_argument("--backend", default="", help="Override ACQUIRE_TOOL (playwright_pooled_hybrid/playwright_pooled/firecrawl/local/playwright/requests)")
     args = parser.parse_args()
 
     print("=== Entity Extraction Pipeline ===\n")
 
-    input_path = input("Path to input Excel file: ").strip()
+    input_path = args.input.strip() or input("Path to input Excel file: ").strip()
+    if not os.path.exists(input_path):
+        raise SystemExit(
+            f"Input workbook not found: {input_path!r}\n"
+            f"Give the path to a .xlsx input workbook (see docs/QUICKSTART.md)."
+        )
     pipeline_input = read_input(input_path)
     if args.backend:
         pipeline_input.config_overrides = {
@@ -57,7 +120,7 @@ def main():
         print("No questions found. Exiting.")
         return
 
-    filename = input("\nOutput Excel filename: ").strip()
+    filename = args.output.strip() or input("\nOutput Excel filename: ").strip()
 
     if not filename.endswith(".xlsx"):
         filename += ".xlsx"
@@ -74,6 +137,7 @@ def main():
 
     elapsed = int(time.time() - start)
 
+    print_run_summary(result, pipeline_input, diag or {}, elapsed)
     print(f"\nResults saved to '{output_path}' - completed in {format_elapsed(elapsed)}")
 
 

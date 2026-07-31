@@ -126,10 +126,15 @@ def _registered_domain(netloc: str) -> str:
     return ".".join(labels[-2:]) if len(labels) >= 2 else netloc.lower()
 
 
-def _same_domain(start_url: str, candidate_url: str) -> bool:
+def _same_domain(start_url: str, candidate_url: str, scope: str | None = None) -> bool:
+    # scope=None falls back to the env-configured module default, so direct
+    # callers (diagnostics, tests) keep working; crawl_entity passes the
+    # per-run cfg value so a workbook's config sheet can flip it.
+    if scope is None:
+        scope = CRAWL_SCOPE
     start_netloc = urlparse(start_url).netloc.replace("www.", "")
     candidate_netloc = urlparse(candidate_url).netloc.replace("www.", "")
-    if CRAWL_SCOPE == "site":
+    if scope == "site":
         # Same registered domain: own subdomains are in scope, so hub
         # homepages that delegate content to engineering.example.com /
         # asia.example.com stay crawlable (the Arrk starvation mechanism).
@@ -152,9 +157,12 @@ def _is_junk_link(url: str) -> bool:
 # ("boilerplate") paths are deliberately NOT — see src/urlpaths for why.
 def _drop_blocked(
     candidates: list[LinkCandidate],
+    enabled: bool | None = None,
 ) -> tuple[list[LinkCandidate], list[LinkCandidate]]:
     """Split candidates into (kept, dropped). Dropped are reported, not hidden."""
-    if not CRAWL_BLOCK_INFRA_PATHS:
+    if enabled is None:
+        enabled = CRAWL_BLOCK_INFRA_PATHS
+    if not enabled:
         return candidates, []
     kept, dropped = [], []
     for c in candidates:
@@ -229,6 +237,7 @@ def _discover_links_from_markdown(
     start_url: str,
     depth: int,
     text: str,
+    scope: str | None = None,
 ) -> list[LinkCandidate]:
     """Extract links with ±120-char context from Firecrawl markdown."""
     seen: set[str] = set()
@@ -244,7 +253,7 @@ def _discover_links_from_markdown(
         absolute_url = _normalise_url(urljoin(page_url, raw_url))
         if not absolute_url.startswith("http"):
             continue
-        if not _same_domain(start_url, absolute_url):
+        if not _same_domain(start_url, absolute_url, scope):
             continue
         if _is_junk_link(absolute_url):
             continue
@@ -272,6 +281,7 @@ def _discover_links_from_html(
     start_url: str,
     depth: int,
     html: str,
+    scope: str | None = None,
 ) -> list[LinkCandidate]:
     """Extract links from HTML; context comes from the parent element text."""
     soup = BeautifulSoup(html, "html.parser")
@@ -282,7 +292,7 @@ def _discover_links_from_html(
         absolute_url = _normalise_url(urljoin(page_url, a["href"]))
         if not absolute_url.startswith("http"):
             continue
-        if not _same_domain(start_url, absolute_url):
+        if not _same_domain(start_url, absolute_url, scope):
             continue
         if _is_junk_link(absolute_url):
             continue
@@ -319,14 +329,16 @@ def _discover_links(
     # ("nav-soup") context the 2026-06-16 decision moved away from — scoped to
     # these backends; the local backend keeps its markdown path
     # (Trafilatura include_links=True) and its ±120-char prose context.
+    scope = cfg.crawl_scope if cfg is not None else None
     if html and cfg is not None and cfg.acquire_tool in (
         "firecrawl", "playwright_pooled", "playwright_pooled_hybrid",
     ):
-        return _discover_links_from_html(page_url, start_url, depth, html)
+        return _discover_links_from_html(page_url, start_url, depth, html, scope)
 
     # Markdown path: Firecrawl cache hits / local backend — context comes naturally.
     if page_text and "](" in page_text:
-        return _discover_links_from_markdown(page_url, start_url, depth, page_text)
+        return _discover_links_from_markdown(page_url, start_url, depth, page_text,
+                                             scope)
 
     # No usable HTML or markdown links: fetch HTML ourselves (unchanged fallback).
     if html is None:
@@ -340,10 +352,12 @@ def _discover_links(
             return []
         html = response.text
 
-    return _discover_links_from_html(page_url, start_url, depth, html)
+    return _discover_links_from_html(page_url, start_url, depth, html, scope)
 
 
-def _needs_discovery_render(depth: int, backend: str | None, n_links: int) -> bool:
+def _needs_discovery_render(
+    depth: int, backend: str | None, n_links: int, enabled: bool | None = None,
+) -> bool:
     """Seed page, not already rendered, link-starved -> render once for links.
 
     `n_links` must be the count of NOVEL candidates (not yet visited) — a
@@ -358,8 +372,10 @@ def _needs_discovery_render(depth: int, backend: str | None, n_links: int) -> bo
     is exactly how the 2026-07-29 Automatic re-test failed to fire. Rendered
     and Firecrawl fetches are excluded: their HTML already exposes nav links.
     """
+    if enabled is None:
+        enabled = CRAWL_RENDER_FOR_DISCOVERY
     return (
-        CRAWL_RENDER_FOR_DISCOVERY
+        enabled
         and depth == 0
         and backend is not None
         and (backend == "cache" or backend.endswith("static"))
@@ -531,7 +547,8 @@ def crawl_entity(
         # Infrastructure goes BEFORE the starvation count: a seed whose
         # only outbound links are Cloudflare endpoints is genuinely starved
         # and should trigger the discovery render rather than count them.
-        child_links, dropped_blocked = _drop_blocked(child_links)
+        child_links, dropped_blocked = _drop_blocked(
+            child_links, cfg.crawl_block_infra_paths)
 
         # Starvation is about links the crawler can actually FOLLOW. A seed
         # that links to itself (automatic.com.hk's logo -> Index.html) or back
@@ -541,7 +558,8 @@ def crawl_entity(
         # < CRAWL_DISCOVERY_MIN_LINKS trigger entirely (2026-07-31 probe).
         n_novel = sum(1 for c in child_links if c.url not in visited)
 
-        if _needs_discovery_render(current.depth, page.backend, n_novel):
+        if _needs_discovery_render(current.depth, page.backend, n_novel,
+                                   cfg.crawl_render_for_discovery):
             # Static text passed the quality gate, so the hybrid never
             # rendered — but a JS-injected nav menu (automatic.com.hk's
             # printHeader.js) is invisible to static link discovery. One
@@ -554,7 +572,9 @@ def crawl_entity(
                 seen_urls = {c.url for c in child_links}
                 rendered_links, rendered_dropped = _drop_blocked(
                     _discover_links_from_html(
-                        current.url, start_url, current.depth + 1, rendered_html)
+                        current.url, start_url, current.depth + 1, rendered_html,
+                        cfg.crawl_scope),
+                    cfg.crawl_block_infra_paths,
                 )
                 dropped_blocked += rendered_dropped
                 child_links += [

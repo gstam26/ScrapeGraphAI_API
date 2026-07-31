@@ -5,6 +5,20 @@
 
 -----
 
+## 2026-07-31 (night, 4) — PRODUCTIONIZATION PASS 1: non-interactive CLI, workbook-config crawl flags, row-numbered input validation, honest run summary, quickstart + template
+
+**Context:** George wants the tool in users' hands next week ("production level, professional"). Five changes, all UX/plumbing, none touching crawl or extraction behaviour (his flags-on run stays clean).
+
+1. **CLI:** `python main.py --input X --output Y` — prompts remain as fallback; missing input file is a one-line error pointing at the quickstart.
+2. **Crawl flags via workbook config sheet** — the deployability move: `CRAWL_SCOPE` / `CRAWL_RENDER_FOR_DISCOVERY` / `CRAWL_BLOCK_INFRA_PATHS` are now `Config` fields flowing default < env < workbook. Model defaults read the env at import so directly-constructed Configs in scripts/diagnostics honour it; `_build_config` parses workbook strings (Excel "false" must never land truthy) and validates scope with a clear error. Crawler plumbed to read `cfg.*` (scope threaded through both discovery paths + the render-trigger + infra-drop; module constants remain the no-cfg fallback). **Per-workbook opt-in sidesteps the plant-milk/ADLM revalidation gate — global defaults untouched.** Also fixed en route: `_SUPPORTED_CONFIG_KEYS` didn't include the new flags (a workbook using them would have been REJECTED at read time — caught because the round-trip test went through read_input, not _build_config directly).
+3. **Input validation speaks human:** urls sheet — missing URL column names the columns present; scheme-less URLs auto-fixed with a row-numbered note; garbage URLs are row-numbered errors. questions sheet — duplicate question names rejected with both row numbers. Corrupt/missing workbook → one-line ValueError, no traceback.
+4. **Run summary** (`print_run_summary`): entities, usable/failed pages, LLM calls vs cache hits, cells answered %, runtime, and **zero-yield sites named explicitly** — "a finding, not an error" (the Gaudlitz/KingField bot-wall class becomes a reported deliverable line instead of a silent gap).
+5. **docs/QUICKSTART.md + scripts/build_input_template.py:** one-page user walkthrough (fill template → run → read tabs in order, how to read conflicts/Not-disclosed/unverified) + a generated 5-sheet template with worked examples and an Instructions tab (the Caitlin-template pattern users already proved they can follow). Honest-limits section states the website-only epistemology (Mitsui-class gaps), bot walls, and marketing-site nulls up front.
+
+Round-trip verified: template → read_input → _build_config, string booleans parsed, note column ignored. Suite 307 (input-validation 7, run-summary 2, config-flow 2 new).
+
+-----
+
 ## 2026-07-31 (night, 3) — PROSE-CELL GRAIN SHIPPED (opt-in): headline 0.484 → 0.550, all movement on the FP side; seed patch applied; George's decision = no external adjudication, work with what we have
 
 **George's call:** no adjudication email to Caitlin — the Mitsui flip, the Automatic floor-area cell, and the GT-side conventions stay as-is for now. All work below uses only what is already in hand.

@@ -531,3 +531,36 @@ def test_discovery_starvation_counts_novel_links_only():
     assert len(child_links) == 3
     assert n_novel == 2
     assert n_novel < crawler.CRAWL_DISCOVERY_MIN_LINKS
+
+
+def test_crawl_flags_flow_from_workbook_config():
+    """Workbook config sheet can flip the crawl flags per run (default < env
+    < workbook). An Excel cell arrives as a string — 'false' must parse to
+    False, never land as a truthy non-empty string."""
+    from pipeline import _build_config
+
+    cfg = _build_config({})
+    assert cfg.crawl_scope in ("host", "site")  # env-seeded default
+
+    cfg = _build_config({
+        "CRAWL_SCOPE": "site",
+        "CRAWL_RENDER_FOR_DISCOVERY": "true",
+        "CRAWL_BLOCK_INFRA_PATHS": "false",
+    })
+    assert cfg.crawl_scope == "site"
+    assert cfg.crawl_render_for_discovery is True
+    assert cfg.crawl_block_infra_paths is False
+
+    import pytest
+    with pytest.raises(ValueError, match="host.*site|site.*host"):
+        _build_config({"CRAWL_SCOPE": "everything"})
+
+
+def test_same_domain_scope_param_overrides_module_default():
+    """crawl_entity passes cfg.crawl_scope explicitly; the param must win
+    regardless of the env-configured module constant."""
+    from src.acquire.crawler import _same_domain
+
+    a, b = "https://arrk.com", "https://engineering.arrk.com"
+    assert _same_domain(a, b, scope="site")
+    assert not _same_domain(a, b, scope="host")

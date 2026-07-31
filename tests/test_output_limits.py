@@ -22,6 +22,29 @@ def test_chunking_capped_on_pathological_page():
     print("OK test_chunking_capped_on_pathological_page passed")
 
 
+def test_boilerplate_page_capped_to_first_chunk():
+    """Sanmina's 234K privacy policy = 30 Azure calls of legalese.
+
+    The cap keeps the legally mandated identity block (company name and
+    registered address, which convention puts early) and drops the rest.
+    Deliberately NOT a crawl-time block: Arrk's verified "Osaka, Japan" HQ
+    came from exactly such a page, at char 3,439 — well inside chunk 1.
+    """
+    from config import EXTRACT_MAX_CHUNKS_BOILERPLATE
+    from src.urlpaths import is_boilerplate_path
+
+    url = "https://sanmina.com/privacy-policy"
+    chunks = _chunk_text("z" * 234_000, 8000, 200)
+    assert len(chunks) > 25, "fixture should be genuinely expensive"
+    assert is_boilerplate_path(url)
+    capped = chunks[:EXTRACT_MAX_CHUNKS_BOILERPLATE] if is_boilerplate_path(url) else chunks
+    assert len(capped) == EXTRACT_MAX_CHUNKS_BOILERPLATE
+
+    # A normal page of the same size is untouched by the boilerplate cap.
+    assert not is_boilerplate_path("https://sanmina.com/services/manufacturing")
+    print("OK test_boilerplate_page_capped_to_first_chunk passed")
+
+
 def test_chunking_unchanged_for_normal_pages():
     """The Oatly-report scale (~113 KB, the locked-benchmark maximum) must be
     untouched by the cap."""

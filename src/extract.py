@@ -23,6 +23,7 @@ from config import (
     EXTRACT_CHUNK_OVERLAP,
     EXTRACT_CHUNK_SIZE,
     EXTRACT_CACHE_DIR,
+    EXTRACT_MAX_CHUNKS_BOILERPLATE,
     EXTRACT_MAX_CHUNKS_PER_PAGE,
     EXTRACT_MAX_CONCURRENT_CALLS,
     EXTRACT_MAX_WORKERS,
@@ -32,6 +33,7 @@ from config import (
     EXTRACT_TOOL,
 )
 from models import ColumnSpec, Config, ExtractedCell, PageDoc, SourceQuote
+from src.urlpaths import is_boilerplate_path
 
 # Global cap on concurrent extractor LLM calls. With entity-level parallelism
 # in run_pipeline, worst-case concurrency is entity workers x page workers x
@@ -702,6 +704,19 @@ def extract_cells(
 
     text = page.text or ""
     chunks = _chunk_text(text, EXTRACT_CHUNK_SIZE, EXTRACT_CHUNK_OVERLAP) or [""]
+
+    # Legal/compliance pages: keep the page, cap the spend. Sanmina's privacy
+    # policy is 234K chars = 30 Azure calls of retention-and-rights legalese,
+    # but the part worth extracting is the legally mandated identity block —
+    # company name and registered address — which convention puts early (GDPR
+    # Art. 13; an Impressum is nothing else). Arrk's verified "Osaka, Japan" HQ
+    # came from such a page at char 3,439, comfortably inside chunk 1. Blocking
+    # these pages outright, the original plan, would have deleted that answer.
+    # Trade-off: a fact sitting late in a very long legal page is lost.
+    if len(chunks) > EXTRACT_MAX_CHUNKS_BOILERPLATE and is_boilerplate_path(page.url):
+        print(f"      -> Boilerplate page, extracting first "
+              f"{EXTRACT_MAX_CHUNKS_BOILERPLATE} of {len(chunks)} chunks: {page.url}")
+        chunks = chunks[:EXTRACT_MAX_CHUNKS_BOILERPLATE]
 
     chunk_results: list[dict[str, Any]] = [{} for _ in chunks]
     agg_timing: dict = {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}

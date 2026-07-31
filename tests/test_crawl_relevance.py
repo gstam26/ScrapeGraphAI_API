@@ -428,6 +428,86 @@ def test_needs_discovery_render_trigger():
     assert not trig(depth=0, backend="pooled_hybrid_static", n_links=0) or crawler.CRAWL_RENDER_FOR_DISCOVERY
 
 
+def test_boilerplate_paths_classified():
+    """Legal/compliance segments, including the observed real ones.
+
+    Classification is flag-independent — it is a fact about the URL. What is
+    DONE about it is Extract's chunk cap, not a crawl exclusion.
+    """
+    from src.urlpaths import is_boilerplate_path
+    for url in [
+        "https://jp.arrk.com/company/en/privacypolicy",
+        "https://jp.arrk.com/company/en/cookiepolicy",
+        "https://x.com/en/cookie-policy.html",
+        "https://x.com/privacy-policy/",
+        "https://x.com/legal/terms-and-conditions",
+        "https://x.com/de/datenschutz",
+        "https://x.com/de/impressum",
+        "https://x.com/agb.php",
+    ]:
+        assert is_boilerplate_path(url), url
+
+
+def test_boilerplate_never_matches_content_paths():
+    """The 2026-06-17 rejection stands: topical paths must not classify.
+
+    Segment fullmatch, not substring — otherwise 'cookie' would eat a bakery's
+    product page and 'terms' a glossary. Modern-slavery and code-of-conduct
+    statements are deliberately absent from the patterns: they name supply
+    chain and manufacturing COUNTRIES, which is a live GT question.
+    """
+    from src.urlpaths import is_boilerplate_path
+    for url in [
+        "https://x.com/products/",
+        "https://x.com/services/pcb-assembly",
+        "https://x.com/about-us",
+        "https://x.com/privacy-first-manufacturing",   # substring trap
+        "https://x.com/news/cookie-factory-opens",     # substring trap
+        "https://x.com/glossary/terms-of-the-trade",   # substring trap
+        "https://x.com/sitemap",
+        "https://x.com/modern-slavery-statement",      # names manufacturing countries
+        "https://x.com/code-of-conduct",
+        "https://x.com/careers",
+    ]:
+        assert not is_boilerplate_path(url), url
+
+
+def test_infrastructure_paths_blocked():
+    from src.urlpaths import is_blocked_path
+    assert is_blocked_path("https://x.com/cdn-cgi/l/email-protection")
+    assert is_blocked_path("https://x.com/wp-json/wp/v2/pages")
+    assert not is_blocked_path("https://x.com/about-us")
+
+
+def test_infra_blocklist_off_by_default():
+    """Flag-gated like the other crawl-behaviour changes, pending validation."""
+    import src.acquire.crawler as crawler
+    assert crawler.CRAWL_BLOCK_INFRA_PATHS is False
+    kept, dropped = crawler._drop_blocked(
+        [__import__("src.acquire.acquire_models", fromlist=["LinkCandidate"])
+         .LinkCandidate(url="https://x.com/cdn-cgi/l/x", anchor_text="", depth=1)])
+    assert len(kept) == 1 and not dropped
+
+
+def test_drop_blocked_reports_what_it_dropped():
+    """Exclusions are counted and returned, never silently discarded."""
+    import unittest.mock as mock
+    import src.acquire.crawler as crawler
+    from src.acquire.acquire_models import LinkCandidate
+
+    cands = [LinkCandidate(url=u, anchor_text="", depth=1) for u in (
+        "https://x.com/about-us",
+        "https://x.com/cdn-cgi/l/email-protection",
+        "https://x.com/privacypolicy",   # boilerplate: must SURVIVE the crawl
+        "https://x.com/services",
+    )]
+    with mock.patch.object(crawler, "CRAWL_BLOCK_INFRA_PATHS", True):
+        kept, dropped = crawler._drop_blocked(cands)
+    assert [c.url for c in kept] == [
+        "https://x.com/about-us", "https://x.com/privacypolicy", "https://x.com/services"]
+    assert len(dropped) == 1
+
+
 def test_discovery_starvation_counts_novel_links_only():
     """Self-links and already-visited URLs must not mask a starved seed.
 

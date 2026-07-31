@@ -186,6 +186,78 @@ CRAWL_SCOPE = os.getenv("CRAWL_SCOPE", "host")  # "host" | "site"
 CRAWL_RENDER_FOR_DISCOVERY = os.getenv("CRAWL_RENDER_FOR_DISCOVERY", "false").lower() == "true"
 CRAWL_DISCOVERY_MIN_LINKS = 3
 
+# --- Boilerplate paths: classify and CAP, do not block (2026-07-31) ---------
+#
+# The queued plan was a crawl-time blocklist for legal/compliance paths, on the
+# stated assumption of "near-zero recall risk". THAT ASSUMPTION IS REFUTED.
+# On the very run that motivated the work, Arrk's HQ answer — "Osaka, Japan",
+# verified, and available from no other page the crawl reached — came out of
+# jp.arrk.com/company/en/privacypolicy. Legal pages carry the registered
+# company address BY LAW (GDPR Art. 13 requires the controller's identity and
+# contact details; a German Impressum is nothing but that address). For HQ,
+# legal-entity and registered-address questions they are often the single most
+# reliable page on a site. Blocking them would have deleted a correct answer.
+#
+# The real cost problem is narrower and is about SIZE, not category: Sanmina's
+# privacy policy is 234K chars = 30 chunks = 30 Azure extract calls of pure
+# legalese. So boilerplate paths are CLASSIFIED here and used two ways:
+#   - EXTRACT_MAX_CHUNKS_BOILERPLATE caps their extraction cost (below), which
+#     captures the Sanmina win while keeping the identity block — which sits
+#     early by legal convention (Arrk's address was at char 3,439 of 4,193).
+#   - they are NOT dropped from the crawl.
+# Only genuine infrastructure is blocked outright (BLOCKED_PATH_PATTERNS).
+#
+# This does NOT reopen the 2026-06-17 rejection of a URL blocklist. That
+# rejection was about TOPICAL paths (/products/ is boilerplate for a plant-milk
+# brand and core disclosure for a pharma company) — domain knowledge that does
+# not generalise, correctly left to the embedding page-type signal. Topical
+# segments must never be added to either list here.
+#
+# Kept as data, not logic (the INFORMATIONAL_REF/TRANSACTIONAL_REF precedent).
+# Patterns are fullmatched against individual path SEGMENTS with any page
+# extension stripped, so /privacy-first-manufacturing and
+# /news/cookie-factory-opens are untouched while /privacypolicy and
+# /en/cookie-policy.html classify.
+BOILERPLATE_PATH_PATTERNS = (
+    r"privacy([-_]?(policy|policies|notice|notices|statement))?",
+    r"cookies?([-_]?(policy|policies|notice|settings|preferences|consent))?",
+    r"terms([-_]?(of[-_]?(use|service|sale|business|purchase)"
+    r"|and[-_]?conditions|conditions))?",
+    r"tos",
+    r"legal([-_]?(notice|notices|information|disclaimer|mentions))?",
+    r"disclaimer",
+    r"imprint",
+    r"impressum",
+    r"mentions[-_]?legales",
+    r"agb",
+    r"datenschutz(erklaerung|erklarung|erklärung)?",
+    r"data[-_]?protection",
+    r"gdpr",
+    r"ccpa",
+    r"accessibility([-_]?statement)?",
+)
+
+# Outright-blocked at link discovery: infrastructure endpoints and templating
+# artefacts that are not pages at all. Deliberately NOT here: modern-slavery
+# and code-of-conduct statements (they name supply-chain and manufacturing
+# COUNTRIES — a live GT question), sitemaps (link-rich, aid discovery),
+# careers/news/investors (low-yield but legitimate company facts).
+CRAWL_BLOCK_INFRA_PATHS = os.getenv(
+    "CRAWL_BLOCK_INFRA_PATHS", "false").lower() == "true"
+
+BLOCKED_PATH_PATTERNS = (
+    r"cdn-cgi",                 # Cloudflare endpoints (email-protection, /l/…)
+    r"wp-json",                 # WordPress REST API
+    r"xmlrpc",
+    r"\{\{.*\}\}",              # unrendered template placeholders
+)
+
+# Boilerplate pages are capped to this many extract chunks. 1 keeps the legally
+# mandated identity block (which convention puts early) and drops the
+# processing/rights/retention legalese behind it: Sanmina 30 calls -> 1.
+# Trade-off recorded: a fact sitting late in a very long legal page is lost.
+EXTRACT_MAX_CHUNKS_BOILERPLATE = 1
+
 # --- Relevance scorer ---
 
 # Baseline preserves the current production scorer. Experimental is opt-in for

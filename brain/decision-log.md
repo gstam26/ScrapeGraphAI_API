@@ -5,6 +5,31 @@
 
 -----
 
+## 2026-07-31 (late) — JUNK-PATH BLOCKLIST: the queued design was REFUTED by its own motivating case; shipped as classify-and-cap instead
+
+**Context:** the blocklist has been queued since 2026-07-29 on the stated rationale "path-semantics not size-based (Oatly-safe), saves real extract cost, **near-zero recall risk**". Built it, then checked what the blocked pages had actually contributed on the run that motivated it.
+
+**The refutation.** Arrk's blocked candidates were exactly the two the crawl wasted budget on — `jp.arrk.com/company/en/{privacypolicy,cookiepolicy}`, live-verified as the only 2 of 15 candidates the list caught. But the Provenance sheet shows `privacypolicy` produced **"Where is the company headquarters located?" → "Osaka, Japan", verified True, and from no other page the crawl reached.** Blocking it would have deleted a correct answer to a GT question. The mechanism generalises and should have been predictable: **legal pages carry the registered company address BY LAW** — GDPR Art. 13 requires the controller's identity and contact details, and a German Impressum is nothing but that address. For HQ / legal-entity / registered-address questions they are among the most reliable pages on a site. "Near-zero recall risk" was wrong.
+
+**Re-diagnosis:** the real cost problem is about SIZE, not category. Sanmina's privacy policy is 234K chars = 30 Azure calls; Arrk's is 4,193 chars = 1 call that returned the HQ. A category blocklist cannot separate those; a size cap can.
+
+**Options considered:**
+1. Ship the blocklist as designed — rejected, it deletes a verified correct answer we can see.
+2. Block only a "safe" subset of legal paths — rejected: the subset shrinks to nothing defensible. Modern-slavery and code-of-conduct statements name supply-chain and manufacturing COUNTRIES, which is a live GT question; cookie policies still carry company identity.
+3. **Classify boilerplate paths and CAP their extraction chunks; block only genuine infrastructure.**
+
+**Decision: option 3.**
+- `src/urlpaths.py` (new leaf module — Acquire and Extract both need the judgement and neither may import the other): `is_boilerplate_path` / `is_blocked_path`, fullmatch per path SEGMENT with the page extension stripped, never a substring scan.
+- `EXTRACT_MAX_CHUNKS_BOILERPLATE = 1` caps legal pages at extract time. Captures the Sanmina win (30 calls → 1) while keeping the identity block, which convention puts early. **Live-verified: Arrk's privacy policy stays 1 chunk and "Osaka" survives.**
+- Crawl-time blocking is restricted to `BLOCKED_PATH_PATTERNS` — `cdn-cgi`, `wp-json`, `xmlrpc`, unrendered `{{template}}` URLs — behind `CRAWL_BLOCK_INFRA_PATHS`, default off like the other crawl flags. Legal pages are NOT dropped from the crawl.
+- Exclusions print and go to `diag["blocked_paths"]` — no silent caps.
+
+**Why this does not reopen the 2026-06-17 URL-blocklist rejection:** that rejection was about TOPICAL paths (`/products/` is boilerplate for a plant-milk brand and core disclosure for a pharma company) — domain knowledge that does not generalise, correctly left to the embedding page-type signal. Legal-document *cost* is not a topical judgement. Tests pin the distinction: `/privacy-first-manufacturing`, `/news/cookie-factory-opens` and `/glossary/terms-of-the-trade` must never classify.
+
+**Recorded trade-off:** a fact sitting late in a very long legal page is now lost. Accepted — the alternative on the table was losing the whole page. Suite 294.
+
+-----
+
 ## 2026-07-31 (late) — EVAL BUG 3 FIXED: an abstention is a miss, never a hallucination
 
 **Context:** found while scoring the render arm (entry below). When the tool's only claim in a cell is `None (not disclosed)` and GT holds a real value, the cell scored **FN + FP** — the miss was right, but an explicit refusal to answer was billed as a fabricated claim. The 07-22 page-local suppression rule only fired when a substantive claim sat beside the null (`if ai_real and ai_null`), so a cell whose sole claim was an abstention fell straight through to the precision side.

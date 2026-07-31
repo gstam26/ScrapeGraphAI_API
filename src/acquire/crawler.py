@@ -9,6 +9,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from config import (
+    CRAWL_BLOCK_INFRA_PATHS,
     CRAWL_DISCOVERY_MIN_LINKS,
     CRAWL_LOCALE_DEDUP,
     CRAWL_MAX_DEPTH,
@@ -30,6 +31,7 @@ from src.acquire.link_scorer import (
 )
 from src.acquire.acquire_models import EntityDoc, LinkCandidate
 from src.filter import query_text
+from src.urlpaths import is_blocked_path
 
 
 # ── Crawl planner ─────────────────────────────────────────────────────────────
@@ -144,6 +146,20 @@ _JUNK_EXTS = (
 
 def _is_junk_link(url: str) -> bool:
     return urlparse(url).path.lower().rstrip("/").endswith(_JUNK_EXTS)
+
+
+# Infrastructure paths are dropped outright at discovery; legal/compliance
+# ("boilerplate") paths are deliberately NOT — see src/urlpaths for why.
+def _drop_blocked(
+    candidates: list[LinkCandidate],
+) -> tuple[list[LinkCandidate], list[LinkCandidate]]:
+    """Split candidates into (kept, dropped). Dropped are reported, not hidden."""
+    if not CRAWL_BLOCK_INFRA_PATHS:
+        return candidates, []
+    kept, dropped = [], []
+    for c in candidates:
+        (dropped if is_blocked_path(c.url) else kept).append(c)
+    return kept, dropped
 
 
 # Path segments that are pure locale/language codes: "fr", "en-us", "ko_kr".
@@ -512,6 +528,11 @@ def crawl_entity(
             cfg=cfg,
         )
 
+        # Infrastructure goes BEFORE the starvation count: a seed whose
+        # only outbound links are Cloudflare endpoints is genuinely starved
+        # and should trigger the discovery render rather than count them.
+        child_links, dropped_blocked = _drop_blocked(child_links)
+
         # Starvation is about links the crawler can actually FOLLOW. A seed
         # that links to itself (automatic.com.hk's logo -> Index.html) or back
         # to a page already fetched adds nothing to the frontier, so counting
@@ -531,13 +552,31 @@ def crawl_entity(
                       f"static seed) — rendering for discovery: {current.url}")
                 rendered_html = _render_page_html(current.url, cfg)
                 seen_urls = {c.url for c in child_links}
-                child_links += [
-                    c for c in _discover_links_from_html(
+                rendered_links, rendered_dropped = _drop_blocked(
+                    _discover_links_from_html(
                         current.url, start_url, current.depth + 1, rendered_html)
-                    if c.url not in seen_urls
+                )
+                dropped_blocked += rendered_dropped
+                child_links += [
+                    c for c in rendered_links if c.url not in seen_urls
                 ]
             except Exception as exc:
                 print(f"    ! Discovery render failed ({exc}); static links kept")
+
+        # Never silent: an excluded candidate is reported, with examples, so a
+        # blocklist mistake shows up in the run log instead of as a quiet gap.
+        if dropped_blocked:
+            sample = ", ".join(c.url for c in dropped_blocked[:3])
+            print(f"    Infrastructure paths skipped: {len(dropped_blocked)} "
+                  f"({sample}{', …' if len(dropped_blocked) > 3 else ''})")
+            if diag is not None:
+                for c in dropped_blocked:
+                    diag.setdefault("blocked_paths", []).append({
+                        "entity_url": start_url,
+                        "page_url": c.url,
+                        "parent_url": current.url,
+                        "depth": current.depth + 1,
+                    })
 
         unvisited = []
         batch_locale_keys: set[str] = set()

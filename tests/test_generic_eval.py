@@ -218,6 +218,38 @@ def test_ce_numeric_identity_not_vetoed(monkeypatch):
     print("OK test_ce_numeric_identity_not_vetoed passed")
 
 
+def test_qualified_numeric_pairs_match_without_ce(monkeypatch):
+    # 2026-08-03 audit class: "6,500+" vs "6500+", "20,000" vs "20000+",
+    # "over 1,500" vs "1500+" are the SAME count wearing different qualifiers.
+    # They must match on the typed-numeric path even when the CE (a relevance
+    # model scoring two bare number strings near 0) would veto everything.
+    _inject_decisive(monkeypatch, same_pairs=[])  # CE would veto everything
+    cases = [("6500+", "6,500+"), ("20000+", "20,000"), ("1500+", "over 1,500"),
+             ("~200", "200"), ("approximately 3300", "3,300")]
+    for gt_v, ai_v in cases:
+        gt = [_gt("Q", "How many employees", gt_v)]
+        ai = [_ai("Q", "How many employees", ai_v)]
+        r = evaluate(gt, ai, semantic=True, semantic_backend="cross-encoder")
+        assert r.overall["TP"] == 1 and r.overall["FN"] == 0 and r.overall["FP"] == 0, \
+            f"{gt_v!r} vs {ai_v!r} did not match"
+    print("OK test_qualified_numeric_pairs_match_without_ce passed")
+
+
+def test_qualified_numeric_different_numbers_still_miss(monkeypatch):
+    # The equal-or-nothing contract survives qualifier stripping: "6,500+"
+    # vs "6400+" is still a hard miss, and a range ("500-1000") stays on the
+    # string path (parses None), never falsely equal to its lower bound.
+    _inject_decisive(monkeypatch, same_pairs=[])
+    gt = [_gt("Q", "How many employees", "6,500+")]
+    ai = [_ai("Q", "How many employees", "6400+")]
+    r = evaluate(gt, ai, semantic=True, semantic_backend="cross-encoder")
+    assert r.overall["TP"] == 0 and r.overall["FN"] == 1 and r.overall["FP"] == 1
+    from src.eval.generic_eval import _numeric_value
+    assert _numeric_value("500-1000") is None
+    assert _numeric_value("$3m") is None
+    print("OK test_qualified_numeric_different_numbers_still_miss passed")
+
+
 def test_ce_vetoes_single_answer_anisotropy_error(monkeypatch):
     # The two single-answer errors CE fixes on task2: distinct proper nouns the
     # embedding cosine falsely rated 1.0 (Kalamazoo/Portage, Tornos/Rentas).

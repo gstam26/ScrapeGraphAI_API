@@ -188,14 +188,33 @@ def _is_null(value: str) -> bool:
     return _norm(value) == _NULL_SENTINEL or "not disclosed" in _norm(value)
 
 
-def _numeric_value(text: str) -> Optional[float]:
-    """Parse a PURE numeric value ("2003", "2,003", "12.5") or None.
+# Numeric qualifiers that do not change the number they attach to: a trailing
+# "+" or a leading bound/approximation word. Stripped before the pure-numeric
+# parse so "6,500+" / "over 1,500" / "~20000" all reach the typed
+# equal-or-nothing comparison. Without this, "6500+" vs "6,500+" fell to the
+# string path where the decisive relevance CE scores two bare number strings
+# near 0 and VETOES an identical value (found in the 2026-08-03 detail audit:
+# 3 such cells on gt42, each double-billed FN+FP). Kept deliberately narrow:
+# range values ("500-1000") and unit-bearing values ("$3m") still parse as
+# None and take the string path.
+_NUM_QUALIFIER_RE = re.compile(
+    r"^(?:over|above|more than|at least|approx(?:imately)?|around|about|"
+    r"circa|c\.|~)\s*|\+$"
+)
 
-    Values with any non-numeric content stay None — this exists for cells
-    like years and counts, where fuzzy string similarity is meaningless:
-    token_sort_ratio("2003", "2004") is 75%, which auto-matched two
-    DIFFERENT years (caught by George's first label set, 2026-07-21)."""
-    t = _norm(text).replace(",", "").replace(" ", "")
+
+def _numeric_value(text: str) -> Optional[float]:
+    """Parse a PURE numeric value ("2003", "2,003", "12.5"), possibly carrying
+    a non-value-changing qualifier ("6,500+", "over 1,500", "~200"), or None.
+
+    Values with any other non-numeric content stay None — this exists for
+    cells like years and counts, where fuzzy string similarity is
+    meaningless: token_sort_ratio("2003", "2004") is 75%, which auto-matched
+    two DIFFERENT years (caught by George's first label set, 2026-07-21)."""
+    t = _norm(text)
+    t = _NUM_QUALIFIER_RE.sub("", t)
+    t = _NUM_QUALIFIER_RE.sub("", t)  # both a leading word AND a trailing +
+    t = t.replace(",", "").replace(" ", "")
     if not t:
         return None
     try:

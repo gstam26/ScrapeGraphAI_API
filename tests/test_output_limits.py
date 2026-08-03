@@ -69,7 +69,13 @@ def _row_with_n_items(n: int) -> PipelineResult:
     return PipelineResult(rows=[ExtractedRow(entity="HORIBA", cells=[cell], all_cells=[cell])])
 
 
-def test_matrix_caps_display_items_with_marker():
+def test_matrix_caps_display_items_with_marker(monkeypatch):
+    # Pins the pre-08-03 multi-candidate render: this test exercises the
+    # display CAP, which single-best (default on since 2026-08-03) hides on
+    # single-answer columns by demoting all but the lead. Flag-on behavior
+    # is covered in tests/test_matrix_single_best.py.
+    import src.io_excel as io_excel
+    monkeypatch.setattr(io_excel, "MATRIX_SINGLE_BEST", False)
     result = _row_with_n_items(200)
     df, _ = _make_matrix_df(result, [ColumnSpec(name="Recent news")])
     cell = df.iloc[0]["Recent news"]
@@ -80,7 +86,9 @@ def test_matrix_caps_display_items_with_marker():
     print("OK test_matrix_caps_display_items_with_marker passed")
 
 
-def test_matrix_small_cells_unchanged():
+def test_matrix_small_cells_unchanged(monkeypatch):
+    import src.io_excel as io_excel
+    monkeypatch.setattr(io_excel, "MATRIX_SINGLE_BEST", False)
     result = _row_with_n_items(3)
     df, _ = _make_matrix_df(result, [ColumnSpec(name="Recent news")])
     cell = df.iloc[0]["Recent news"]

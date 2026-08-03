@@ -324,8 +324,15 @@ def test_provenance_reads_all_cells_not_cells():
     print("OK test_provenance_reads_all_cells_not_cells passed")
 
 
-def test_matrix_conflict_label():
-    """When has_conflict is True the Matrix cell text starts with '(sources conflict)'."""
+def test_matrix_conflict_label(monkeypatch):
+    """When has_conflict is True the Matrix cell text starts with '(sources conflict)'.
+
+    Pinned to the pre-08-03 all-candidates render ('value B' must be visible
+    in the cell); with single-best (default on since 2026-08-03) the demoted
+    candidate moves behind the [+N] marker — that path is covered in
+    tests/test_matrix_single_best.py (conflict label survives there too)."""
+    import src.io_excel as io_excel
+    monkeypatch.setattr(io_excel, "MATRIX_SINGLE_BEST", False)
     columns = [ColumnSpec(name="Q")]
 
     conflict_cell = ExtractedCell(

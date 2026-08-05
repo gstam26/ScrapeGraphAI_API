@@ -36,17 +36,23 @@ DEFAULT_SPEC = os.path.join("cmo-inputs", "shortlist_criteria.xlsx")
 REF_YEAR = datetime.now().year
 
 
-def read_cells_auto(path: str) -> tuple[dict, str]:
-    """(cells, source_kind) — auto-detect the workbook format."""
+def read_cells_auto(path: str, sheet: str | None = None) -> tuple[dict, str]:
+    """(cells, source_kind) — auto-detect the workbook format. An explicit
+    --sheet always routes through the grid reader (works on Matrix, AI
+    Summary, or any entity-rows × question-columns sheet)."""
     import pandas as pd
+    if sheet is not None:
+        return read_matrix_cells(path, sheet=sheet), f"grid sheet {sheet!r}"
     sheets = {s.lower() for s in pd.ExcelFile(path).sheet_names}
-    if "matrix" in sheets:
-        return read_matrix_cells(path), "matrix"
+    if "matrix" in sheets or "ai summary" in sheets:
+        cells = read_matrix_cells(path)
+        return cells, "matrix" if "matrix" in sheets else "ai summary"
     if "groundtruth" in sheets:
         return read_flat_gt_cells(path), "flat_gt"
     if "detail" in sheets:
         return read_eval_detail_cells(path), "eval_detail (verified markers UNAVAILABLE)"
-    raise SystemExit(f"{path}: no Matrix / GroundTruth / Detail sheet found")
+    raise SystemExit(f"{path}: no Matrix / AI Summary / GroundTruth / Detail "
+                     f"sheet found — name one explicitly with --sheet")
 
 
 # ---------------------------------------------------------------------------
@@ -158,14 +164,14 @@ def _perturbations(spec: Spec) -> list[tuple[str, Spec]]:
 
 
 def run_experiment(gt_path: str, ai_path: str, spec_path: str, out: str,
-                   k: int) -> None:
+                   k: int, ai_sheet: str | None = None) -> None:
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
     spec = read_spec(spec_path)
     gt_cells, gt_kind = read_cells_auto(gt_path)
-    ai_cells, ai_kind = read_cells_auto(ai_path)
+    ai_cells, ai_kind = read_cells_auto(ai_path, sheet=ai_sheet)
     gt_res = run_shortlist(gt_cells, spec, k=k, ref_year=REF_YEAR)
     ai_res = run_shortlist(ai_cells, spec, k=k, ref_year=REF_YEAR)
 
@@ -310,6 +316,9 @@ def main() -> int:
     p.add_argument("--spec", default=DEFAULT_SPEC)
     p.add_argument("--out", default=None)
     p.add_argument("--top", type=int, default=5)
+    p.add_argument("--sheet", default=None,
+                   help="explicit sheet to read (e.g. 'AI Summary'); default "
+                        "auto-detects Matrix, then AI Summary")
 
     p = sub.add_parser("experiment",
                        help="same spec twice: GT vs AI, diff + sensitivity")
@@ -318,6 +327,8 @@ def main() -> int:
     p.add_argument("--spec", default=DEFAULT_SPEC)
     p.add_argument("--out", default=None)
     p.add_argument("--top", type=int, default=5)
+    p.add_argument("--ai-sheet", default=None,
+                   help="explicit sheet to read from the AI workbook")
 
     args = ap.parse_args()
 
@@ -333,7 +344,7 @@ def main() -> int:
         sys.exit(f"Spec not found: {args.spec} — run init-spec first")
 
     if args.cmd == "run":
-        cells, kind = read_cells_auto(args.workbook)
+        cells, kind = read_cells_auto(args.workbook, sheet=args.sheet)
         spec = read_spec(args.spec)
         res = run_shortlist(cells, spec, k=args.top, ref_year=REF_YEAR)
         stamp = datetime.now().strftime("%Y%m%d_%H%M")
@@ -350,7 +361,8 @@ def main() -> int:
     if args.cmd == "experiment":
         stamp = datetime.now().strftime("%Y%m%d_%H%M")
         out = args.out or os.path.join("outputs", f"shortlist_experiment_{stamp}.xlsx")
-        run_experiment(args.gt_workbook, args.ai_workbook, args.spec, out, args.top)
+        run_experiment(args.gt_workbook, args.ai_workbook, args.spec, out,
+                       args.top, ai_sheet=args.ai_sheet)
         return 0
     return 2
 

@@ -197,6 +197,33 @@ def test_engine_gates_rank_and_flag_through():
     assert by["alpha"].total == 1.0 and by["gamma"].total == 0.0
 
 
+def test_ai_summary_grammar_citations_and_joins():
+    # AI Summary cells: "[C####]" citations stripped, "; "-joined verdicts
+    # split into items, "[fallback: ...]" lines become a flag not an item.
+    import openpyxl, tempfile, os as _os
+    from src.shortlist import read_matrix_cells
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "AI Summary"
+    ws.append(["Entity", "Is the company still operating independently?",
+               "How many employees does the company have?"])
+    ws.append(["Acme", "Yes [C0046, C0089]; Not disclosed [C0079]",
+               "3,300 [C0012] (more in Provenance)\n[fallback: verbatim claims — citation gate failed; see Summary Log]"])
+    fd, path = tempfile.mkstemp(suffix=".xlsx"); _os.close(fd)
+    try:
+        wb.save(path)
+        cells = read_matrix_cells(path)   # no Matrix sheet -> AI Summary fallback
+        ind = cells[("acme", "is the company still operating independently?")]
+        assert [i.raw for i in ind.items] == ["Yes", "Not disclosed"]
+        assert parse_binary(ind.items[0].raw).ok
+        emp = cells[("acme", "how many employees does the company have?")]
+        assert emp.items[0].raw == "3,300"
+        assert "SUMMARY_FALLBACK" in emp.flags
+        assert parse_count(emp.items[0].raw, GUARDS, REF, None).value == 3300
+    finally:
+        _os.remove(path)
+
+
 def test_engine_deterministic():
     a = run_shortlist(_mini_cells(), _mini_spec(), k=2, ref_year=REF)
     b = run_shortlist(_mini_cells(), _mini_spec(), k=2, ref_year=REF)

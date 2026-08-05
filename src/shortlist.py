@@ -161,6 +161,16 @@ def _is_nd(text: str) -> bool:
 
 _YEAR_RE = re.compile(r"(19|20)\d{2}")
 
+# AI Summary cell grammar (io_excel._make_ai_summary_df): prose or verdicts
+# carry [C####] citations, deterministic multi-answers are "; "-joined, and
+# degraded cells end with a "[fallback: ...]" marker line.
+_CITATION_RE = re.compile(r"\s*\[C\d[\d,\sC]*\]")
+_MORE_RE = re.compile(r"\(more in provenance\)", re.IGNORECASE)
+
+
+def _strip_citations(text: str) -> str:
+    return _MORE_RE.sub("", _CITATION_RE.sub("", text)).strip()
+
 
 # ---------------------------------------------------------------------------
 # Spec I/O
@@ -183,19 +193,26 @@ _DEFAULT_CRITERIA = [
      "hard_gate", "money", "max", None, 1e9, 0, "flag", "use_flagged", 10,
      "PLACEHOLDER threshold. Giant = own revenue > USD 1B. Parent-attributed revenue never trips (Q1)."),
     ("medical", "Does the company have experience of medical device manufacturing?",
-     "scored", "binary", "prefer_yes", None, None, 2, "flag", "use_flagged", None, "placeholder"),
+     "scored", "binary", "prefer_yes", None, None, 1, "flag", "use_flagged", None,
+     "the single scored criterion (George 2026-08-05): client-intent + reliable (eval F1 0.84)"),
     ("lowvol", "Do they produce low volumes (around 500-1000 products/devices per year)?",
-     "scored", "binary", "prefer_yes", None, None, 2, "flag", "use_flagged", None, "placeholder"),
+     "scored", "binary", "prefer_yes", None, None, 0, "flag", "use_flagged", None,
+     "weight 0 (GT Yes-club EMPTY, AI asserts 8 - hallucination-class; re-enable by editing)"),
     ("eol", "Does the company have end-of-line (EOL) testing capability?",
-     "scored", "binary", "prefer_yes", None, None, 1, "flag", "use_flagged", None, "placeholder"),
+     "scored", "binary", "prefer_yes", None, None, 0, "flag", "use_flagged", None,
+     "weight 0 in the minimal spec; re-enable by editing this cell"),
     ("npi", "Does the company have new product introduction (NPI) support?",
-     "scored", "binary", "prefer_yes", None, None, 1, "flag", "use_flagged", None, "placeholder"),
+     "scored", "binary", "prefer_yes", None, None, 0, "flag", "use_flagged", None,
+     "weight 0 in the minimal spec; re-enable by editing this cell"),
     ("tooling", "Does the company have tooling capability?",
-     "scored", "binary", "prefer_yes", None, None, 1, "flag", "use_flagged", None, "placeholder"),
+     "scored", "binary", "prefer_yes", None, None, 0, "flag", "use_flagged", None,
+     "weight 0 in the minimal spec; re-enable by editing this cell"),
     ("moulding", "Does the company have plastic moulding capability?",
-     "scored", "binary", "prefer_yes", None, None, 1, "flag", "use_flagged", None, "placeholder"),
+     "scored", "binary", "prefer_yes", None, None, 0, "flag", "use_flagged", None,
+     "weight 0 in the minimal spec; re-enable by editing this cell"),
     ("pcb", "Does the company have printed circuit board (PCB) manufacturing or assembly capability?",
-     "scored", "binary", "prefer_yes", None, None, 1, "flag", "use_flagged", None, "placeholder"),
+     "scored", "binary", "prefer_yes", None, None, 0, "flag", "use_flagged", None,
+     "weight 0 in the minimal spec; re-enable by editing this cell"),
 ]
 
 # Static coarse FX (order-of-magnitude gates; reviewed manually — Q7).
@@ -267,15 +284,29 @@ def read_spec(path: str) -> Spec:
 _MARKER_LINES = {"(sources conflict)", "(unverified)", "-- unverified --"}
 
 
-def read_matrix_cells(filepath: str) -> dict[tuple[str, str], Cell]:
-    """Cells from a pipeline output workbook's Matrix sheet (writer grammar:
-    io_excel._make_matrix_df). Keys are (entity_norm, question_norm)."""
+def read_matrix_cells(filepath: str,
+                      sheet: Optional[str] = None) -> dict[tuple[str, str], Cell]:
+    """Cells from any entity-rows x question-columns sheet of a pipeline
+    output workbook. Default sheet: Matrix, falling back to AI Summary.
+    Handles both cell grammars: the Matrix writer's bullets/markers
+    (io_excel._make_matrix_df) and the AI Summary's [C####] citations,
+    "; "-joined deterministic verdicts and [fallback: ...] lines."""
     import pandas as pd
-    xls = pd.ExcelFile(filepath)
-    sheet = next((s for s in xls.sheet_names if s.lower() == "matrix"), None)
-    if sheet is None:
-        raise ValueError(f"{filepath!r} has no Matrix sheet: {xls.sheet_names}")
-    df = pd.read_excel(xls, sheet_name=sheet)
+    with pd.ExcelFile(filepath) as xls:
+        if sheet is not None:
+            sheet = next((s for s in xls.sheet_names
+                          if _norm(s) == _norm(sheet)), None)
+            if sheet is None:
+                raise ValueError(f"{filepath!r}: sheet not found. "
+                                 f"Available: {xls.sheet_names}")
+        else:
+            sheet = next((s for s in xls.sheet_names if s.lower() == "matrix"),
+                         None) or next((s for s in xls.sheet_names
+                                        if s.lower() == "ai summary"), None)
+        if sheet is None:
+            raise ValueError(f"{filepath!r} has no Matrix / AI Summary sheet: "
+                             f"{xls.sheet_names}")
+        df = pd.read_excel(xls, sheet_name=sheet)
     ent_col = next((c for c in df.columns if _norm(str(c)) == "entity"), df.columns[0])
 
     cells = CellMap()
@@ -314,11 +345,20 @@ def read_matrix_cells(filepath: str) -> dict[tuple[str, str], Cell]:
                     if s.startswith("[+") or sn.startswith("[truncated"):
                         cell.flags.add("CAPPED")
                         continue
+                    if sn.startswith("[fallback:"):
+                        cell.flags.add("SUMMARY_FALLBACK")
+                        continue
                     if sn in _MARKER_LINES:
                         continue
                     value = s[2:].strip() if s.startswith("- ") else s
-                    if value:
-                        cell.items.append(CellItem(raw=value, verified=section_verified))
+                    # AI Summary grammar: strip [C####] citations, then split
+                    # "; "-joined deterministic verdicts into items. Prose
+                    # fragments produced by the split simply PARSE_FAIL at
+                    # the criterion parser and flag through — never guessed.
+                    value = _strip_citations(value)
+                    for frag in (f.strip() for f in value.split("; ")):
+                        if frag:
+                            cell.items.append(CellItem(raw=frag, verified=section_verified))
                 if cell.items and all(_is_nd(i.raw) for i in cell.items):
                     cell.state = "ND"
                 elif not cell.items:

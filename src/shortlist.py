@@ -781,7 +781,7 @@ def run_shortlist(cells: dict[tuple[str, str], Cell], spec: Spec,
         results.append(er)
 
     survivors = [r for r in results if not r.excluded_by]
-    survivors.sort(key=lambda r: (-(r.total or 0), -r.coverage, r.entity))
+    survivors.sort(key=lambda r: (-(r.total or 0), -r.coverage, r.entity.casefold()))
     for i, r in enumerate(survivors, start=1):
         r.rank = i
     ranked = survivors + [r for r in results if r.excluded_by]

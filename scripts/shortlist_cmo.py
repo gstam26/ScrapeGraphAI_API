@@ -56,6 +56,89 @@ def read_cells_auto(path: str, sheet: str | None = None) -> tuple[dict, str]:
 
 
 # ---------------------------------------------------------------------------
+# Consultant-facing explanations — composed from the SPEC, so the report can
+# never describe criteria other than the ones actually used.
+# ---------------------------------------------------------------------------
+_FLAG_GLOSSARY = [
+    ("QUALIFIED", "The value carried a qualifier ('over', '~', '+') — the stated number was used."),
+    ("BOUND_OPEN", "The qualifier means the true value could exceed the stated number; the check passed on the stated value."),
+    ("RANGE", "The value was a range; its bounds were used."),
+    ("STALE", "The figure is older than the allowed age for this criterion."),
+    ("PARENT_ATTRIBUTED", "The revenue figure belongs to the parent company, not this entity — it was NOT counted against the size limit."),
+    ("NO_CURRENCY", "No currency was stated — USD assumed."),
+    ("FORECAST", "Forward-looking figure (outlook / target)."),
+    ("PARTIAL", "Part-year figure (e.g. first half)."),
+    ("MULTI_VALUE", "The cell held several candidate answers; the lead one was used."),
+    ("UNVERIFIED_ONLY", "Only unverified value(s) present — treated like missing data, kept with this flag."),
+    ("UNVERIFIED_CELL", "The cell's values were not verified against source text."),
+    ("CONFLICT", "Sources disagreed for this cell."),
+    ("DEMOTED_RIVALS", "Other candidate answers exist — see the Provenance sheet of the pipeline workbook."),
+    ("CAPPED", "The display cut additional items — see Provenance."),
+    ("SUMMARY_FALLBACK", "The cell came from a fallback rendering of the summary layer."),
+    ("VERIFIED_UNKNOWN", "This input carries no verification markers, so verified-only rules could not apply."),
+]
+
+
+def _plain_rule(c) -> str:
+    """One criterion -> plain-English rule text."""
+    if c.type == "hard_gate":
+        if c.direction == "require_yes":
+            return ("MUST-PASS - a company is excluded only on an explicit "
+                    + ("verified " if c.unverified_policy == "verified_only" else "")
+                    + "'No'. 'Not disclosed' or unreadable answers keep the "
+                      "company in, with a note.")
+        if c.direction == "require_no":
+            return "MUST-PASS - excluded on an explicit 'Yes'; unknowns kept with a note."
+        unit = " USD" if c.parser == "money" else ""
+        lim = c.threshold_hi if c.direction == "max" else c.threshold_lo
+        side = "above" if c.direction == "max" else "below"
+        own = (" Figures attributed to a parent company do not count."
+               if c.parser == "money" else "")
+        pol = ("excluded" if c.missing_policy == "exclude"
+               else "kept in, with a note")
+        return (f"MUST-PASS - excluded if the value is {side} {lim:,.0f}{unit}."
+                f"{own} Companies with no disclosed figure are {pol}.")
+    return (f"RANKING (weight {c.weight:g}) - 'Yes' ranks above 'No'; "
+            f"companies with no answer are not penalised on this criterion "
+            f"but their coverage drops.")
+
+
+def _entity_reason(r, spec_by_id: dict) -> str:
+    """Plain-English 'why' for one entity row."""
+    label = lambda cid: cid.replace("_", " ")
+    if r.excluded_by:
+        v = next(g for g in r.gates if g.criterion_id == r.excluded_by)
+        c = spec_by_id[r.excluded_by]
+        if c.parser == "binary":
+            return (f"Excluded - answered '{v.parsed}' on {label(c.id)} "
+                    f"(the site states this explicitly).")
+        lim = c.threshold_hi if c.direction == "max" else c.threshold_lo
+        unit = " USD" if c.parser == "money" else ""
+        return (f"Excluded - {label(c.id)}: {v.parsed} is over the "
+                f"{lim:,.0f}{unit} limit.")
+    notes = []
+    for v in r.gates:
+        if "not disclosed" in v.label:
+            notes.append(f"{label(v.criterion_id)} not disclosed")
+        elif "no data" in v.label:
+            notes.append(f"no data for {label(v.criterion_id)}")
+        elif "unparseable" in v.label:
+            notes.append(f"{label(v.criterion_id)} answer unreadable")
+        elif "parent-attributed" in v.label:
+            notes.append("revenue figure is the parent company's")
+        elif "unverified only" in v.label:
+            notes.append(f"{label(v.criterion_id)} unverified")
+    basis = "; ".join(
+        f"{label(s.criterion_id)}: {s.label}" for s in r.scores
+        if s.score is not None and spec_by_id[s.criterion_id].weight > 0
+    ) or "no ranking data"
+    why = f"Passed all must-pass checks. Ranked on {basis}."
+    if notes:
+        why += " Note: " + ", ".join(notes) + "."
+    return why
+
+
+# ---------------------------------------------------------------------------
 # Excel writers
 # ---------------------------------------------------------------------------
 _HEAD = dict(bold=True, color="FFFFFF")
@@ -74,13 +157,56 @@ def _style_header(ws):
     ws.auto_filter.ref = ws.dimensions
 
 
+def _howto_sheet(wb, spec) -> None:
+    """Consultant 'How to read' sheet — generated FROM the spec in use."""
+    from openpyxl.styles import Alignment, Font
+    ws = wb.create_sheet("How To Read")
+    wrap = Alignment(wrap_text=True, vertical="top")
+
+    def _section(title):
+        ws.append([])
+        ws.append([title])
+        ws.cell(row=ws.max_row, column=1).font = Font(bold=True, size=12)
+
+    ws.append(["How this shortlist was made"])
+    ws["A1"].font = Font(bold=True, size=14)
+    _section("The criteria (in the order applied)")
+    for c in spec.criteria:
+        if c.type == "scored" and not c.weight:
+            continue   # switched off — do not describe rules not in force
+        ws.append([c.id.replace("_", " "), c.question, _plain_rule(c)])
+        ws.cell(row=ws.max_row, column=1).font = Font(bold=True)
+        for cell in ws[ws.max_row]:
+            cell.alignment = wrap
+    _section("Ranking logic")
+    ws.append(["", "", "Companies failing any MUST-PASS check are excluded "
+                       "(the 'why' column names the check and the value). "
+                       "Survivors are ranked by the weighted ranking criteria; "
+                       "'coverage' shows how much ranking data the company "
+                       "disclosed. Ties break by coverage, then name. "
+                       "IMPORTANT: 'Not disclosed' is never treated as 'No' — "
+                       "unknowns stay in with a note, so a company can rank "
+                       "highly while key facts are undisclosed (check its "
+                       "notes)."])
+    ws.cell(row=ws.max_row, column=3).alignment = wrap
+    _section("Notes/flags you may see")
+    for flag, meaning in _FLAG_GLOSSARY:
+        ws.append(["", flag, meaning])
+        ws.cell(row=ws.max_row, column=2).font = Font(bold=True)
+        ws.cell(row=ws.max_row, column=3).alignment = wrap
+    ws.column_dimensions["A"].width = 16
+    ws.column_dimensions["B"].width = 42
+    ws.column_dimensions["C"].width = 100
+
+
 def _shortlist_sheet(wb, name: str, result) -> None:
     from openpyxl.styles import Alignment, PatternFill
     from openpyxl.utils import get_column_letter
     ws = wb.create_sheet(name)
     gates = [c for c in result.spec.criteria if c.type == "hard_gate"]
     scored = [c for c in result.spec.criteria if c.type == "scored"]
-    hdr = ["rank", "entity", "status", "total", "coverage", "excluded_by"]
+    spec_by_id = {c.id: c for c in result.spec.criteria}
+    hdr = ["rank", "entity", "status", "why", "total", "coverage", "excluded_by"]
     for g in gates:
         hdr += [f"gate:{g.id}", f"{g.id}:value", f"{g.id}:source_cell"]
     for s in scored:
@@ -92,7 +218,7 @@ def _shortlist_sheet(wb, name: str, result) -> None:
         status = ("SHORTLISTED" if r.rank is not None and r.rank <= result.k
                   else "RANKED" if r.rank is not None else "EXCLUDED")
         flags = sorted({f for v in r.gates for f in v.flags})
-        row = [r.rank, r.entity, status,
+        row = [r.rank, r.entity, status, _entity_reason(r, spec_by_id),
                r.total if r.total is not None else "",
                r.coverage if r.rank is not None else "", r.excluded_by]
         for g in gates:
@@ -111,7 +237,8 @@ def _shortlist_sheet(wb, name: str, result) -> None:
             c.alignment = wrap
     _style_header(ws)
     ws.column_dimensions["B"].width = 26
-    for i in range(3, len(hdr) + 1):
+    ws.column_dimensions["D"].width = 60
+    for i in range(5, len(hdr) + 1):
         ws.column_dimensions[get_column_letter(i)].width = 16
 
 
@@ -130,6 +257,7 @@ def write_shortlist_workbook(result, out: str, meta: list[tuple[str, str]]) -> N
         info.cell(row=info.max_row, column=2).alignment = Alignment(wrap_text=True, vertical="top")
     info.column_dimensions["A"].width = 26
     info.column_dimensions["B"].width = 100
+    _howto_sheet(wb, result.spec)
     _shortlist_sheet(wb, "Shortlist", result)
     wb.save(out)
     print(f"Shortlist written: {out}")
@@ -244,6 +372,7 @@ def run_experiment(gt_path: str, ai_path: str, spec_path: str, out: str,
     _style_header(ws)
     ws.column_dimensions["B"].width = ws.column_dimensions["C"].width = 30
 
+    _howto_sheet(wb, spec)
     _shortlist_sheet(wb, "Shortlist GT", gt_res)
     _shortlist_sheet(wb, "Shortlist AI", ai_res)
 

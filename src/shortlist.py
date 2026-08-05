@@ -75,6 +75,7 @@ class Spec:
     criteria: list[Criterion]
     fx: dict[str, float]              # currency code -> USD multiplier
     guards: dict[str, list[str]]      # guard class -> keyword list
+    keywords: dict[str, list[str]] = field(default_factory=dict)  # criterion id -> match phrases (parser=keyword)
     path: str = ""
 
 
@@ -183,37 +184,36 @@ _CRITERIA_COLS = ["id", "question", "type", "parser", "direction",
 # 2026-08-05). Two hard gates per the approved decisions; scored criteria
 # exist to exercise ranking/renormalisation, their weights are toys.
 _DEFAULT_CRITERIA = [
-    ("independence", "Is the company still operating independently?",
-     "hard_gate", "binary", "require_yes", None, None, 0, "flag", "verified_only", None,
-     "APPROVED 2026-08-05: exclude on explicit verified No (acquired out); ND flags through. Polarity may flip later."),
-    ("emp_giant", "How many employees does the company have?",
-     "hard_gate", "count", "max", None, 10000, 0, "flag", "use_flagged", 10,
-     "PLACEHOLDER threshold. Giant = own headcount > 10,000."),
-    ("rev_giant", "What is the company's yearly revenue?",
-     "hard_gate", "money", "max", None, 1e9, 0, "flag", "use_flagged", 10,
-     "PLACEHOLDER threshold. Giant = own revenue > USD 1B. Parent-attributed revenue never trips (Q1)."),
+    # George 2026-08-05(3): client criteria REINTERPRETED. The first must is
+    # not corporate independence but "do they OFFER manufacturing as a
+    # service" (CMO/EMS/CDMO vs selling own products) — judged on the
+    # Summary-description prose via the service-language keyword list
+    # (sheet "Keywords"; deterministic, editable). Second must: MID-SIZED by
+    # revenue (band, not just a giant cap). Independence gate superseded —
+    # re-add a hard_gate row to restore it.
+    ("cmo_services", "Summary description of company's services",
+     "hard_gate", "keyword", "require_match", None, None, 0, "flag", "use_flagged", None,
+     "MUST: description shows they offer manufacturing services (keyword list = data). No match -> kept, flagged (keywords can miss phrasings; LLM normaliser is the gated follow-up)."),
+    ("rev_midsize", "What is the company's yearly revenue?",
+     "hard_gate", "money", "range", 10e6, 1e9, 0, "flag", "use_flagged", 10,
+     "PLACEHOLDER band: mid-sized = USD 10M-1B own revenue. Parent-attributed figures never decide."),
     ("medical", "Does the company have experience of medical device manufacturing?",
      "scored", "binary", "prefer_yes", None, None, 1, "flag", "use_flagged", None,
-     "the single scored criterion (George 2026-08-05): client-intent + reliable (eval F1 0.84)"),
-    ("lowvol", "Do they produce low volumes (around 500-1000 products/devices per year)?",
-     "scored", "binary", "prefer_yes", None, None, 0, "flag", "use_flagged", None,
-     "weight 0 (GT Yes-club EMPTY, AI asserts 8 - hallucination-class; re-enable by editing)"),
-    ("eol", "Does the company have end-of-line (EOL) testing capability?",
-     "scored", "binary", "prefer_yes", None, None, 0, "flag", "use_flagged", None,
-     "weight 0 in the minimal spec; re-enable by editing this cell"),
-    ("npi", "Does the company have new product introduction (NPI) support?",
-     "scored", "binary", "prefer_yes", None, None, 0, "flag", "use_flagged", None,
-     "weight 0 in the minimal spec; re-enable by editing this cell"),
-    ("tooling", "Does the company have tooling capability?",
-     "scored", "binary", "prefer_yes", None, None, 0, "flag", "use_flagged", None,
-     "weight 0 in the minimal spec; re-enable by editing this cell"),
-    ("moulding", "Does the company have plastic moulding capability?",
-     "scored", "binary", "prefer_yes", None, None, 0, "flag", "use_flagged", None,
-     "weight 0 in the minimal spec; re-enable by editing this cell"),
-    ("pcb", "Does the company have printed circuit board (PCB) manufacturing or assembly capability?",
-     "scored", "binary", "prefer_yes", None, None, 0, "flag", "use_flagged", None,
-     "weight 0 in the minimal spec; re-enable by editing this cell"),
+     "the scored criterion: client-intent + reliable (eval F1 0.84)"),
 ]
+
+# Service-language markers for the cmo_services gate — DATA (sheet
+# "Keywords"), extend freely. Short entries (<=4 chars) are matched as whole
+# words, longer ones as substrings of the normalised description.
+_DEFAULT_KEYWORDS = {
+    "cmo_services": [
+        "contract manufactur", "contract electronics", "cmo", "cdmo", "ems",
+        "electronic manufacturing services", "manufacturing services",
+        "manufacturing service", "toll manufactur", "turnkey manufactur",
+        "build to print", "build-to-print", "assembly services",
+        "manufacturing partner", "on behalf of", "oems", "odm",
+    ],
+}
 
 # Static coarse FX (order-of-magnitude gates; reviewed manually — Q7).
 _DEFAULT_FX = {"USD": 1.0, "GBP": 1.27, "EUR": 1.08, "CHF": 1.10, "SEK": 0.095}
@@ -238,10 +238,14 @@ def write_default_spec(path: str) -> None:
     guards = pd.DataFrame(
         [(cls, kw) for cls, kws in _DEFAULT_GUARDS.items() for kw in kws],
         columns=["guard_class", "keyword"])
+    kws = pd.DataFrame(
+        [(cid, kw) for cid, lst in _DEFAULT_KEYWORDS.items() for kw in lst],
+        columns=["criterion_id", "phrase"])
     with pd.ExcelWriter(path, engine="openpyxl") as w:
         crit.to_excel(w, sheet_name="Criteria", index=False)
         fx.to_excel(w, sheet_name="FX", index=False)
         guards.to_excel(w, sheet_name="Guards", index=False)
+        kws.to_excel(w, sheet_name="Keywords", index=False)
 
 
 def read_spec(path: str) -> Spec:
@@ -275,7 +279,15 @@ def read_spec(path: str) -> Spec:
     for _, r in pd.read_excel(path, sheet_name="Guards").iterrows():
         guards.setdefault(str(r["guard_class"]).strip(), []).append(
             str(r["keyword"]).strip().lower())
-    return Spec(criteria=criteria, fx=fx, guards=guards, path=path)
+    keywords: dict[str, list[str]] = {}
+    try:
+        for _, r in pd.read_excel(path, sheet_name="Keywords").iterrows():
+            keywords.setdefault(str(r["criterion_id"]).strip(), []).append(
+                str(r["phrase"]).strip().lower())
+    except ValueError:
+        pass  # pre-keyword spec workbooks stay readable
+    return Spec(criteria=criteria, fx=fx, guards=guards, keywords=keywords,
+                path=path)
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +583,10 @@ def _one_money(fragment: str, fx: dict) -> Optional[tuple[float, set]]:
 
 def parse_money(text: str, guards: dict, fx: dict, ref_year: int,
                 max_age: Optional[int]) -> Parsed:
+    # Human-typed thousands with a space after the comma ("4, 153 million
+    # SEK" = 4,153) — rejoin before the amount regex, which otherwise stops
+    # at the comma and reads 4 (found scoring the final59 GT, Rosti).
+    text = re.sub(r"(?<=\d),\s+(?=\d{3})", ",", text)
     body, notes = _split_annotations(text)
     flags: set = set()
     vintage = None
@@ -614,6 +630,22 @@ def parse_money(text: str, guards: dict, fx: dict, ref_year: int,
     if max_age is not None and vintage is not None and ref_year - vintage > max_age:
         p.flags.add("STALE")
     return p
+
+
+def keyword_match(text: str, phrases: list[str]) -> Optional[str]:
+    """First matching service-language phrase, or None. Short phrases
+    (<= 4 chars: 'cmo', 'ems', 'odm') match as whole words only — 'cmo'
+    must not fire inside 'cmos'; longer phrases match as substrings of the
+    normalised text (hyphens folded to spaces)."""
+    t = _norm(text).replace("-", " ")
+    for kw in phrases:
+        k = kw.replace("-", " ")
+        if len(k) <= 4:
+            if re.search("(?<![a-z0-9])" + re.escape(k) + "(?![a-z0-9])", t):
+                return kw
+        elif k in t:
+            return kw
+    return None
 
 
 def parse_value(crit: Criterion, text: str, spec: Spec, ref_year: int) -> Parsed:
@@ -661,6 +693,19 @@ def eval_gate(crit: Criterion, cell: Optional[Cell], spec: Spec,
     if cell.state == "ND":
         return _missing_verdict(crit, "not disclosed", "Not disclosed", cell_flags)
 
+    # keyword criteria judge the WHOLE cell prose (a description is one
+    # answer, not competing candidates), not the lead item.
+    if crit.parser == "keyword":
+        text = " ".join(i.raw for i in cell.items)
+        hit = keyword_match(text, spec.keywords.get(crit.id, []))
+        if hit is not None:
+            return GateVerdict(crit.id, "PASS", "PASS",
+                               f"matches {hit!r}", raw, sorted(cell_flags))
+        # No phrase found != a refusal: descriptions phrase things freely.
+        # Treated like missing data, visibly labelled.
+        return _missing_verdict(crit, "no service-language match", raw,
+                                cell_flags)
+
     item, pick_flags = _pick_item(cell, crit)
     flags = cell_flags | pick_flags
     if item is None:
@@ -707,6 +752,21 @@ def eval_gate(crit: Criterion, cell: Optional[Cell], spec: Spec,
             return GateVerdict(crit.id, "PASS", "PASS", parsed_str, raw, sorted(flags))
         flags.add("BOUND_OPEN")
         return GateVerdict(crit.id, "PASS", "PASS (bound open)", parsed_str, raw, sorted(flags))
+
+    if crit.direction == "range":
+        lo_t, hi_t = crit.threshold_lo, crit.threshold_hi
+        if p.hi is not None and p.hi < lo_t:
+            return GateVerdict(crit.id, "FAIL", "FAIL (below band)",
+                               parsed_str, raw, sorted(flags))
+        if p.lo is not None and p.lo > hi_t:
+            return GateVerdict(crit.id, "FAIL", "FAIL (above band)",
+                               parsed_str, raw, sorted(flags))
+        if p.lo is not None and p.hi is not None and lo_t <= p.lo and p.hi <= hi_t:
+            label = "PASS" if not (flags & {"QUALIFIED", "RANGE", "STALE"}) else "PASS (flagged)"
+            return GateVerdict(crit.id, "PASS", label, parsed_str, raw, sorted(flags))
+        flags.add("BOUND_OPEN")
+        return GateVerdict(crit.id, "PASS", "PASS (bound open)", parsed_str,
+                           raw, sorted(flags))
 
     return _missing_verdict(crit, f"unknown direction {crit.direction!r}", raw, flags)
 
@@ -861,7 +921,8 @@ def gate_decisiveness(result: ShortlistResult) -> dict[str, dict]:
                 d["decided_on_data"] += 1
             elif v.label.startswith("PASS (") and any(
                     s in v.label for s in ("no data", "not disclosed", "unparseable",
-                                           "unverified only")):
+                                           "unverified only",
+                                           "no service-language match")):
                 d["flagged_through"] += 1
             else:
                 d["decided_on_data"] += 1

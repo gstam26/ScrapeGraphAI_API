@@ -89,6 +89,25 @@ def _plain_rule(c) -> str:
                       "company in, with a note.")
         if c.direction == "require_no":
             return "MUST-PASS - excluded on an explicit 'Yes'; unknowns kept with a note."
+        if c.direction == "require_match":
+            pol = ("excluded" if c.missing_policy == "exclude"
+                   else "kept in, with a note")
+            return ("MUST-PASS - the company description must show they OFFER "
+                    "manufacturing as a service (contract manufacturer / CMO / "
+                    "EMS...), matched against the editable phrase list on the "
+                    "spec's Keywords sheet. Descriptions with no matching "
+                    f"phrase are {pol} - wording varies, so no-match is not "
+                    "proof they only sell their own products.")
+        if c.direction == "range":
+            unit = " USD" if c.parser == "money" else ""
+            pol = ("excluded" if c.missing_policy == "exclude"
+                   else "kept in, with a note")
+            own = (" Figures attributed to a parent company do not count."
+                   if c.parser == "money" else "")
+            return (f"MUST-PASS - the value must be between "
+                    f"{c.threshold_lo:,.0f} and {c.threshold_hi:,.0f}{unit} "
+                    f"(mid-sized band).{own} Companies with no disclosed "
+                    f"figure are {pol}.")
         unit = " USD" if c.parser == "money" else ""
         lim = c.threshold_hi if c.direction == "max" else c.threshold_lo
         side = "above" if c.direction == "max" else "below"
@@ -112,8 +131,13 @@ def _entity_reason(r, spec_by_id: dict) -> str:
         if c.parser == "binary":
             return (f"Excluded - answered '{v.parsed}' on {label(c.id)} "
                     f"(the site states this explicitly).")
-        lim = c.threshold_hi if c.direction == "max" else c.threshold_lo
         unit = " USD" if c.parser == "money" else ""
+        if c.direction == "range":
+            side = "below" if "below" in v.label else "above"
+            band = f"{c.threshold_lo:,.0f}-{c.threshold_hi:,.0f}{unit}"
+            return (f"Excluded - {label(c.id)}: {v.parsed} is {side} the "
+                    f"{band} band.")
+        lim = c.threshold_hi if c.direction == "max" else c.threshold_lo
         return (f"Excluded - {label(c.id)}: {v.parsed} is over the "
                 f"{lim:,.0f}{unit} limit.")
     notes = []
@@ -128,6 +152,9 @@ def _entity_reason(r, spec_by_id: dict) -> str:
             notes.append("revenue figure is the parent company's")
         elif "unverified only" in v.label:
             notes.append(f"{label(v.criterion_id)} unverified")
+        elif "no service-language match" in v.label:
+            notes.append("description has no recognised service phrase "
+                         "(check it manually)")
     basis = "; ".join(
         f"{label(s.criterion_id)}: {s.label}" for s in r.scores
         if s.score is not None and spec_by_id[s.criterion_id].weight > 0
@@ -285,9 +312,9 @@ def _perturbations(spec: Spec) -> list[tuple[str, Spec]]:
                 out.append((f"{c.id} weight {pct:+.0%}", s))
     flip = copy.deepcopy(spec)
     for cc in flip.criteria:
-        if cc.id in ("emp_giant", "rev_giant"):
+        if cc.type == "hard_gate" and cc.missing_policy == "flag":
             cc.missing_policy = "exclude"
-    out.append(("missing-policy flip: size gates flag->exclude", flip))
+    out.append(("missing-policy flip: all flag-gates -> exclude", flip))
     return out
 
 

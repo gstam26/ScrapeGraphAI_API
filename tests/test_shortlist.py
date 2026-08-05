@@ -96,6 +96,12 @@ def test_money_parent_attribution_detected():
     assert p.ok and "PARENT_ATTRIBUTED" in p.flags
 
 
+def test_money_spaced_thousands():
+    # final59 GT, Rosti: analyst typed "4, 153 million SEK" (= 4,153)
+    p = parse_money("4, 153 million SEK", GUARDS, FX, REF, None)
+    assert p.ok and abs(p.value - 4153e6 * 0.095) < 1
+
+
 def test_money_unparseable():
     assert not parse_money("substantial", GUARDS, FX, REF, None).ok
 
@@ -195,6 +201,44 @@ def test_engine_gates_rank_and_flag_through():
     ranked = [r.entity for r in res.entities if r.rank is not None]
     assert ranked[0] in ("alpha", "delta") and by["gamma"].rank is not None
     assert by["alpha"].total == 1.0 and by["gamma"].total == 0.0
+
+
+def test_keyword_gate_service_language():
+    # George 2026-08-05(3): first criterion = offers manufacturing as a service
+    from src.shortlist import keyword_match, _DEFAULT_KEYWORDS
+    phrases = _DEFAULT_KEYWORDS["cmo_services"]
+    # census: the real Adapt EMS description matches
+    assert keyword_match(
+        "ADAPT ems is a UK-based contract electronics manufacturer that "
+        "provides a complete manufacturing service", phrases) is not None
+    # whole-word rule: 'cmo' must not fire inside 'cmos'
+    assert keyword_match("we fabricate CMOS sensors for our own products",
+                         phrases) is None
+    assert keyword_match("a leading CMO for pharma", phrases) == "cmo"
+    kw = Criterion("cmo_services", "q", "hard_gate", "keyword", "require_match",
+                   None, None, 0, "flag", "use_flagged", None)
+    spec = Spec(criteria=[kw], fx=FX, guards=GUARDS,
+                keywords={"cmo_services": phrases})
+    assert eval_gate(kw, _cell("We design and sell our own diagnostics instruments."),
+                     spec, REF).outcome == "PASS"   # no match -> flags through
+    assert "no service-language match" in eval_gate(
+        kw, _cell("We design and sell our own diagnostics instruments."),
+        spec, REF).label
+    assert eval_gate(kw, _cell("Full-service contract manufacturing partner."),
+                     spec, REF).label == "PASS"
+
+
+def test_range_gate_midsize_band():
+    rng = Criterion("rev_midsize", "q", "hard_gate", "money", "range",
+                    10e6, 1e9, 0, "flag", "use_flagged", 10)
+    spec = _spec([rng])
+    assert eval_gate(rng, _cell("$29.8B (Fiscal Year 2025)"), spec, REF).label == "FAIL (above band)"
+    assert eval_gate(rng, _cell("USD 2 million"), spec, REF).label == "FAIL (below band)"
+    assert eval_gate(rng, _cell("£45M (2026)"), spec, REF).outcome == "PASS"
+    v = eval_gate(rng, _cell("$10.5 billion (Mitsui Chemicals, Inc.)"), spec, REF)
+    assert v.outcome == "PASS" and "parent-attributed" in v.label
+    v = eval_gate(rng, _cell(state="ND"), spec, REF)
+    assert v.outcome == "PASS" and "not disclosed" in v.label
 
 
 def test_ai_summary_grammar_citations_and_joins():

@@ -74,6 +74,109 @@ _VERDICT_FILL = {
     "suppressed_null": "EDEDED",  # grey — abstention, precision-exempt
 }
 
+# Plain-English meaning of every verdict, written INTO the report (Run Info
+# glossary) so a reader never needs the source code to interpret a row.
+_VERDICT_GLOSSARY = [
+    ("auto_match",
+     "The AI value agrees with the GT value: strong lexical agreement, or an "
+     "exact match on typed values (numbers, Yes/No). Counted as a true "
+     "positive."),
+    ("semantic_review",
+     "Credited by the semantic matcher (cross-encoder) alone: the two texts "
+     "differ in wording but were judged equivalent (e.g. a paraphrased "
+     "description). Counted as a true positive; coloured blue so every "
+     "matcher-only credit stays auditable."),
+    ("null_match",
+     "GT confirmed the information is absent ('None (not disclosed)') and "
+     "the pipeline also reported no data — a correct abstention. Counted as "
+     "a true positive."),
+    ("auto_miss",
+     "A GT value the pipeline failed to report, or reported something not "
+     "judged equivalent. Counted as a false negative."),
+    ("no_ai_data",
+     "The pipeline produced nothing at all for this cell; each GT value in "
+     "it counts as a false negative."),
+    ("ai_only",
+     "An AI claim with no matching GT value. Counted as a false positive — "
+     "but on list questions the GT is non-exhaustive, so some of these may "
+     "be real-but-unlisted (precision there is a lower bound)."),
+    ("redundant",
+     "A restatement of a claim already credited in the same cell (e.g. "
+     "'Geneva' beside a matched 'Geneva, Switzerland'). Precision-exempt: "
+     "neither a true nor a false positive."),
+    ("suppressed_null",
+     "A 'Not disclosed' claim sitting beside a substantive answer in the "
+     "same cell — page-local absence, i.e. an abstention. An abstention "
+     "asserts nothing, so it is never a false positive; any GT value the "
+     "pipeline failed to find is still charged as a miss."),
+    ("review",
+     "Moderate lexical agreement band (embedding backend only; does not "
+     "occur under the cross-encoder matcher). Counted as a true positive, "
+     "flagged for inspection."),
+]
+
+
+def _write_glossary(wb) -> None:
+    """Append the verdict glossary to Run Info (idempotent)."""
+    if "Run Info" not in wb.sheetnames:
+        return
+    from openpyxl.styles import Alignment, Font, PatternFill
+    info = wb["Run Info"]
+    have = {str(r[0].value) for r in info.iter_rows(min_col=1, max_col=1)}
+    if "Verdict glossary" in have:
+        return
+    wrap = Alignment(wrap_text=True, vertical="top")
+    info.append([])
+    info.append(["Verdict glossary",
+                 "Meaning of every verdict in the Detail sheet (cell colours "
+                 "match the Detail rows and the Matrix View):"])
+    info.cell(row=info.max_row, column=1).font = Font(bold=True, size=12)
+    info.cell(row=info.max_row, column=2).alignment = wrap
+    for verdict, meaning in _VERDICT_GLOSSARY:
+        info.append([verdict, meaning])
+        c = info.cell(row=info.max_row, column=1)
+        c.font = Font(bold=True)
+        fill = _VERDICT_FILL.get(verdict)
+        if fill:
+            c.fill = PatternFill("solid", fgColor=fill)
+        info.cell(row=info.max_row, column=2).alignment = wrap
+
+
+def _git_stamp() -> str:
+    """Short commit id of the scoring code, '+local changes' when dirty —
+    so every report records exactly which evaluator produced it."""
+    import subprocess
+    try:
+        head = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                              capture_output=True, text=True, timeout=10,
+                              cwd=_REPO_ROOT).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain"],
+                               capture_output=True, text=True, timeout=10,
+                               cwd=_REPO_ROOT).stdout.strip()
+        return (head or "unknown") + (" +local changes" if dirty else "")
+    except Exception:  # noqa: BLE001 — provenance nicety, never fatal
+        return "unknown"
+
+
+def _reorder_summary(ws) -> None:
+    """Rewrite Summary data rows into the analyst-template question order
+    (unknown questions after, alphabetically; OVERALL last) — the same order
+    as the Matrix View columns, so the two sheets read in parallel."""
+    canon = {_qnorm(q): i for i, q in enumerate(CMO_QUESTION_ORDER)}
+    rows = [[c.value for c in r] for r in ws.iter_rows(min_row=2)]
+
+    def _key(vals):
+        q = str(vals[0])
+        if q == "OVERALL":
+            return (2, 0, "")
+        i = canon.get(_qnorm(q))
+        return (0, i, "") if i is not None else (1, 0, q)
+
+    rows.sort(key=_key)
+    for i, vals in enumerate(rows, start=2):
+        for j, v in enumerate(vals, start=1):
+            ws.cell(row=i, column=j, value=v)
+
 
 def style_report(path: str, meta_rows: list[tuple[str, str]]) -> None:
     """Post-style the written report + prepend a Run Info sheet."""
@@ -101,6 +204,7 @@ def style_report(path: str, meta_rows: list[tuple[str, str]]) -> None:
 
     # ── Summary: headers, widths, percent-ish rounding, freeze ────────────
     ws = wb["Summary"]
+    _reorder_summary(ws)
     for c in ws[1]:
         c.font, c.fill = head_font, head_fill
     ws.freeze_panes = "B2"
@@ -117,10 +221,14 @@ def style_report(path: str, meta_rows: list[tuple[str, str]]) -> None:
     ws.auto_filter.ref = ws.dimensions
 
     # ── Detail: freeze entity+question, wrap the claim text, colour verdicts ──
+    from openpyxl.comments import Comment
     ws = wb["Detail"]
     hdr = [str(c.value) for c in ws[1]]
     for c in ws[1]:
         c.font, c.fill = head_font, head_fill
+    ws.cell(row=1, column=hdr.index("verdict") + 1).comment = Comment(
+        "What each verdict means: see the Verdict glossary on the Run Info "
+        "sheet.", "eval", height=80, width=320)
     ws.freeze_panes = "C2"
     widths = {"entity": 24, "question": 42, "gt_value": 46, "ai_value": 46,
               "is_list": 8, "value_score": 11, "quote_score": 11,
@@ -137,6 +245,7 @@ def style_report(path: str, meta_rows: list[tuple[str, str]]) -> None:
             row[v_idx].fill = PatternFill("solid", fgColor=fill)
     ws.auto_filter.ref = ws.dimensions
 
+    _write_glossary(wb)
     wb.save(path)
 
 
@@ -383,6 +492,7 @@ def add_matrix_view(report_path: str, urls_path: str = DEFAULT_URLS) -> None:
                       f"{counts['wrong']}✗").alignment = wrap
 
     _write_cell_summary(wb, qstats, q_display)
+    _write_glossary(wb)
 
     # Legend on the Run Info sheet (when present), so the view explains itself.
     if "Run Info" in wb.sheetnames:
@@ -469,6 +579,7 @@ def main() -> int:
         ("Ground truth", f"{os.path.basename(args.gt)}  "
                          f"({o['entities']} entities scored, {len(gt)} GT rows)"),
         ("Scored on", datetime.now().strftime("%Y-%m-%d %H:%M")),
+        ("Code version", f"{_git_stamp()} (scripts/score_cmo.py)"),
         ("Configuration", "sheet=matrix (deliverable grain), prose-cells=on, "
                           "semantic-backend=cross-encoder (decisive)"),
         ("Headline", f"P={o['precision']:.3f}  R={o['recall']:.3f}  "

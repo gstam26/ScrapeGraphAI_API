@@ -90,7 +90,7 @@ MATCH_THRESHOLD  = 0.65   # >= this -> auto_match
 REVIEW_THRESHOLD = 0.45   # >= this -> review (still counted as TP for F1)
 
 # Fuzzy near-duplicate collapse of AI claims before scoring precision — the
-# same constant/idea as the plant-milk evaluator (eval_lib/metrics.py):
+# same constant/idea as the original matrix-based evaluator (src/eval/metrics.py):
 # "Geneva, Switzerland" / "Geneva" / "based in Geneva" are ONE claim, not
 # three, so redundant phrasings don't each count as a hallucination.
 AI_DEDUP_RATIO = 95
@@ -617,7 +617,7 @@ def _dedup_ai(ai: list[AIRow]) -> list[AIRow]:
     best-provenance member. Near-duplicate = token_sort_ratio >= AI_DEDUP_RATIO
     (not just exact-string): "Geneva, Switzerland" and "based in Geneva" are the
     same claim and must not each count as a hallucination on the precision side
-    (the plant-milk evaluator's rule, eval_lib/metrics.py)."""
+    (the original matrix-based evaluator's rule, src/eval/metrics.py)."""
     rank = {"exact": 3, "fuzzy": 2, "fuzzy_soft": 1, "none": 0}
 
     def _better(a: AIRow, b: AIRow) -> AIRow:

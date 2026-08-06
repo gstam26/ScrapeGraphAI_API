@@ -63,6 +63,9 @@ Q_SUSTAINABILITY = "Sustainability"
 Q_MILK_TYPES = "MilkTypes"
 Q_PARENT_COMPANY = "ParentCompany"
 
+# Maps a ground-truth workbook's sheet names to the question names used in the
+# pipeline output. These entries are the aliases from the original benchmark
+# task; extend or replace them for a new ground-truth workbook's sheet names.
 GT_SHEET_TO_QUESTION = {
     "Sustainability": "Sustainability claims",
     "MilkTypes": "Plant milk types",

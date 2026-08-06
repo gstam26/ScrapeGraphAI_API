@@ -137,7 +137,7 @@ Prompts for an input workbook path and an output filename; everything else comes
 
 Workbook-overridable settings: `ACQUIRE_TOOL`, `EXTRACT_TOOL`, `CRAWL_MIN_SCORE`, `CRAWL_MIN_SCORE_EMBED`, `CRAWL_SCORER`, `CRAWL_MAX_PAGES`, `DEFAULT_DEPTH`. `FILTER_MODE` is not workbook-overridable but IS env-overridable (`FILTER_MODE=passthrough` in `.env`), as is `SUMMARY_ENABLED`.
 
-Sample: `samples/test_smoke.xlsx`. Workbook builders (ADLM, CMO): `scripts/build_*_workbook.py`.
+Sample: `samples/test_smoke.xlsx`. Blank template generator: `scripts/build_input_template.py` (also served by the web UI's "Download blank template" button).
 
 ### Key config (`config.py`)
 

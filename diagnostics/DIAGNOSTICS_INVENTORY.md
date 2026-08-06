@@ -25,7 +25,7 @@ This inventory covers the current diagnostics, archived diagnostic outputs, and 
 
 ## 3. Outdated / duplicate / candidate for removal
 
-> Earlier standalone crawl-trace scripts are retained unmaintained under `diagnostics/archive/` as design-evolution evidence; they are not shipped and are not documented here.
+> Earlier standalone crawl-trace scripts were retired when the production crawler superseded them; they are not documented here.
 
 | Diagnostic | Purpose | Command | Required inputs | Outputs | Answers | Current compatibility | Evaluation value | Overlap | Recommendation |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |

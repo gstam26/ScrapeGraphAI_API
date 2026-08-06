@@ -366,7 +366,8 @@ def test_matrix_conflict_label(monkeypatch):
 def test_sample_input_populates_entities_urls_questions_and_config():
     data = read_input("samples/test_smoke.xlsx")
 
-    assert data.entities == ["Oatly", "Ripple", "Califia", "Silk", "Elmhurst"]
+    assert data.entities == ["Alpha Foods", "Beta Beverages", "Gamma Nutrition",
+                             "Delta Farms", "Epsilon Brands"]
     assert len(data.urls) == 6
     assert len(data.columns) == 3
     assert data.config_overrides == {"CRAWL_MAX_PAGES": 15, "DEFAULT_DEPTH": 1}
@@ -378,8 +379,8 @@ def test_sample_input_populates_entities_urls_questions_and_config():
 def test_blank_entities_url_gets_all_entities_and_specific_url_stays_scoped():
     data = read_input("samples/test_smoke.xlsx")
 
-    assert data.urls[0].entities == ["Oatly"]
-    assert data.urls[-1].url == "https://www.mintel.com/food-and-drink/plant-based-milk"
+    assert data.urls[0].entities == ["Alpha Foods"]
+    assert data.urls[-1].url == "https://www.industry-report.example/market-overview"
     assert data.urls[-1].entities == data.entities
     print("OK test_blank_entities_url_gets_all_entities_and_specific_url_stays_scoped passed")
 
@@ -548,7 +549,7 @@ def test_is_list_column_predicate():
 def test_is_list_column_production_instructions():
     """Three exact production instruction strings — only Parent company must be single-answer."""
     assert _is_list_column("For each claim return one concise sentence") is True   # Sustainability claims
-    assert _is_list_column("comma-separated, deduplicated") is True                # Plant milk types
+    assert _is_list_column("comma-separated, deduplicated") is True                # list-type question
     assert _is_list_column("Name the parent company only") is False                # Parent company
     print("OK test_is_list_column_production_instructions passed")
 

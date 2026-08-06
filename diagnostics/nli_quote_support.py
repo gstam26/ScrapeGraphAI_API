@@ -1,9 +1,9 @@
 """NLI quote-support diagnostic: can an entailment cross-encoder provide the
 verify layer's missing support tier (quote SUPPORTS the answer, not merely
-quote EXISTS — layers/verify.md "entailment gap")?
+quote EXISTS — the "entailment gap")?
 
 Follow-up to ce_quote_support.py, which refuted ms-marco for this role
-(2026-07-24: relevance scores collapse to lexical overlap on marketing
+(relevance scores collapse to lexical overlap on marketing
 prose). NLI is the architecturally right formulation: premise = the verbatim
 quote, hypothesis = a declarative statement of (entity, question, value),
 support = P(entailment). For binary No-claims the hypothesis stays
@@ -16,7 +16,7 @@ and are marked template=generic in the dump. Production generalization would
 need a hypothesis template authored per question (natural home: a column on
 the questions sheet, next to instructions) — diagnostic-scope for now.
 
-PRE-REGISTERED EXPECTATIONS (written before the first run, 2026-07-24):
+PRE-REGISTERED EXPECTATIONS (written before the first run):
   1. Distribution must NOT collapse (the ms-marco failure). Fragment quotes
      ("Test Development" = two words) are outside NLI training distributions
      too — if everything lands neutral, NLI is refuted the same way.
@@ -37,7 +37,7 @@ direction; (c) per-question medians vary sensibly. No threshold is
 calibrated here; verdict bands below are for FLAGGING only (semantic-verify
 contract: tiers annotate, never silently gate).
 
-RESULTS (2026-07-24, e2a, 414 claims, nli-deberta-v3-base):
+RESULTS (e2a, 414 claims, nli-deberta-v3-base):
   RUN 1 (bare quote as premise): expectation 1 half-failed — real spread
   exists (top-8 all correct, incl. P(contradiction) support for binary-No:
   "Manufacturing Facilities in the US and Mexico" vs exclusively-China ->
@@ -67,11 +67,11 @@ RESULTS (2026-07-24, e2a, 414 claims, nli-deberta-v3-base):
   500-1000" can't be entailed by a quote that gives no numbers — arguably
   the flag is CORRECT). --context-premise is the recommended mode.
   STATUS: promising, uncalibrated. Ship gate = human-labelled support pairs
-  (the semantic-verify eval set); annotate-only per the 2026-06-24 contract.
+  (the semantic-verify eval set); annotate-only per the verify-tier contract.
 
-Network note: downloads the model from HuggingFace on first run — works on
-this Dell, blocked on the Sagentia network. On the work laptop, download
-elsewhere and pass --model <local_path> (the Paulo_cross_encoder pattern).
+Network note: downloads the model from HuggingFace on first run — blocked on
+the Sagentia network. On an on-network machine, download
+elsewhere and pass --model <local_path>.
 
 Usage:
     python diagnostics/nli_quote_support.py <run_workbook.xlsx>

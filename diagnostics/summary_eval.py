@@ -1,10 +1,9 @@
 """Faithfulness-eval harness for the LLM summary layer — validates the JUDGE.
 
-Design: brain/proposals/llm-summary-layer.md §4 (labelled-pairs pattern).
-Everything here scores the Tier-2 judge against labels KNOWN BY CONSTRUCTION
-or supplied by a human, so the judge earns trust before its verdicts gate a
-client deliverable. Pre-registered ship bar (George, 2026-07-06, held even
-if the output reads well):
+Design: labelled-pairs pattern — everything here scores the Tier-2 judge
+against labels KNOWN BY CONSTRUCTION or supplied by a human, so the judge
+earns trust before its verdicts gate a client deliverable. Pre-registered
+ship bar (held even if the output reads well):
 
     corruption-set accuracy >= 0.90
     sentence-level agreement with human labels >= 0.80
@@ -28,9 +27,9 @@ input claim IDs and exact prompts this harness replays):
                   sentence-level agreement (expected ~1.0 with seeding) and
                   fingerprint variance.
   label-template  Export a ~50-summary sentence-level labelling workbook for
-                  George (blind: no judge verdicts included).
+                  a human labeller (blind: no judge verdicts included).
   label-score     Re-judge the labelled sentences (seeded, deterministic)
-                  and report agreement with George's labels.
+                  and report agreement with the human labels.
   flags           Diagnosis view: print every flagged sentence of every
                   gate-passed summary next to the claims it cites (read-only;
                   seeded re-judge, so verdicts match summary_judge.py).
@@ -166,7 +165,7 @@ def corrupt_swap_entity(record: dict, entities: list[str], claim_texts: dict) ->
     entity. The judge is contracted to check each sentence against its cited
     claims only, so swapping the entity in those sentences leaves them faithful
     to their claims — an invalid corruption whose "should be caught" label is
-    wrong by construction (diagnosed 2026-07-08: 69/71 old swap_entity cases
+    wrong by construction (diagnosed: 69/71 old swap_entity cases
     were no-ops, dragging the bar to 0.756 after the judge-blindness fix).
     Returns None when no cited claim names the entity."""
     entity = record["entity"]
@@ -197,7 +196,7 @@ def corrupt_inject_fact(record: dict, entities: list[str], claim_texts: dict) ->
     # one-liners like "yes [C0102]" have no terminal period, so a space
     # MERGES the fabrication into the same unit — the judge then sees one
     # half-supported half-fabricated unit instead of a clean planted lie
-    # (2026-07-14 CMO s5 run: inject_fact misses clustered exactly on the
+    # (CMO s5 run: inject_fact misses clustered exactly on the
     # one-line tag cells for this reason — harness artefact, not judge).
     s = record["summary"].rstrip()
     sep = " " if ("\n" not in s and s.endswith((".", "!", "?"))) else "\n"
@@ -253,8 +252,8 @@ def digest_judgeable_text(digest_line: str) -> str | None:
     """The claim-derived portion of a Digest line, with ALL template
     arithmetic removed. Only theme labels (verbatim claims) + citations
     remain — the part that is faithful-by-construction AGAINST THE CITED
-    CLAIMS, which is the only contract the judge checks. The first laptop
-    eval (2026-07-07) judged the per-theme "(9 items)" counts and correctly
+    CLAIMS, which is the only contract the judge checks. The first
+    eval judged the per-theme "(9 items)" counts and correctly
     called them unsupported — a harness under-strip, not a judge error."""
     top = digest_line.find("Top: ")
     if top == -1 or not has_citation(digest_line):
@@ -268,7 +267,7 @@ def run_positives(wb, client, limit) -> tuple[int, int]:
     Each line is judged as ONE unit: it is a single template line, and theme
     labels are verbatim claims that may contain abbreviation periods, so
     sentence-splitting it produces citation-less fragments that auto-flag
-    (the Sebia 3-fragment miss, 2026-07-07)."""
+    (the Sebia 3-fragment miss)."""
     if "Digest" not in wb.sheetnames:
         raise SystemExit("Workbook has no Digest sheet.")
     claim_texts = load_claim_texts(wb)

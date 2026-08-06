@@ -1,6 +1,6 @@
 """One-off seed corrections from the analyst's 2026-07-31 GT notes.
 
-The analyst flagged two seeds as pointing at the wrong site (her notes are in
+The analyst flagged two seeds as pointing at the wrong site (the notes are in
 the GT template's Website column, yellow-filled):
 
   OnCore Manufacturing Services : neotechcable.com is a CABLE company;

@@ -1,20 +1,20 @@
 """Build the CMO v3 instructions arm: baseline page set pinned, Y/N capability
 instructions tightened to the analyst's revealed disclosure norm.
 
-Motivation (decision-log 2026-07-29, NLI join): the v2 Y/N guidance already
+Motivation (from the NLI errors join): the v2 Y/N guidance already
 said "if torn, Not disclosed", but the GT scoring showed the tool still (a)
 asserted Yes from bare menu labels — the guidance sets no evidence bar for
 Yes — and (b) read specialization wording as a No-implication ("focuses
 exclusively on plastic injection moulding" -> PCB No) where the analyst wrote
 Not disclosed. v3 changes ONLY the shared Y/N instruction, making both rules
 explicit; the 8 prose/numeric questions keep their v2 instructions verbatim
-so the A/B stays narrow. Caitlin's GT template is untouched — v3 aligns the
+so the A/B stays narrow. The analyst's GT template is untouched — v3 aligns the
 tool with the analyst's revealed interpretation of the same contract.
 
-The output is a REPLAY workbook (standing 2026-07-06 requirement): pages are
-pinned to the baseline run's Acquire Log at depth 0, so the arm differs from
-the baseline in instructions only — no crawl/page-set drift. The extract
-cache key includes instruction text (2026-07-23), so v3 re-extracts even
+The output is a REPLAY workbook (standing requirement for before/after
+comparisons): pages are pinned to the baseline run's Acquire Log at depth 0,
+so the arm differs from the baseline in instructions only — no crawl/page-set
+drift. The extract cache key includes instruction text, so v3 re-extracts even
 with the baseline's caches intact while fetches stay cache-served.
 
 Defaults build the 5-GT-entity slice (Adapt/Arrk/Asteelflash/Automatic/
@@ -78,8 +78,8 @@ def main() -> int:
                     help="keep all baseline entities (default: the 5 GT rows)")
     args = ap.parse_args()
 
-    # gate_failed pages are kept: since the full-page rescue (2026-07-23,
-    # 6cf1d36) gate failure is diagnostic, not a drop — the baseline extracted
+    # gate_failed pages are kept: since the full-page rescue,
+    # gate failure is diagnostic, not a drop — the baseline extracted
     # those pages, so the arm must replay them or the A/B confounds the
     # instruction change with a page-set difference.
     build_replay_input(args.baseline, args.input, args.out,

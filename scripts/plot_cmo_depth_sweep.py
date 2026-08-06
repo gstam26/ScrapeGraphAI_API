@@ -39,7 +39,7 @@ def _populated(value) -> bool:
 
 
 def _budget_pinned_note(depths: list[int], out_dir: str) -> str | None:
-    """Best-effort honesty check (George, 2026-07-14): at the deepest depth,
+    """Best-effort honesty check: at the deepest depth,
     how many entities sit at exactly the page budget? BFS spends a binding
     budget on shallow breadth, so depths beyond a pinned entity's cap are
     NOT a fresh measurement for it — flat cells past that point can be a
@@ -72,7 +72,7 @@ def _budget_pinned_note(depths: list[int], out_dir: str) -> str | None:
 
 def _claims_per_depth(depths: list[int], out_dir: str) -> dict[int, int]:
     """Provenance row count per depth — the enrichment signal populated-cell
-    counts miss entirely (George, 2026-07-14: depth1 533 -> depth2 1,290
+    counts miss entirely (observed: depth1 533 -> depth2 1,290
     claims while populated cells barely moved). Best-effort per depth."""
     out: dict[int, int] = {}
     for d in depths:
@@ -129,7 +129,7 @@ def plot_depth_curve(df: pd.DataFrame, out_dir: str) -> str:
     if claims:
         # The enrichment signal populated-cell counts miss entirely: cells
         # can be "done" at depth 1 yet carry far less evidence than the
-        # same cells at depth 2 (2026-07-14 finding).
+        # same cells at depth 2.
         cd = sorted(claims)
         cv = [claims[d] for d in cd]
         axes[3].plot(cd, cv, "D-", color="#6A1B9A", linewidth=2)

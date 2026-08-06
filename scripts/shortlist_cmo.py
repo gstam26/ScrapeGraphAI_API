@@ -8,7 +8,7 @@ Input auto-detection by sheet name: "Matrix" -> pipeline workbook (production
 path), "GroundTruth" -> flat GT workbook, "Detail" -> eval report
 (AI cells reconstructed; verified markers unavailable -> caveat recorded).
 
-The experiment (George, 2026-08-05): the SAME spec file, byte-identical,
+The experiment: the SAME spec file, byte-identical,
 run twice — once on GT, once on the AI matrix. Output: top-k from each, a
 full gate-verdict-level diff (every disagreement traced to the cell that
 diverged), the sensitivity pass (threshold/weight perturbations + the

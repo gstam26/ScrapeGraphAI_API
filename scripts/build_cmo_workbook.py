@@ -13,27 +13,27 @@ Real-input hygiene handled here (all observed in the actual file):
   - deep division links are KEPT as given (carclo.co.uk/our-businesses/... points
     at the CMO division; root-normalising would crawl the parent plc instead)
 
-George's EDIT sheet (2026-07-15) adds an UNTITLED column right of Website with
-his manual URL research. Recognised row edits (case-insensitive keywords, URL
+The reviewing analyst's EDIT sheet adds an UNTITLED column right of Website
+with manual URL research. Recognised row edits (case-insensitive keywords, URL
 extracted from the same cell where present):
   - a bare URL (incl. "In_english <url>")  -> adopt as the seed, overriding
-    the client Website column (his find is the verified one)
+    the client Website column (the manually-researched find is the verified one)
   - REPEAT                 -> duplicate of another row, DROP (cross-name dupes
                               like "Rosti"/"Rosti Group" vs "Rosti A/S" that
                               the name-level consolidation cannot see)
   - ACQUIRED [BY] <url>    -> seed the acquirer's site; acquisition itself is
-                              Q2 evidence (2026-07-14 reframe: dead/absorbed
-                              companies are findings, not URL-chase targets)
+                              Q2 evidence (dead/absorbed companies are
+                              findings, not URL-chase targets)
   - NOW_IS <url>           -> renamed/successor site, seed it
-  - NO_ACCESS / UNKNOWN    -> no usable site per George's manual check —
-                              excluded from the crawl, kept in the inventory
-                              as a finding
+  - NO_ACCESS / UNKNOWN    -> no usable site per the reviewing analyst's
+                              manual check — excluded from the crawl, kept in
+                              the inventory as a finding
   - RANDOM LANDING PAGE    -> the client URL technically opens but lands on
                               junk; excluded (overrides a passing probe)
   - MAYBE <url>            -> uncertain match, excluded by default (candidate
                               URL preserved in the inventory notes)
 Unnamed columns are never treated as question columns. Everything lands in
-the inventory CSV: george_note (verbatim cell) + seed_source (client/george).
+the inventory CSV: reviewer_note (verbatim cell) + seed_source (client/reviewer).
 
 --check probes every cleaned URL (GET, honest UA, 10 s timeout, one request
 per domain so no politeness concern) and classifies each entity into a cohort:
@@ -66,7 +66,7 @@ URL_COL = "Website"
 HEADER_ROW = 3
 OUT_DIR = "cmo-inputs"
 
-# George's edit cells mix keywords and URLs ("ACQUIRED BY:  https://...").
+# Edit cells mix keywords and URLs ("ACQUIRED BY:  https://...").
 _EDIT_URL_RE = re.compile(r"(https?://\S+|www\.[^\s,]+)", re.IGNORECASE)
 
 # Edit kinds that adopt the cell's URL as the seed / that exclude the row.
@@ -156,13 +156,13 @@ def main() -> int:
                          "reused across depth-sweep runs (overrides --start/--end)")
     ap.add_argument("--max-pages", type=int, default=None,
                     help="CRAWL_MAX_PAGES override written to the workbook config sheet. "
-                         "The 2026-07-13 sweep showed the default budget (15/entity) fills "
+                         "The depth sweep showed the default budget (15/entity) fills "
                          "entirely with depth-1 pages (BFS), so depth 2 never runs — raise "
                          "this to make depth>=2 measurable at all.")
     ap.add_argument("--include-blocked", action="store_true",
                     help="also include entities whose probe hit http_4xx/unreachable — "
                          "the plain-httpx probe is weaker than the production hybrid "
-                         "fetcher (browser render passed Cloudflare on Nova, 2026-07-13; "
+                         "fetcher (the browser render has passed Cloudflare blocks; "
                          "SSL trust and WAF blocks differ per client). Fail-soft: rows "
                          "the pipeline can't reach either stay empty and the Acquire "
                          "Log records why — itself baseline evidence.")
@@ -177,7 +177,7 @@ def main() -> int:
             sys.exit(f"expected column {col!r} not found — got {list(df.columns)}")
     df = df[df[ENTITY_COL].notna()].reset_index(drop=True)
 
-    # Untitled columns are George's edit/notes columns (EDIT sheet), never
+    # Untitled columns are the reviewer's edit/notes columns (EDIT sheet), never
     # questions — without this exclusion "Unnamed: 17" would ship to the
     # extractor as a 16th question.
     edit_cols = [c for c in df.columns if str(c).startswith("Unnamed")]
@@ -185,41 +185,41 @@ def main() -> int:
     df["entity"] = df[ENTITY_COL].map(clean_entity)
     df["url"] = df[URL_COL].map(clean_url)
 
-    # ── George's edit column (found URLs + row dispositions) ────────────────
-    df["george_note"] = ""
+    # ── The reviewer's edit column (found URLs + row dispositions) ──────────
+    df["reviewer_note"] = ""
     df["seed_source"] = ["client" if u else "" for u in df["url"]]
-    df["george_kind"] = ""
+    df["reviewer_kind"] = ""
     if edit_cols:
         joined = df[edit_cols].apply(
             lambda r: " ".join(str(v) for v in r if pd.notna(v)), axis=1)
         parsed = joined.map(parse_edit)
-        df["george_kind"] = [k for k, _ in parsed]
-        df["george_url"] = [u for _, u in parsed]
-        df["george_note"] = [" ".join(str(v).split()) for v in joined]
+        df["reviewer_kind"] = [k for k, _ in parsed]
+        df["reviewer_url"] = [u for _, u in parsed]
+        df["reviewer_note"] = [" ".join(str(v).split()) for v in joined]
 
-        repeats = df["george_kind"] == "repeat"
+        repeats = df["reviewer_kind"] == "repeat"
         if repeats.any():
-            print(f"Dropping {int(repeats.sum())} row(s) George marked REPEAT: "
+            print(f"Dropping {int(repeats.sum())} row(s) marked REPEAT: "
                   + ", ".join(df.loc[repeats, "entity"]))
             df = df[~repeats].reset_index(drop=True)
 
-        adopt = df["george_kind"].isin(_EDIT_SEED_KINDS) & (df["george_url"] != "")
-        df.loc[adopt, "url"] = df.loc[adopt, "george_url"]
-        df.loc[adopt, "seed_source"] = "george"
+        adopt = df["reviewer_kind"].isin(_EDIT_SEED_KINDS) & (df["reviewer_url"] != "")
+        df.loc[adopt, "url"] = df.loc[adopt, "reviewer_url"]
+        df.loc[adopt, "seed_source"] = "reviewer"
         if adopt.any():
-            print(f"Adopted {int(adopt.sum())} George-found URL(s) "
-                  f"({(df['george_kind'][adopt] == 'acquired').sum()} acquired, "
-                  f"{(df['george_kind'][adopt] == 'renamed').sum()} renamed)")
+            print(f"Adopted {int(adopt.sum())} reviewer-found URL(s) "
+                  f"({(df['reviewer_kind'][adopt] == 'acquired').sum()} acquired, "
+                  f"{(df['reviewer_kind'][adopt] == 'renamed').sum()} renamed)")
 
-        # George's manual verdict overrides a technically-passing probe
-        # (e.g. Sedat: the client URL opens but lands on a random page).
-        exclude = df["george_kind"].isin(_EDIT_EXCLUDE_KINDS)
+        # The reviewing analyst's manual verdict overrides a technically-passing
+        # probe (e.g. Sedat: the client URL opens but lands on a random page).
+        exclude = df["reviewer_kind"].isin(_EDIT_EXCLUDE_KINDS)
         df.loc[exclude, "url"] = ""
         df.loc[exclude, "seed_source"] = ""
         if exclude.any():
-            print(f"Excluded {int(exclude.sum())} row(s) per George's notes: "
+            print(f"Excluded {int(exclude.sum())} row(s) per the reviewer's notes: "
                   + ", ".join(f"{e} ({k})" for e, k in
-                              zip(df.loc[exclude, 'entity'], df.loc[exclude, 'george_kind'])))
+                              zip(df.loc[exclude, 'entity'], df.loc[exclude, 'reviewer_kind'])))
 
     # The client list repeats some companies (observed: Flextronics x3,
     # Partnertech x3, ...), with at most one URL among the copies. Consolidate
@@ -255,15 +255,15 @@ def main() -> int:
         df["cohort"] = ["missing" if u == "" else "unchecked" for u in df["url"]]
         df["final_url"] = ""
 
-    # Rows George manually ruled out are findings, not gaps — label them by
-    # his verdict so the coverage split reports "no site exists / can't be
+    # Rows the reviewer manually ruled out are findings, not gaps — label them
+    # by that verdict so the coverage split reports "no site exists / can't be
     # found" separately from "we never had a URL" (Q2 evidence reframe).
-    georged = df["george_kind"].isin(_EDIT_EXCLUDE_KINDS)
-    df.loc[georged, "cohort"] = "george_" + df.loc[georged, "george_kind"]
+    ruled_out = df["reviewer_kind"].isin(_EDIT_EXCLUDE_KINDS)
+    df.loc[ruled_out, "cohort"] = "reviewer_" + df.loc[ruled_out, "reviewer_kind"]
 
     os.makedirs(args.out_dir, exist_ok=True)
     inv_path = os.path.join(args.out_dir, "cmo_url_inventory.csv")
-    df[["entity", "url", "cohort", "final_url", "seed_source", "george_note"]].to_csv(
+    df[["entity", "url", "cohort", "final_url", "seed_source", "reviewer_note"]].to_csv(
         inv_path, index=False)
 
     print(f"\n{len(df)} entities, {len(questions)} questions")

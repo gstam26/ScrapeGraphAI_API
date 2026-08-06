@@ -4,7 +4,7 @@ fallback-all) over the Filter Log's recorded scores and overlays Provenance
 claims to count what active filtering would have saved vs lost.
 
 Works on any DIAGNOSTICS output workbook (passthrough logs full scores).
-First result (2026-07-23, CMO 4-entity rescue run): threshold routing is a
+First result (CMO 4-entity rescue run): threshold routing is a
 no-op on CMO — 39/2023 pairs excluded at 0.55, scores compressed into
 [0.455, 0.809], keyword gate fired on 60% of pairs; meanwhile 45/119 extract
 calls yielded zero items and page-level embedding AUC for predicting any-yield

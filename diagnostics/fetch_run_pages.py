@@ -1,6 +1,6 @@
 """Fetch every page of a pipeline run's Acquire Log into a local text cache.
 
-Built for the 2026-07-23 CE answerability A/B; generally useful whenever an
+Built for the CE answerability A/B; generally useful whenever an
 analysis needs the page TEXTS of a run executed on another machine (the
 output workbook records URLs but not texts). Resumable: pages already in the
 target dir are skipped (fetch errors are cached as empty files so reruns

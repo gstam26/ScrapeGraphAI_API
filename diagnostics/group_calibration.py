@@ -36,7 +36,7 @@ from src.embed import embed_batch
 from src.group import _normalise_value, center_vector_map, cluster_values
 
 _PROBE_TIMEOUT_S = 4
-# Raw cosines live in a narrow high band (2026-07-03 run on real validation
+# Raw cosines live in a narrow high band (observed on real validation
 # claims: one giant cluster at any threshold <= 0.70); centered cosines
 # spread around 0, so the two spaces need different sweep ranges.
 _RAW_THRESHOLDS = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]

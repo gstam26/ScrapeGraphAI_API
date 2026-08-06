@@ -3,10 +3,11 @@
 Emits two workbooks that must never drift apart:
 
   1. cmo-inputs/cmo_gt_analyst_TEMPLATE.xlsx — the fillable matrix for the
-     analyst (Caitlin): one row per crawlable entity, verified seed URL
+     analyst: one row per crawlable entity, verified seed URL
      prefilled, one column per question, an answer-format guidance row, an
-     Instructions tab (GT scope = website only, per 2026-07-22 decision) and
-     an Excluded-companies tab (George's EDIT verdicts — do-not-research).
+     Instructions tab (GT scope = website only) and
+     an Excluded-companies tab (the reviewing analyst's EDIT verdicts —
+     do-not-research).
   2. cmo-inputs/cmo_input_v2.xlsx — the pipeline input workbook with the SAME
      question text (+ the same guidance as the extractor `instructions`
      column). The v1 baseline used the 15 verbatim client headers; v2 fixes
@@ -216,14 +217,14 @@ def build_template(urls: pd.DataFrame, inv: pd.DataFrame) -> None:
     ws_x.sheet_properties.tabColor = "9E9E9E"
     ws_x.append(["Company", "Reason (manual URL research, July 2026)"])
     reasons = {
-        "george_no_access": "No usable website found (site gone or inaccessible)",
-        "george_unknown": "Could not identify the company / its website",
-        "george_bad_landing": "Listed URL opens but lands on an unrelated page",
-        "george_maybe": "Only an uncertain website candidate found — excluded",
+        "reviewer_no_access": "No usable website found (site gone or inaccessible)",
+        "reviewer_unknown": "Could not identify the company / its website",
+        "reviewer_bad_landing": "Listed URL opens but lands on an unrelated page",
+        "reviewer_maybe": "Only an uncertain website candidate found — excluded",
     }
-    excluded = inv[inv["cohort"].astype(str).str.startswith("george_")]
+    excluded = inv[inv["cohort"].astype(str).str.startswith("reviewer_")]
     for _, r in excluded.iterrows():
-        note = str(r.get("george_note", "") or "").strip()
+        note = str(r.get("reviewer_note", "") or "").strip()
         extra = f" ({note})" if note and note.upper() not in (
             "NO_ACCESS", "UNKNOWN", "RANDOM LANDING PAGE") else ""
         ws_x.append([r["entity"], reasons.get(r["cohort"], r["cohort"]) + extra])

@@ -44,8 +44,8 @@ def _populated(value) -> bool:
 def run_one(depth: int) -> dict:
     # Whole body guarded: ANY per-depth failure (bad workbook, pipeline error,
     # scoring error) must mark this depth FAILED and let the sweep continue —
-    # a depth-3 ValueError from read_input killed a completed 0-2 sweep on
-    # 2026-07-14 because only the pipeline call was wrapped.
+    # a depth-3 ValueError from read_input once killed a completed 0-2 sweep
+    # because only the pipeline call was wrapped.
     try:
         return _run_one_inner(depth)
     except Exception:
@@ -66,7 +66,7 @@ def _run_one_inner(depth: int) -> dict:
     # URLs, so without this a later run's crawl hits cache for pages an
     # earlier run already fetched — the deeper crawl reads a stale page set
     # instead of running its own live crawl, and the depths stop being
-    # comparable (observed 2026-07-13: depth 1 and depth 2 produced
+    # comparable (observed: depth 1 and depth 2 produced
     # byte-identical page/cell counts because depth 2 inherited depth 1's
     # cache within the same process). A fresh dir per depth costs one extra
     # live fetch of the shared seeds each run; correctness over speed here.
@@ -120,7 +120,7 @@ def main() -> int:
                          f"NOTE for depths >= 2: build ALL compared workbooks with the "
                          f"same raised --max-pages — at the default budget, BFS fills "
                          f"the page cap with shallow links and deeper levels never run "
-                         f"(measured 2026-07-13: zero depth-2 pages at budget 15).")
+                         f"(measured: zero depth-2 pages at budget 15).")
     args = ap.parse_args()
     depths = [int(d) for d in args.depths.split(",") if d.strip() != ""]
 

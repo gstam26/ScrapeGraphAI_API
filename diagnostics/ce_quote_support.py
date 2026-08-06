@@ -2,14 +2,14 @@
 claims whose cited quote actually answers the question from claims where the
 quote is merely topical?
 
-Motivation (2026-07-24): the e2a smoke review found two bad-claim classes —
+Motivation: the e2a smoke review found two bad-claim classes —
 weak-evidence Yes from menu labels ("Test Development" -> EOL-testing Yes) and
 independence-Yes whose citations don't support the verdict. Both are
 RELEVANT-but-not-ENTAILING: the quote is about the right topic but doesn't
 justify the value. ms-marco scores relevance (query->passage), not
 entailment, so the pre-registered prediction is that these suspects score
 HIGH on CE(question, quote) — which would be the case for adding an NLI
-cross-encoder for a support tier (brain/proposals/semantic-verify.md), not a
+cross-encoder for a support tier, not a
 refutation of CE for the off-topic tier.
 
 Scores per claim row (Provenance):
@@ -20,7 +20,7 @@ Reports per-question distributions, the bottom of the ranking (candidate
 off-topic claims), and where the pre-registered suspect classes land.
 No calibration claimed — this measures SEPARATION only.
 
-RESULT (2026-07-24, e2a run, 414 claims): the prediction was WRONG in a more
+RESULT (e2a run, 414 claims): the prediction was WRONG in a more
 damning way than expected — ms-marco doesn't score the suspects high, it
 scores nearly EVERYTHING zero. 67.6% of claims < 0.01; 14/17 questions have
 median <= 0.05, including perfect evidence (Tecan HQ street address scores
@@ -139,7 +139,7 @@ def main() -> None:
     if len(suspects):
         med = suspects["q_quote_pctile"].median()
         # Percentiles only mean something if the score distribution has
-        # spread. If most of the run sits at ~zero (the 2026-07-24 e2a
+        # spread. If most of the run sits at ~zero (the observed e2a
         # outcome), rank position is noise — say so instead of over-reading.
         degenerate = (rows["ce_q_quote"] < 0.01).mean() > 0.5
         if degenerate:

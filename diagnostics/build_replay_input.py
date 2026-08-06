@@ -1,6 +1,6 @@
 """Build a page-set-pinned replay input workbook from a completed run.
 
-STANDING REQUIREMENT (decision-log 2026-07-06 finding): any before/after
+STANDING REQUIREMENT: any before/after
 validation of a code change must pin the page set. Crawl link discovery and
 scoring re-run live on every run, and cache hits discover links from cached
 markdown while live fetches use rawHtml — so "same tool, different run" does

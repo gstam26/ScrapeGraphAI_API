@@ -19,7 +19,7 @@ Interpretation guide printed with the numbers:
   other analyst does not have — coverage gap, not error.
 
 Usage:
-  python scripts/gt_agreement.py gt_caitlin.xlsx gt_analystB.xlsx
+  python scripts/gt_agreement.py gt_analystA.xlsx gt_analystB.xlsx
   python scripts/gt_agreement.py a.xlsx b.xlsx --prose-cells
 """
 from __future__ import annotations

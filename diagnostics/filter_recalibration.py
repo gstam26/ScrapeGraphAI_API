@@ -1,7 +1,7 @@
 """Filter recalibration: instruction-aware routing queries, before/after AUC.
 
-Measures the 2026-07-03 filter fix (embed column name + instruction instead
-of the 2-3 word name alone — see brain/proposals/filter-and-synthesis.md)
+Measures the filter fix (embed column name + instruction instead
+of the 2-3 word name alone)
 on the completed validation run, with zero Firecrawl credits and no LLM:
 
 BEFORE (offline, any machine): reads the baseline workbook's Filter Log
@@ -261,8 +261,8 @@ def after_tables(
 # Query forms tried per question. MS MARCO cross-encoders are trained on
 # SHORT natural search queries; the production "{name}. {instruction}" string
 # is prompt-ese (output-format directives etc.) far from that distribution,
-# so testing only it risks blaming the model for a query-form mismatch
-# (2026-07-21 review). Column name -> label.
+# so testing only it risks blaming the model for a query-form mismatch.
+# Column name -> label.
 CE_VARIANTS = {
     "ce_name_instr": "CE name+instruction",
     "ce_name": "CE name only",
@@ -296,7 +296,7 @@ def cross_encoder_tables(
     scorer = CrossEncoderScorer()
     # Load the model BEFORE the page loop: a load failure must abort the CE
     # leg once (caught by main's fail-soft wrapper), not be retried per page
-    # (2026-07-21 work-laptop run: SSL-broken HF HEAD checks re-attempted
+    # (observed: SSL-broken HF HEAD checks re-attempted
     # for every URL because only score_pairs was in the try block).
     scorer.ensure_ready()
     xl = pd.ExcelFile(baseline)
@@ -410,7 +410,7 @@ def auc_delta_ci(
     (resampling PAGES, so both scorers always see the same resample). A CI
     straddling 0 means the observed winner could be subset noise — with only
     ~27 answered pages on some questions, most deltas need this check before
-    anyone calls a winner (2026-07-21 review)."""
+    anyone calls a winner."""
     import numpy as np
 
     out = []

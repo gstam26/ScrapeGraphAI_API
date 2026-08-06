@@ -10,7 +10,7 @@ Needs page texts fetched first (diagnostics/fetch_run_pages.py). Caveat: a
 refetch on another machine can differ slightly from the texts the run saw
 (site drift); the yield targets come from the run's Provenance.
 
-First result (2026-07-23, CMO rescue run, 2,023 pairs): pair-yield oracle
+First result (CMO rescue run, 2,023 pairs): pair-yield oracle
 would remove 78% of question-slots; CE name-only AUC 0.772 vs embedding
 0.671, but at zero claim-loss CE excludes only 5% (embedding 1%) — the safe
 capture of the oracle is marginal for both. Page-yield: CE 0.620 ~= embedding

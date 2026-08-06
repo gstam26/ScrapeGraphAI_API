@@ -1,7 +1,7 @@
 """Validate the verified-only invariants of an output workbook.
 
-Mechanises the 2026-07-05 audit's validation criteria (gap #1) plus the
-2026-07-06 enforcement checks, so a validation pass is one command instead
+Mechanises the audit's validation criteria (gap #1) plus the
+subsequent enforcement checks, so a validation pass is one command instead
 of a hand audit:
 
   1. Every Claim ID cited in Grouped Themes ("Claim IDs" column and inline
@@ -14,7 +14,7 @@ of a hand audit:
   5. Optional (--baseline): Matrix diff against a baseline workbook.
      ONLY meaningful for page-set-pinned replays (build_replay_input.py) —
      across crawled runs the page sets differ and a Matrix diff confounds
-     code changes with crawl drift (decision-log 2026-07-06 finding).
+     code changes with crawl drift (standing requirement).
      Additions can still be legitimate on a replay: baseline chunks that
      returned empty or timed out were never extract-cached and re-fire live,
      so a previously-502'd chunk may now contribute data.

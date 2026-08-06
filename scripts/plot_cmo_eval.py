@@ -13,7 +13,7 @@ Reads a generic_eval output workbook (Summary + Detail sheets) and writes:
 
 Matplotlib only, no seaborn. Captions carry the honesty caveats: GT covers a
 subset of entities, and list-question precision is a lower bound (GT lists are
-non-exhaustive — George's 2026-07-16 decision).
+non-exhaustive by design).
 
 Usage:
     python scripts/plot_cmo_eval.py

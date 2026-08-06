@@ -19,8 +19,8 @@ Checks per question column:
     _NULL_MARKERS — these convert to real GT answers and then score the
     pipeline's null as a miss AND its assertion as wrong
   * navigation notes ("Same as above", "Website failed to load") — the class
-    manually blanked in the 2026-07-31 staged conversion; they convert to
-    fake GT answers if left in
+    manually blanked during the staged conversion of earlier fills; they
+    convert to fake GT answers if left in
   * multi-item cells, semicolon/comma habits, bullets
   * the is_list verdict the converter would infer — and, with two files,
     columns where the two fills would flip it (converting merged vs separate
@@ -30,7 +30,7 @@ Usage (pass the SAME flags you will pass to gt_convert, so the profile
 matches the real conversion):
   python scripts/gt_convention_check.py analyst_B.xlsx --sheet "Ground Truth" \
       --ignore-cols "Website,Supporting quotes / sources" --single "Q_desc,Q_vol"
-  python scripts/gt_convention_check.py caitlin.xlsx analyst_B.xlsx [same flags]
+  python scripts/gt_convention_check.py analyst_A.xlsx analyst_B.xlsx [same flags]
 """
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ _NEAR_NULL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Analyst navigation notes observed in the 07-31 Caitlin+Jenni template
+# Analyst navigation notes observed in earlier analyst-filled templates
 # (blanked to not-assessed during that conversion, by hand).
 _NAV_NOTE_RE = re.compile(
     r"(same as (above|entry)|see (entr|above|row)|website (failed|did ?n.t "

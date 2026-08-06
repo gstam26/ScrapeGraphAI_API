@@ -10,7 +10,7 @@ against the SAME cache dir:
 The warm leg is the point. A cache hit carries no HTML, so discovery falls
 back to a live static fetch and a JS-injected nav stays invisible; the first
 cut of the render-for-discovery trigger excluded cache-hit seeds, which
-silently preserved the blind spot on every warm-cache run (the 2026-07-29
+silently preserved the blind spot on every warm-cache run (the
 Automatic re-test failed to fire for exactly this reason). If the warm leg
 reports fired=False while cold reports fired=True, that regression is back.
 

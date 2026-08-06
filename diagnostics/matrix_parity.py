@@ -1,12 +1,12 @@
 """Matrix cell-population parity: a candidate run vs a pinned baseline run.
 
-The fetch-backend ship bar (firecrawl-replacement.md, bar item 1) is NOT char
+The fetch-backend ship bar is NOT char
 counts — Trafilatura strips nav text that Firecrawl markdown keeps, so char
 ratios mislead. The question that matters is: of the Matrix cells the baseline
 run populated, how many does the candidate run also populate? This tool
 measures exactly that, per question, from the two output workbooks.
 
-Standing requirement (decision-log 2026-07-06): comparative evals must replay
+Standing requirement: comparative evals must replay
 a PINNED page set — run the candidate on adlm-inputs/replay_validation_*.xlsx,
 never a fresh crawl, or page-selection drift contaminates the comparison.
 The laptop cache must also be moved aside for the candidate run: cache hits

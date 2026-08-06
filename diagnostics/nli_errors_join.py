@@ -1,8 +1,8 @@
 """Join NLI quote-support scores against GT-eval verdicts: does low support
 predict the eval's measured errors?
 
-This is the verify-tier ship-gate analysis queued in the 2026-07-24 GT-scoring
-brain entry. The eval (generic_eval vs Caitlin's GT) labels each pipeline
+This is the verify-tier ship-gate analysis for the GT scoring.
+The eval (generic_eval vs the analyst GT) labels each pipeline
 answer TP (auto_match / semantic_review) or FP (ai_only); the NLI tier
 (nli_quote_support.py --context-premise) scores each Provenance claim's quote
 support independently, without ever seeing the GT. If unsupported claims
@@ -11,7 +11,7 @@ errors, where the tool asserted Yes/No and the analyst says the site doesn't
 disclose — then the NLI tier flags real errors and earns its calibration
 labelling; if support is flat across TP/FP, the tier is refuted at this grain.
 
-PRE-REGISTERED EXPECTATIONS (written before the first join, 2026-07-29):
+PRE-REGISTERED EXPECTATIONS (written before the first join):
   1. FP (ai_only) median support < TP (auto_match) median support, with a
      usable AUC (>0.70) on the binary capability questions — the
      weak-evidence-Yes class is exactly what run 2 separated on e2a.
@@ -28,7 +28,7 @@ answer", so the answer's support = its strongest quote. Detail rows without
 an AI answer (misses, null agreements) have nothing to support and are
 excluded.
 
-RESULTS (2026-07-29, baseline GT-5 join, 115 scored answers):
+RESULTS (baseline GT-5 join, 115 scored answers):
   EXPECTATION 1 REFUTED at eval grain: AUC 0.535 all / 0.514 non-prose —
   NLI support does NOT predict eval TP-vs-FP. Both classes are support-
   bimodal (TP median 0.979 / FP median 0.987).
@@ -38,7 +38,7 @@ RESULTS (2026-07-29, baseline GT-5 join, 115 scored answers):
   menu-label class). The other 7 score 0.92-1.00 because their quotes DO
   textually support the assertion — e.g. "Avenue Mould focuses exclusively
   on plastic injection moulding" genuinely contradicts PCB capability, so
-  the tool's "No" is entailed at 1.000 while Caitlin's GT says Not
+  the tool's "No" is entailed at 1.000 while the analyst GT says Not
   disclosed under the tie->Not-disclosed guidance. The boundary is a
   DISCLOSURE-STANDARD norm (what evidence licenses asserting Yes/No), not
   an entailment gap — no support scorer can arbitrate it.
@@ -49,7 +49,7 @@ RESULTS (2026-07-29, baseline GT-5 join, 115 scored answers):
   NOT a fix for the assert-vs-not-disclosed miss class. That class is a
   decision-rule alignment: encode the GT guidance's "No needs positive
   evidence; tie -> Not disclosed" norm in the extraction instructions —
-  i.e. the already-planned week-2 instructions experiment.
+  i.e. the already-planned instructions experiment.
 
 Usage:
     python diagnostics/nli_errors_join.py outputs/nli_support_baseline_gt5.xlsx \

@@ -1,8 +1,8 @@
 """Tier-2 faithfulness judge for the AI Summary sheet (post-run pass).
 
-Design: brain/proposals/llm-summary-layer.md §4. The judge is diagnostics,
-not deliverable — it runs AFTER the pipeline (semantic-verify Phase B
-pattern) and only touches the Faithfulness column of the AI Summary sheet.
+Design: the judge is diagnostics, not deliverable — it runs AFTER the
+pipeline (semantic-verify Phase B pattern) and only touches the Faithfulness
+column of the AI Summary sheet.
 
 Per gate-passed summary (Faithfulness == "not-assessed"), one Azure call:
 each sentence plus the FULL TEXT of the claims it cites (from Provenance),
@@ -11,7 +11,7 @@ strict-JSON verdict per sentence — "faithful" | "unsupported" |
 citing real IDs while asserting something they don't say.
 
 Verdict written to the Summary Log's Faithfulness column (the audit surface —
-the AI Summary sheet is matrix-shaped for consultants, George 2026-07-07):
+the AI Summary sheet is matrix-shaped for consultants):
   - all sentences faithful          -> "faithful"
   - >=1 flagged                     -> "N flagged sentence(s)" + the AI
     Summary matrix cell gets an orange fill and a visible
@@ -22,7 +22,7 @@ the AI Summary sheet is matrix-shaped for consultants, George 2026-07-07):
 Needs a workbook produced with DIAGNOSTICS=True (the Summary Log carries the
 gate state and raw prose this judge reads). Calls are temperature=0 +
 SUMMARY_SEED via src.summarize.azure_chat, so re-runs are deterministic to
-the extent the deployment honours seeding (confirmed 2026-07-07 probe);
+the extent the deployment honours seeding (confirmed by probe);
 fingerprints are printed for drift visibility.
 
 Usage (work laptop — needs AZURE_API_KEY):

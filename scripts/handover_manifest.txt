@@ -1,0 +1,107 @@
+# Handover branch manifest — the single source of truth for what the
+# `handover` branch contains. scripts/build_handover.py rebuilds the branch
+# from main using ONLY this file: main's tree, minus [exclude], with
+# .gitignore replaced by the [gitignore] section, gated by the term scan.
+#
+# Derived 2026-08-06 from the reviewed handover tree (611f3e3, cloud-session
+# sanitisation pass): the rebuild of that commit from its main base is a
+# byte-identical no-op, which is this manifest's correctness proof.
+
+[exclude]
+# Internal working notes and engagement history — never hand over.
+brain/
+CHANGELOG.md
+# Engagement data directories (mostly gitignored anyway; belt and braces).
+adlm-inputs/
+adlm-outputs/
+cmo-inputs/
+cmo-outputs/
+outputs/
+matched_official_urls.csv
+# Engagement-specific scripts (crash without the excluded data dirs).
+scripts/adlm_scraper.py
+scripts/build_182_workbook.py
+scripts/build_clean_homepages_workbook.py
+scripts/build_cmo_gt_sheet.py
+scripts/build_cmo_input_v3.py
+scripts/build_cmo_workbook.py
+scripts/build_sample_workbook.py
+scripts/build_validation_sample_workbook.py
+scripts/patch_cmo_seeds_20260731.py
+scripts/plot_cmo_depth_sweep.py
+scripts/plot_cmo_eval.py
+scripts/run_cmo_depth_sweep.py
+scripts/score_cmo.py
+scripts/shortlist_cmo.py
+# Engagement-specific diagnostics (same reason) + the retired archive.
+diagnostics/archive/
+diagnostics/backend_compare.py
+diagnostics/build_replay_input.py
+diagnostics/ce_answerability_ab.py
+diagnostics/filter_counterfactual.py
+diagnostics/filter_recalibration.py
+diagnostics/group_calibration.py
+diagnostics/matrix_parity.py
+diagnostics/nli_quote_support.py
+diagnostics/summary_eval.py
+diagnostics/validate_verified_only.py
+# Engagement eval fixtures and the tests that cover dropped tools.
+src/eval/fixtures/
+tests/test_recalibration_helpers.py
+tests/test_replay_input.py
+tests/test_summary_eval.py
+tests/test_validate_verified_only.py
+
+[fail-terms]
+# Confidential names: any hit in a kept file ABORTS the build.
+caitlin
+hiarc
+agilent
+
+[warn-terms]
+# Accepted residuals: printed for review, build continues. Oatly/Ripple are
+# the public plant-milk benchmark fixtures; aladdinsci is a URL-structure
+# example; Minnetronix appears in one neutral test literal.
+oatly
+ripple
+aladdin
+minnetronix
+jenni
+
+[gitignore]
+# Environment
+.env
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Runtime data — the page cache and run outputs are regenerated on every run.
+# Renamed cache copies (e.g. cache_hybrid_*) made during backend comparisons
+# don't match the bare "cache/" pattern, hence the second rule.
+cache/
+cache_*/
+outputs/
+diagnostics/fetch_eval/
+*.xlsx
+*.csv
+
+# Sample input workbook — tracked despite the *.xlsx blanket ignore
+!samples/*.xlsx
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Excel lock/owner temp files (~$Book.xlsx) — must not be committed
+~$*.xlsx

@@ -225,7 +225,7 @@ def test_hybrid_backend_is_valid_and_selectable():
 # ── full-page rescue (Trafilatura husk on link-grid info pages) ──────────────
 
 # Short "info card" page: facts live in link labels + an address block that
-# Trafilatura strips (observed 2026-07-22: forjmedical /locations -> 0 items).
+# Trafilatura strips (observed live: forjmedical /locations -> 0 items).
 _LINK_GRID_HTML = (
     "<html><body><nav>"
     + "".join(f'<a href="/loc/{i}">Facility {i} Somewhere</a>' for i in range(30))
@@ -278,7 +278,7 @@ def test_hybrid_render_link_grid_page_is_rescued(monkeypatch):
     print("OK test_hybrid_render_link_grid_page_is_rescued passed")
 
 
-# ── consent-overlay strip (2026-07-10 bake-off finding) ──────────────────────
+# ── consent-overlay strip (bake-off finding) ─────────────────────────────────
 
 _CONSENT_DIV = (
     '<div id="onetrust-consent-sdk"><p>'

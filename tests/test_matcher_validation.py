@@ -105,7 +105,7 @@ def test_cross_encoder_backend_rescues_paraphrase(monkeypatch):
 
 
 def test_cross_encoder_unavailable_falls_back_to_embeddings(monkeypatch):
-    # 2026-07-22 fallback chain: CE missing -> EMBEDDINGS (not straight to
+    # Fallback chain: CE missing -> EMBEDDINGS (not straight to
     # lexical), so a machine with Ollama but no local CE model keeps the
     # single-answer semantic rescue instead of silently losing it.
     def _boom():

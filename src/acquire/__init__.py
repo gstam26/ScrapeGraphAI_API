@@ -1,3 +1,4 @@
+"""Acquire layer: fetch/crawl pages for each entity URL and return FetchedPage records."""
 import time
 
 from models import Config, ColumnSpec, PageDoc

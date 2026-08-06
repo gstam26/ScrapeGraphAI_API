@@ -1,3 +1,11 @@
+"""Thin client for the internal Ollama embedding endpoint.
+
+Single entry point embed_batch(), used by the Filter's semantic routing, the
+crawler's embed link scorer, Verify's semantic scores and the Grouping layer.
+The endpoint (OLLAMA_HOST) only resolves on the internal network/VPN, so
+callers must treat failures as an expected condition and fall back — nothing
+in the pipeline may hard-depend on embeddings being available.
+"""
 import json
 import urllib.request
 

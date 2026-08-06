@@ -1,3 +1,5 @@
+"""Eval metrics unit tests: null-sentinel handling in per-cell precision/
+recall accounting and the AI-only audit rows."""
 from src.eval.aligner import AIOnly, CellAlignment, GTAlignment, PairScore
 from src.eval.gt_reader import GTClaim, GroundTruth, normalise_entity
 from src.eval.metrics import _cell_metrics, ai_only_audit_rows

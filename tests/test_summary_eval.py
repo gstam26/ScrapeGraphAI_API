@@ -151,7 +151,7 @@ def test_load_claim_texts_reads_claim_column_not_claim_id():
     # Regression: Provenance has "Claim ID" (col 1) BEFORE "Claim" (col 5);
     # a prefix match on "Claim" hit "Claim ID" first, so every claim text
     # loaded as its own ID and the judge flagged everything unsupported
-    # (the 12/71-faithful run, 2026-07-07).
+    # (the 12/71-faithful run).
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Provenance"
@@ -228,8 +228,8 @@ def test_swap_entity_only_when_a_cited_claim_names_the_entity():
     assert "Bruker partnered" in corrupted
     assert bad == {1}
     # Invalid by construction: the only entity-bearing sentence cites a claim
-    # that does NOT name the entity (own-product tag) -> no corruption (the
-    # 2026-07-08 fix; previously this returned a mislabelled "should-catch").
+    # that does NOT name the entity (own-product tag) -> no corruption
+    # (previously this returned a mislabelled "should-catch").
     assert corrupt_swap_entity(_RECORD, ["Acme", "Bruker"], _CLAIM_TEXTS) is None
     # Nothing to swap to.
     assert corrupt_swap_entity(record, ["Acme"], claims) is None

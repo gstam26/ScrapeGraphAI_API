@@ -1,3 +1,11 @@
+"""Pydantic models shared across the Acquire layer.
+
+FetchedPage is the layer's output contract (one record per fetched or cached
+page, with fetch provenance); LinkCandidate carries a discovered link plus the
+anchor/context text the link scorers rank; EntityDoc groups the pages crawled
+for a single entity.
+"""
+
 from pydantic import BaseModel, Field
 
 

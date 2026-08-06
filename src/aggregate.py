@@ -1,3 +1,16 @@
+"""First-pass aggregation of extracted cells across sources.
+
+Sits between Verify and Group in the pipeline (Acquire → Filter → Extract →
+Verify → Aggregate → Group → Summarize → Shortlist): all extractions for one
+(entity, question) merge into a single cell that keeps every piece of
+evidence. Entry point: aggregate_cells().
+
+No winner is chosen here. Evidence is deduplicated by (normalised value,
+quote, source URL); near-duplicate display values are fuzzily collapsed;
+conflicting values are preserved and flagged; evidence is ranked best-first.
+Null sentinels ("None (not disclosed…)") survive only when no real value
+exists, so genuine answers are never displaced by no-data markers.
+"""
 import re
 from typing import Any
 

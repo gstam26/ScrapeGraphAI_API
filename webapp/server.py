@@ -40,6 +40,7 @@ class _TeeStdout(io.TextIOBase):
         self._buf = ""
 
     def write(self, s: str) -> int:
+        """Write to the real stdout and append completed lines to the log."""
         self._real.write(s)
         self._buf += s
         while "\n" in self._buf:
@@ -49,6 +50,7 @@ class _TeeStdout(io.TextIOBase):
         return len(s)
 
     def flush(self) -> None:
+        """Flush the underlying real stdout."""
         self._real.flush()
 
 
@@ -66,6 +68,7 @@ class RunManager:
         self.finished_at: float | None = None
 
     def status(self) -> dict:
+        """Snapshot of the current run: state, log tail, error, elapsed time."""
         with self._lock:
             elapsed = None
             if self.started_at:
@@ -80,6 +83,7 @@ class RunManager:
             }
 
     def start(self, input_path: str, output_name: str) -> None:
+        """Start a pipeline run in a background thread; reject if one is running."""
         with self._lock:
             if self.state == "running":
                 raise RuntimeError("a run is already in progress")
@@ -95,6 +99,7 @@ class RunManager:
         ).start()
 
     def _run(self, input_path: str, output_name: str) -> None:
+        """Background worker: execute the run with stdout teed into the log."""
         # Imported here so tests can patch webapp.server.execute_run with a
         # stub, and so importing this module never drags the pipeline in.
         tee = _TeeStdout(sys.stdout, self.log, self._lock)
@@ -151,6 +156,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # ── helpers ──────────────────────────────────────────────────────────
     def _json(self, payload: dict, code: int = 200) -> None:
+        """Send payload as a JSON response with the given status code."""
         body = json.dumps(payload).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -159,6 +165,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _file(self, path: str, content_type: str, download_name: str | None = None) -> None:
+        """Send a file, optionally as an attachment download."""
         with open(path, "rb") as f:
             body = f.read()
         self.send_response(200)
@@ -170,11 +177,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, fmt, *args):  # quieter default: no per-request spam
+    def log_message(self, fmt, *args):
+        """Suppress the default per-request access logging."""
         pass
 
     # ── routes ───────────────────────────────────────────────────────────
     def do_GET(self):
+        """Serve the UI page, run status, template download, and result download."""
         if self.path in ("/", "/index.html"):
             self._file(os.path.join(_STATIC_DIR, "index.html"),
                        "text/html; charset=utf-8")
@@ -200,6 +209,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
 
     def do_POST(self):
+        """Accept an uploaded .xlsx workbook on /api/run and start a run."""
         if self.path != "/api/run":
             self._json({"error": "not found"}, 404)
             return
@@ -234,6 +244,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(port: int = 8000, open_browser: bool = True) -> ThreadingHTTPServer:
+    """Bind the localhost server and (optionally) open the browser at it."""
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     url = f"http://127.0.0.1:{httpd.server_address[1]}/"
     print(f"Entity Extraction Pipeline UI: {url}  (Ctrl+C to stop)")
@@ -244,6 +255,7 @@ def serve(port: int = 8000, open_browser: bool = True) -> ThreadingHTTPServer:
 
 
 def main() -> int:
+    """CLI entry point: serve until interrupted. Returns the exit code."""
     port = int(os.environ.get("PIPELINE_UI_PORT", "8000"))
     httpd = serve(port=port)
     try:

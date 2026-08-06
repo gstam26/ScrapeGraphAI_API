@@ -1,3 +1,14 @@
+"""Guided crawler: expand one entity URL into the pages most likely to answer the schema.
+
+Sits in the Acquire layer between the fetch backends (fetcher.py) and the
+sha256-keyed page cache (cache.py). Starting from a seed URL, it discovers
+in-scope links, scores them against the user's extraction questions
+(link_scorer.py: BM25 or embeddings), and follows only candidates above a
+score threshold — BFS by default, optionally best-first — within depth and
+page budgets. Locale-variant pages are collapsed so translated copies don't
+burn budget. Entry point: crawl_entity().
+"""
+
 import heapq
 import itertools
 import re
@@ -88,13 +99,15 @@ def _select_links_to_follow(
 # ── URL helpers ───────────────────────────────────────────────────────────────
 
 # Presentation/tracking query params that never change page content: utm_*
-# (analytics) and hsLang (HubSpot locale mirror — 2026-07-23 Tecan A/B fetched
-# /services AND /services?hsLang=en, two budget slots for one page). Content-
-# selecting params (?id=, ?p=, ?page=) are deliberately untouched.
+# (analytics) and hsLang (HubSpot locale mirror — /services and
+# /services?hsLang=en are the same page, and without stripping they cost two
+# budget slots). Content-selecting params (?id=, ?p=, ?page=) are
+# deliberately untouched.
 _JUNK_QUERY_PARAMS_EXACT = {"hslang", "gclid", "fbclid", "msclkid"}
 
 
 def _normalise_url(url: str) -> str:
+    """Canonicalise a URL: drop fragments, junk query params, trailing slash."""
     url = url.split("#")[0]
     parsed = urlparse(url)
     if parsed.query:
@@ -120,6 +133,7 @@ _SECOND_LEVEL_LABELS = {"co", "com", "org", "net", "gov", "edu", "ac"}
 
 
 def _registered_domain(netloc: str) -> str:
+    """Heuristic registered domain (eTLD+1) for a netloc, e.g. 'bbc.co.uk'."""
     labels = netloc.lower().split(":")[0].split(".")
     if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL_LABELS:
         return ".".join(labels[-3:])
@@ -127,6 +141,11 @@ def _registered_domain(netloc: str) -> str:
 
 
 def _same_domain(start_url: str, candidate_url: str, scope: str | None = None) -> bool:
+    """Whether candidate_url is in crawl scope for start_url.
+
+    scope="site" compares registered domains (own subdomains stay in scope);
+    any other scope requires an exact host match.
+    """
     # scope=None falls back to the env-configured module default, so direct
     # callers (diagnostics, tests) keep working; crawl_entity passes the
     # per-run cfg value so a workbook's config sheet can flip it.
@@ -150,6 +169,7 @@ _JUNK_EXTS = (
 
 
 def _is_junk_link(url: str) -> bool:
+    """True for asset/media URLs (images, CSS, PDFs, ...) not worth crawling."""
     return urlparse(url).path.lower().rstrip("/").endswith(_JUNK_EXTS)
 
 
@@ -211,6 +231,7 @@ def _locale_key(url: str) -> str:
 # ── Page fetcher ──────────────────────────────────────────────────────────────
 
 def _acquire_page_cfg(url: str, cfg: Config) -> PageDoc:
+    """Fetch one page as a PageDoc, serving from and writing to the cache."""
     cached = read_cache(url, cfg.cache_dir)
     if cached is not None:
         return PageDoc(
@@ -321,12 +342,14 @@ def _discover_links(
     page_text: str | None = None,
     cfg: Config | None = None,
 ) -> list[LinkCandidate]:
+    """Discover in-scope child links from a page, choosing the best source
+    (rendered HTML, markdown, or a fallback static fetch) per backend."""
     # Firecrawl + pooled backends: prefer real HTML. Firecrawl drops some
     # nav/footer links (About/Contact) from both its markdown and cleaned html;
     # only raw_html keeps them. playwright_pooled hands us the real rendered DOM,
     # which has them by construction; the hybrid returns a full DOM either way
     # (static page source or rendered). This re-enables the parent-element
-    # ("nav-soup") context the 2026-06-16 decision moved away from — scoped to
+    # ("nav-soup") context an earlier design moved away from — scoped to
     # these backends; the local backend keeps its markdown path
     # (Trafilatura include_links=True) and its ±120-char prose context.
     scope = cfg.crawl_scope if cfg is not None else None
@@ -368,9 +391,9 @@ def _needs_discovery_render(
     Automatic mechanism), while a starved deep page costs one leaf. Cache
     hits count as static: cached pages carry no HTML, so discovery already
     fell back to a live static fetch — excluding them (the first cut of this
-    trigger) silently preserved the blind spot on every warm-cache run, which
-    is exactly how the 2026-07-29 Automatic re-test failed to fire. Rendered
-    and Firecrawl fetches are excluded: their HTML already exposes nav links.
+    trigger) silently preserved the blind spot on every warm-cache run.
+    Rendered and Firecrawl fetches are excluded: their HTML already exposes
+    nav links.
     """
     if enabled is None:
         enabled = CRAWL_RENDER_FOR_DISCOVERY
@@ -393,11 +416,24 @@ def crawl_entity(
     entities: list[str] | None = None,
     diag: dict | None = None,
 ) -> EntityDoc:
-    """
-    Guided crawler.
+    """Crawl one entity's site, guided by the extraction schema, and return
+    an EntityDoc of the pages acquired.
 
-    Scores internal links against the user-defined extraction schema,
-    then selectively follows only relevant pages.
+    Inputs: the seed start_url; the schema columns (their names/instructions
+    drive link scoring); cfg for backend, budgets, and scope; optional
+    max_depth override; optional entity names (excluded from scoring, kept
+    for the query builder); optional diag dict populated with per-page and
+    per-candidate log rows.
+
+    Strategy: frontier search from the seed — BFS (FIFO) by default, or
+    best-first on link score (CRAWL_STRATEGY). Each fetched page's in-scope
+    links are scored against the schema (BM25 or embeddings, per SCORER_TOOL
+    / cfg.crawl_scorer, with fallback on scorer failure); only candidates at
+    or above the score threshold are followed — capped per page, within the
+    depth budget and cfg.crawl_max_pages. Locale-duplicate URLs (translated
+    copies of an already-acquired page) are skipped, with their claim
+    released if the fetch never happens. Link-starved static seeds trigger a
+    one-off discovery render to expose JS-injected navigation.
     """
     _max_depth = max_depth if max_depth is not None else CRAWL_MAX_DEPTH
     _max_pages = cfg.crawl_max_pages
@@ -461,7 +497,7 @@ def crawl_entity(
             # fallback-selected child can still fail this re-check at pop
             # time. Without releasing, a same-key sibling discovered later
             # would be dropped as a "duplicate" of a page that was never
-            # actually acquired (2026-07-03 code review).
+            # actually acquired.
             if CRAWL_LOCALE_DEDUP:
                 visited_locale_keys.discard(_locale_key(current.url))
             continue
@@ -555,7 +591,7 @@ def crawl_entity(
         # to a page already fetched adds nothing to the frontier, so counting
         # RAW discovered links overstates how much the seed offers: Automatic's
         # 2 real candidates + 1 self-link read as 3 and missed the
-        # < CRAWL_DISCOVERY_MIN_LINKS trigger entirely (2026-07-31 probe).
+        # < CRAWL_DISCOVERY_MIN_LINKS trigger entirely.
         n_novel = sum(1 for c in child_links if c.url not in visited)
 
         if _needs_discovery_render(current.depth, page.backend, n_novel,

@@ -1,5 +1,5 @@
 """
-Guards against the HORIBA news-archive failure mode (2026-07-02 validation):
+Guards against the HORIBA news-archive failure mode (found in validation):
 a 735 KB archive page produced 95 chunks / 654 claims and a Matrix cell that
 hit Excel's 32,767-char hard limit and was silently truncated.
 
@@ -70,8 +70,8 @@ def _row_with_n_items(n: int) -> PipelineResult:
 
 
 def test_matrix_caps_display_items_with_marker(monkeypatch):
-    # Pins the pre-08-03 multi-candidate render: this test exercises the
-    # display CAP, which single-best (default on since 2026-08-03) hides on
+    # Pins the legacy multi-candidate render: this test exercises the
+    # display CAP, which single-best (now the default) hides on
     # single-answer columns by demoting all but the lead. Flag-on behavior
     # is covered in tests/test_matrix_single_best.py.
     import src.io_excel as io_excel

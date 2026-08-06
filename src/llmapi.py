@@ -1,3 +1,14 @@
+"""Thin retry-wrapping client for the corporate LLM HTTP proxy endpoint.
+
+Posts a prompt to a Power Automate flow (LLM_API_URL in .env) and returns
+the model's text response. Kept as one of the selectable EXTRACT_TOOL
+backends ("llmapi") for locked-down environments where direct API access is
+blocked and only the corporate proxy is reachable. Prefer the "azure",
+"claude" or "sgai" backends whenever their endpoints are reachable: they
+offer determinism controls (temperature/seed), better throughput and richer
+error reporting — the proxy intermittently 502s under load (hence the
+built-in 5xx retry) and exposes no model parameters.
+"""
 import os
 import time
 

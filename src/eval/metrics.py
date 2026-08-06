@@ -323,6 +323,8 @@ def _cluster_reason(
 
 # --- per-cell computation ----------------------------------------------------
 def _cell_metrics(cell: CellAlignment, excluded_for_entity: list) -> CellMetrics:
+    """Count one aligned cell: recall bounds, both precisions, F1s, and the
+    ai_only taxonomy over deduped AI-claim clusters."""
     aligns = cell.alignments
     gt_active = len(aligns)
 
@@ -518,6 +520,8 @@ def _tag_slices(result: AlignmentResult) -> list[GroupMetrics]:
 
 
 def compute_metrics(result: AlignmentResult, gt: GroundTruth) -> MetricsReport:
+    """Compute per-cell metrics from an AlignmentResult, then macro-aggregate
+    overall, by question, by entity, and by type/dimension tag."""
     by_cat = gt.excluded_by_category()
     all_excluded = [it for items in by_cat.values() for it in items]
     excl_by_entity: dict[str, list] = {}

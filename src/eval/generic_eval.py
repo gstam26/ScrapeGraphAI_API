@@ -98,7 +98,7 @@ AI_DEDUP_RATIO = 95
 # Semantic value matching. Pure lexical overlap (token_sort_ratio) scores a
 # correct paraphrase — "Enable universal access to knowledge" vs "empower
 # people worldwide to collect, develop and share knowledge" — as BOTH a
-# recall miss AND a hallucination (observed on task1 Wikimedia, 2026-07-15).
+# recall miss AND a hallucination (observed on task1 Wikimedia).
 # We add embedding cosine (nomic-embed, the pipeline's own embedder) as a
 # second value signal and take the MAX of lexical and semantic, so a
 # lexically-distant but meaning-equivalent pair is rescued. Cosine and
@@ -122,6 +122,7 @@ PROSE_GT_MIN_CHARS = 80
 # ---------------------------------------------------------------------------
 @dataclass
 class GTRow:
+    """One expected claim value from the flat GroundTruth sheet."""
     entity: str
     entity_norm: str
     question: str
@@ -136,6 +137,7 @@ class GTRow:
 
 @dataclass
 class AIRow:
+    """One pipeline-extracted claim, from the Provenance or Matrix sheet."""
     entity: str
     entity_norm: str
     question: str
@@ -149,6 +151,7 @@ class AIRow:
 
 @dataclass
 class PairResult:
+    """One GT claim's scored pairing with its assigned AI claim (or none)."""
     gt_value: str
     ai_value: Optional[str]
     value_score: float
@@ -160,6 +163,7 @@ class PairResult:
 
 @dataclass
 class CellResult:
+    """Alignment outcome for one (entity, question) cell."""
     entity: str
     question: str
     is_list: bool
@@ -172,6 +176,7 @@ class CellResult:
 
 @dataclass
 class EvalResult:
+    """Full evaluation output: per-cell alignments plus aggregated metrics."""
     cells: list[CellResult]
     per_question: dict[str, dict]   # question -> {P, R, F1, hallucination_rate, ...}
     overall: dict
@@ -193,7 +198,7 @@ def _is_null(value: str) -> bool:
 # parse so "6,500+" / "over 1,500" / "~20000" all reach the typed
 # equal-or-nothing comparison. Without this, "6500+" vs "6,500+" fell to the
 # string path where the decisive relevance CE scores two bare number strings
-# near 0 and VETOES an identical value (found in the 2026-08-03 detail audit:
+# near 0 and VETOES an identical value (found in a detail audit:
 # 3 such cells on gt42, each double-billed FN+FP). Kept deliberately narrow:
 # range values ("500-1000") and unit-bearing values ("$3m") still parse as
 # None and take the string path.
@@ -210,7 +215,7 @@ def _numeric_value(text: str) -> Optional[float]:
     Values with any other non-numeric content stay None — this exists for
     cells like years and counts, where fuzzy string similarity is
     meaningless: token_sort_ratio("2003", "2004") is 75%, which auto-matched
-    two DIFFERENT years (caught by George's first label set, 2026-07-21)."""
+    two DIFFERENT years (a real mislabel this check caught)."""
     t = _norm(text)
     t = _NUM_QUALIFIER_RE.sub("", t)
     t = _NUM_QUALIFIER_RE.sub("", t)  # both a leading word AND a trailing +
@@ -346,8 +351,8 @@ def _pair_score(
 
     # Same rule for bare binary values: polarity decides, semantic never
     # consulted. To a relevance CE "Yes" and "No" are topically identical —
-    # it credited Arrk independence No↔Yes at 0.97 (caught 2026-07-29; two
-    # false credits in the frozen-baseline scoring had the same signature).
+    # it credited Arrk independence No↔Yes at 0.97 (a real false credit; two
+    # in the frozen-baseline scoring had the same signature).
     # Cross-form matches ("No"↔"false") are correct by construction here,
     # where fuzzy matching would have missed them.
     gt_bin, ai_bin = _binary_value(gt.value), _binary_value(ai.value)
@@ -406,6 +411,10 @@ def _clean(v) -> str:
 
 
 def read_gt(filepath: str) -> list[GTRow]:
+    """Read the flat GT workbook's 'GroundTruth' sheet into GTRow records.
+
+    Rows missing entity/question/value are skipped; the null sentinel is
+    detected per row so the aligner can score true negatives."""
     xls = pd.ExcelFile(filepath)
     sheet = next((s for s in xls.sheet_names if s.lower() == "groundtruth"), None)
     if sheet is None:
@@ -455,7 +464,7 @@ def read_pipeline_output(filepath: str) -> list[AIRow]:
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
 
     # Normalise column aliases. The Provenance schema was renamed after this
-    # evaluator was first written (2026-07-07): the question column is now
+    # evaluator was first written: the question column is now
     # "Question" (was "Column") and the quote column is "Verbatim Quote" (was
     # "Quote"). Both spellings are accepted so old and new workbooks evaluate.
     col_map = {
@@ -643,6 +652,32 @@ def _align_cell(
     sem=None,
     prose_cells: bool = False,
 ) -> CellResult:
+    """Align one (entity, question) cell's GT claims against its AI claims.
+
+    Inputs: the cell's GTRow and AIRow lists, whether the question is
+    list-type, an optional semantic scorer `sem` (additive embeddings or
+    decisive cross-encoder — see `decisive` below), and the opt-in
+    prose-cell flag.
+
+    Decision order:
+      1. Dedup near-duplicate AI claims (best provenance wins).
+      2. Split null vs real claims on both sides; suppress AI nulls that sit
+         beside substantive claims (page-local absence, never FP).
+      3. Optionally join AI sentences into one answer for a single-answer
+         prose cell (one question, one answer, one verdict).
+      4. Greedy 1:1 matching of real GT claims to real AI claims, strongest
+         candidate pair first. With an additive scorer, lexical score gates
+         the match and semantic can only rescue single-answer prose; with a
+         decisive scorer, the CE judges every pair (veto + rescue), and
+         exact identities are credited without consulting it.
+      5. Structurally match GT nulls to leftover AI nulls (null_match).
+      6. Classify leftover AI claims: restatements of an already-credited
+         claim are `redundant`, leftover nulls are `suppressed_nulls`
+         (abstentions), the rest are `ai_only` (the FP set).
+
+    Returns a CellResult holding one PairResult per GT claim plus the
+    ai_only / redundant / suppressed_nulls partitions of the AI leftovers.
+    """
     entity   = gt_rows[0].entity if gt_rows else (ai_rows[0].entity if ai_rows else "?")
     question = gt_rows[0].question if gt_rows else (ai_rows[0].question if ai_rows else "?")
 
@@ -652,7 +687,7 @@ def _align_cell(
     # Is the active semantic scorer decisive (cross-encoder) or additive
     # (embeddings)? A decisive scorer both VETOES lexical false-positives and
     # RESCUES lexical misses, on list AND single-answer cells; an additive one
-    # only rescues single-answer prose (the 2026-07-15 anisotropy guard).
+    # only rescues single-answer prose (the anisotropy guard).
     decisive = sem is not None and getattr(sem, "decisive", False)
 
     gt_null  = [g for g in gt_rows if g.is_null]
@@ -660,7 +695,7 @@ def _align_cell(
     ai_null  = [a for a in ai_dedup if _is_null(a.value)]
     ai_real  = [a for a in ai_dedup if not _is_null(a.value)]
 
-    # Page-local absence normalization (pre-registered 2026-07-22): the
+    # Page-local absence normalization (pre-registered): the
     # extractor emits per-page "Not disclosed" claims beside substantive
     # answers in the same cell ("Yes [C0002]; Not disclosed [C0079]") —
     # page-local absence, not a competing answer. When the cell carries at
@@ -674,7 +709,7 @@ def _align_cell(
         suppressed_nulls = ai_null
         ai_null = []
 
-    # PROSE-CELL GRAIN (2026-07-31, opt-in): a single-answer cell whose GT is
+    # PROSE-CELL GRAIN (opt-in): a single-answer cell whose GT is
     # a composed description gets ONE judgement, not one per sentence. The
     # Matrix reader splits cells on newlines, so the s7 three-sentence summary
     # became 3+ claims against one GT sentence — every unmatched sentence
@@ -715,7 +750,7 @@ def _align_cell(
         # mean-centred nomic embeddings put all short proper nouns (Firefox,
         # Thunderbird, Common Voice) on nearly one axis, so cosine ~1 between
         # DISTINCT items would falsely credit one project for another
-        # (observed on task1 Mozilla, 2026-07-15).
+        # (observed on task1 Mozilla).
         # Additive (embeddings): semantic rescue only on single-answer prose.
         # Decisive (cross-encoder): it judges every cell, list included.
         sem_allowed = True if decisive else (not is_list)
@@ -824,7 +859,7 @@ def _align_cell(
             continue
         (redundant if _is_restatement(a) else ai_only).append(a)
     # AI null claims left over after GT-null matching are ABSTENTIONS, not
-    # false claims (2026-07-31). "None (not disclosed)" asserts nothing, so it
+    # false claims. "None (not disclosed)" asserts nothing, so it
     # cannot be wrong on the precision side; when GT holds a real value the
     # miss is already charged as FN through the unmatched-gt_real path above.
     # Counting it again here billed one behaviour twice — and billed the
@@ -838,8 +873,8 @@ def _align_cell(
 
     # NOTE: cells where GT is null but AI extracted real claims need no extra
     # handling — the leftover loop above already counts every unmatched real
-    # claim as FP. An explicit `ai_only.extend(ai_real)` here (removed
-    # 2026-07-24) DOUBLE-counted each such claim: once from the loop, once
+    # claim as FP. An explicit `ai_only.extend(ai_real)` here (since
+    # removed) DOUBLE-counted each such claim: once from the loop, once
     # from the extension (caught by test_suppression_makes_gt_null_a_genuine_miss).
 
     return CellResult(
@@ -860,7 +895,33 @@ def evaluate(
     run_entities: Optional[set[str]] = None,
     prose_cells: bool = False,
 ) -> EvalResult:
-    # PARTIAL-GT SCOPING (2026-07-24): score only entities the GT covers.
+    """Score AI claims against GT rows and aggregate the metrics.
+
+    Inputs: parsed GT rows and AI claims, whether semantic matching is on
+    and with which backend ('cross-encoder' decides equivalence, 'ollama'
+    embeddings only rescue), the set of entities the run attempted
+    (`run_entities`, for mirror scoping), and the prose-cell flag.
+
+    Steps, in order:
+      1. Partial-GT scoping — AI claims for entities the GT never assessed
+         are excluded (unmeasured, not wrong).
+      2. Mirror scoping — GT entities the run never attempted are excluded
+         (not attempted, not missed); attempted-but-empty entities keep
+         their rows and rightly score FN.
+      3. Build the semantic scorer once for the whole run.
+      4. Bucket rows into (entity, question) cells, fuzzy-mapping AI
+         question names onto GT question names, and align each cell
+         (_align_cell).
+      5. Aggregate TP/FN/FP into per-question and overall P/R/F1 and
+         hallucination rate, reporting single-answer questions (the
+         trustworthy headline) separately from list questions (whose
+         precision is only a lower bound — GT lists are non-exhaustive).
+
+    Returns an EvalResult with per-cell alignments, per-question metrics,
+    and the overall block (including semantic-rescue / redundant /
+    suppressed-null counters so every scoring adjustment stays auditable).
+    """
+    # PARTIAL-GT SCOPING: score only entities the GT covers.
     # With a partially-filled GT (e.g. an analyst answered 5 of 69 rows),
     # AI claims for unassessed entities are not wrong — they are unmeasured.
     # Without this filter every claim from an uncovered entity counted as a
@@ -873,7 +934,7 @@ def evaluate(
         print(f"  [partial GT] {len(ai_uncovered)} pipeline entities have no GT "
               f"rows and are excluded from scoring (unmeasured, not wrong)")
 
-    # MIRROR SCOPING (2026-07-29): drop GT entities the RUN never attempted.
+    # MIRROR SCOPING: drop GT entities the RUN never attempted.
     # A 2-entity diagnostic run scored against a 5-entity GT counted the 3
     # absent entities' GT rows as pure FN (starved-2 re-crawl scoring). Not
     # attempted = unmeasured — distinct from attempted-but-empty, which keeps
@@ -1009,7 +1070,7 @@ def evaluate(
     # Split headline: single-answer questions are the TRUSTWORTHY metric; list
     # questions have non-exhaustive GT (the pipeline finds real items the GT
     # never enumerated), so their precision is only a LOWER BOUND — reported
-    # separately, never mixed into the headline (George's decision 2026-07-16).
+    # separately, never mixed into the headline (a deliberate reporting rule).
     overall["single"] = _block(False)
     overall["list"] = _block(True)
 
@@ -1020,6 +1081,8 @@ def evaluate(
 # Report printer
 # ---------------------------------------------------------------------------
 def print_report(result: EvalResult, verbose: bool = False) -> None:
+    """Print the console report: single-answer headline, list lower-bound
+    block, combined totals, and (with verbose) cell-level detail."""
     print()
     print("=" * 68)
     print(" GENERIC EVAL REPORT")
@@ -1107,6 +1170,9 @@ def print_report(result: EvalResult, verbose: bool = False) -> None:
 # Optional Excel output
 # ---------------------------------------------------------------------------
 def write_report_excel(result: EvalResult, output_path: str) -> None:
+    """Write the two-sheet Excel report: Summary (per-question + overall
+    metrics) and Detail (every GT pairing plus the ai_only / redundant /
+    suppressed_null leftovers, one row each, for manual inspection)."""
     summary_rows = []
     for q, m in result.per_question.items():
         summary_rows.append({
@@ -1172,6 +1238,8 @@ def write_report_excel(result: EvalResult, output_path: str) -> None:
 # CLI
 # ---------------------------------------------------------------------------
 def main() -> None:
+    """CLI entry point: parse args, read GT + pipeline workbooks, evaluate,
+    print the report, and optionally write the Excel report."""
     parser = argparse.ArgumentParser(
         description="Generic evaluation: compare pipeline output to flat GT workbook."
     )

@@ -1,15 +1,15 @@
 """
 Deterministic grouping of verified claims within aggregated Matrix cells.
 
-Motivation (brain/proposals/filter-and-synthesis.md, Part 2a): a validation
-cell held ~654 news items — useless raw. This layer clusters the claims in
-each aggregated cell into themes so consultants see structure, not a wall of
+Motivation: a single cell can hold hundreds of claims (~654 news items in
+one observed case) — useless raw. This layer clusters the claims in each
+aggregated cell into themes so consultants see structure, not a wall of
 bullets. Hard constraints honoured here:
 
   * NO LLM anywhere — embeddings (Ollama nomic-embed) + fixed-threshold
     greedy agglomerative clustering only.
-  * VERIFIED CLAIMS ONLY (standing decision, 2026-07-06): a value enters
-    grouping only if at least one of its evidence items passed verification.
+  * VERIFIED CLAIMS ONLY: a value enters grouping only if at least one of
+    its evidence items passed verification.
     Unverified claims stay in Provenance (Verified=False, flagged for analyst
     review) and never appear in Grouped Themes or Digest. Enforced in
     _display_values — the single entry point for what gets grouped.
@@ -38,7 +38,7 @@ _NULL_SENTINEL_PREFIX = "none (not disclosed"
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
-    # Same helper as src/filter.py _cosine.
+    """Plain cosine similarity — same semantics as src/filter.py's local _cosine."""
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(x * x for x in b))
@@ -46,11 +46,13 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 
 def _normalise_value(value) -> str:
-    # Mirrors aggregate.py's _normalise_value so source matching stays aligned.
+    """Whitespace/case-normalise a value — mirrors aggregate.py's
+    _normalise_value so source matching stays aligned."""
     return " ".join(str(value).strip().lower().split())
 
 
 def _is_null_sentinel(normalised: str) -> bool:
+    """True for 'None (not disclosed…)' markers — explicit no-data values."""
     return normalised.startswith(_NULL_SENTINEL_PREFIX)
 
 
@@ -77,9 +79,9 @@ def _display_values(cell: ExtractedCell) -> list[str]:
     cell.value is a list of deduped value strings for list cells; scalars are
     normalised to a 1-item list. Empty values and null sentinels are dropped;
     exact (normalised) duplicates keep their first occurrence. Values without
-    at least one verified evidence item are dropped (standing decision,
-    2026-07-06): unverified claims never reach grouping/digest — they remain
-    in Provenance flagged for analyst review.
+    at least one verified evidence item are dropped: unverified claims never
+    reach grouping/digest — they remain in Provenance flagged for analyst
+    review.
     """
     raw = cell.value
     if isinstance(raw, list):
@@ -106,9 +108,9 @@ def center_vector_map(vectors: dict[str, list[float]]) -> dict[str, list[float]]
     """Per-cell mean-centering (anisotropy correction, "All-but-the-Top" style).
 
     All claims in one cell share a large common component (company + domain
-    vocabulary), which compresses raw cosines into a narrow high band — the
-    2026-07-03 calibration on real validation claims showed the 862-claim
-    HORIBA cell staying ONE cluster at any threshold <= 0.70. Subtracting the
+    vocabulary), which compresses raw cosines into a narrow high band —
+    without centering, an 862-claim cell on real data stays ONE cluster at
+    any threshold <= 0.70. Subtracting the
     cell's mean vector removes that shared component so only what
     DISTINGUISHES claims within the cell drives similarity. Deterministic:
     a pure function of the cell's own vectors.

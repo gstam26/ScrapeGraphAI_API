@@ -1,3 +1,13 @@
+"""Filter layer: route each page to only the questions it can plausibly answer.
+
+Sits between Acquire and Extract. A column is routed to a page when EITHER
+its embedding similarity clears FILTER_THRESHOLD (max chunk cosine against
+the name+instruction query) OR a discriminative keyword from the column name
+appears in the page text. Entry point: filter_page(). Fails open — if the
+embedding endpoint is unreachable, or no column clears either gate, every
+column is routed rather than silently dropping a page. FILTER_MODE=
+"passthrough" suppresses the routing decision while still logging scores.
+"""
 import math
 import re
 
@@ -112,7 +122,7 @@ def _discriminative_keywords(columns: list[ColumnSpec]) -> dict[str, set[str]]:
     specific to ONE question. Words shared across much of the question set
     ("company" in 12/17 CMO questions, "manufacturing" in 5) fire on virtually
     every page of any corporate site, turning the gate into a pass-everything
-    OR (2026-07-23 CMO counterfactual: gate fired on 60% of 2,023 page-column
+    OR (a CMO counterfactual run: gate fired on 60% of 2,023 page-column
     pairs). Dropping terms present in >= half the questions keeps only the
     discriminative ones (tooling, revenue, headquarters, moulding...).
     Small sets (< 4 questions) are left untouched — a shared word can still

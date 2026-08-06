@@ -1,3 +1,14 @@
+"""Link relevance scoring: rank crawl candidates against the extraction schema.
+
+Guides the crawler's frontier (crawler.crawl_entity): each discovered link is
+scored on its anchor text, surrounding context, and URL path so only pages
+likely to answer the user's questions are fetched. Three scorers: score_links
+(BM25, no network), score_links_embed (Ollama embedding cosine, absolute
+scores), and score_links_embed_experimental (opt-in variant with boilerplate
+cleaning and structural penalties). Embedding scorers raise on failure;
+callers fall back to BM25.
+"""
+
 import math
 import re
 from urllib.parse import urlparse

@@ -1,3 +1,16 @@
+"""Extraction layer: turn routed pages into evidence-backed answer cells.
+
+Sits between Filter and Verify. Pages are chunked, each chunk goes through
+one LLM call against the shared JSON prompt (_build_prompt), and per-chunk
+results are merged and parsed into ExtractedCell/SourceQuote models. Entry
+point: extract_cells(). Four selectable backends behind EXTRACT_TOOL:
+"azure" (default), "claude", "sgai", "llmapi" (corporate-proxy fallback —
+see src/llmapi.py). Non-obvious constraints: a global semaphore caps
+concurrent LLM calls across all entities/pages/chunks; per-chunk results
+are cached on disk keyed by everything that shapes the call, including the
+prompt template version; boilerplate (legal/compliance) pages are capped to
+EXTRACT_MAX_CHUNKS_BOILERPLATE chunks.
+"""
 from typing import Any
 import hashlib
 import httpx
@@ -44,8 +57,8 @@ _LLM_CALL_SEMAPHORE = threading.BoundedSemaphore(EXTRACT_MAX_CONCURRENT_CALLS)
 
 # Bump whenever the prompt template below changes in ANY way: the version is
 # part of the extract-cache key, so edits invalidate cached extractions
-# instead of silently no-opping on cache hits (bug class found 2026-07-23:
-# the key previously hashed only chunk+column NAMES+entities+tool — neither
+# instead of silently no-opping on cache hits (a past bug class: the key
+# previously hashed only chunk+column NAMES+entities+tool — neither
 # instructions nor the template were in it).
 EXTRACT_PROMPT_VERSION = "e2"
 
@@ -56,6 +69,9 @@ def _build_prompt(
     page_text: str | None = None,
     entity_context: str = "",
 ) -> str:
+    """Build the shared extraction prompt: per-entity, per-question JSON with
+    a verbatim supporting quote per answer. Used identically by every
+    backend so results stay comparable across EXTRACT_TOOL choices."""
     entity_fields = "".join(f'- "{entity}"\n' for entity in entities)
     question_fields = ""
     for col in columns:
@@ -121,6 +137,8 @@ Rules:
 
 
 def _strip_json_fence(raw: str) -> str:
+    """Strip a Markdown ```json code fence some models wrap around the
+    JSON payload despite the return-only-JSON instruction."""
     text = raw.strip()
     if text.startswith("```"):
         text = text.split("```", 2)[1]
@@ -488,6 +506,11 @@ def _normalise_quote(quote: Any) -> list[str | None]:
 
 
 def _parse_field_value(raw: Any) -> tuple[Any, list[SourceQuote]]:
+    """Parse one question's raw LLM answer into (value, evidence).
+
+    Tolerates every shape the models return: {value, quote} dicts, lists of
+    dicts or scalars, or a bare scalar. Empty values produce no evidence.
+    """
     evidence = []
 
     if raw is None:
@@ -545,6 +568,9 @@ def _entity_payload(data: dict[str, Any], entity: str, entities: list[str]) -> d
 
 
 def _chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
+    """Split page text into overlapping fixed-size chunks for per-chunk LLM
+    calls, capped at EXTRACT_MAX_CHUNKS_PER_PAGE with a printed warning
+    (archives list newest first, so the kept prefix is the useful part)."""
     if not text:
         return []
     chunks = []
@@ -574,10 +600,13 @@ def _extract_cache_key(
     extract_tool: str,
     entity_context: str = "",
 ) -> str:
-    # Everything that shapes the LLM call must be in the key, or edits
-    # silently no-op on cache hits (2026-07-23: instructions and the prompt
-    # template were previously absent — an instruction change kept serving
-    # stale extractions).
+    """Deterministic cache key for one chunk-level extraction call.
+
+    Everything that shapes the LLM call must be in the key, or edits
+    silently no-op on cache hits (instructions and the prompt template were
+    previously absent — an instruction change kept serving stale
+    extractions).
+    """
     payload = {
         "chunk_text": chunk_text,
         "columns": sorted(f"{c.name}\x1f{c.instruction or ''}" for c in columns),
@@ -598,6 +627,8 @@ def _extract_cache_path(cache_key: str) -> str:
 
 
 def _read_extract_cache(cache_key: str) -> dict[str, Any] | None:
+    """Read a cached chunk extraction; None on miss or unreadable/invalid
+    file (fail-soft — a corrupt cache entry just costs one LLM call)."""
     path = _extract_cache_path(cache_key)
     if not os.path.exists(path):
         return None
@@ -611,6 +642,8 @@ def _read_extract_cache(cache_key: str) -> dict[str, Any] | None:
 
 
 def _write_extract_cache(cache_key: str, data: dict[str, Any]) -> None:
+    """Persist one chunk's extraction result; a write failure only warns —
+    caching is an optimisation, never a correctness dependency."""
     path = _extract_cache_path(cache_key)
     try:
         with open(path, "w", encoding="utf-8") as f:
@@ -695,7 +728,14 @@ def extract_cells(
     use_cache: bool = True,
     entity_context: str = "",
 ) -> list[ExtractedCell]:
-    """Extract cells from a page using the configured extractor."""
+    """Extract answer cells from one page for the routed columns.
+
+    Chunks the page text, runs the configured EXTRACT_TOOL backend per chunk
+    (concurrently, under the global call semaphore, with per-chunk disk
+    caching), merges chunk results and parses them into one ExtractedCell
+    per entity/column with evidence quotes. Appends per-entity rows to
+    diag["extract_log"] when diag is given.
+    """
     cells = []
     if not columns:
         return cells

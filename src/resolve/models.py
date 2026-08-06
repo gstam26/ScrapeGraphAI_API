@@ -1,3 +1,10 @@
+"""Pydantic models for the resolver: input record, scored candidate, output.
+
+CompanyInput and ResolutionResult are the fixed CSV contracts (see io_csv.py);
+Candidate carries the per-URL score breakdown so resolution decisions stay
+explainable.
+"""
+
 from pydantic import BaseModel, Field
 
 

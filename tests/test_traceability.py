@@ -1,5 +1,5 @@
 """
-Traceability chain tests (Advisory requirement, 2026-07-03): every theme and
+Traceability chain tests (Advisory requirement): every theme and
 digest line must trace back to verified claims. Chain under test:
 
     Digest -> Grouped Themes -> Provenance (claim IDs + internal hyperlinks)
@@ -120,7 +120,7 @@ def test_no_digest_or_links_without_groups(tmp_path):
 
 
 def test_claim_index_anchors_on_verified_occurrence(tmp_path):
-    """Standing decision (2026-07-06): grouping/digest citations resolve to
+    """Standing decision: grouping/digest citations resolve to
     VERIFIED Provenance rows. A claim extracted on two pages — unverified on
     the first, verified on the second — must anchor its theme hyperlink and
     Claim ID on the verified row, not simply the first occurrence (the
@@ -188,7 +188,7 @@ def test_unverified_provenance_rows_flagged_orange(tmp_path):
 
 
 def test_grouped_themes_claim_ids_not_truncated_by_display_cap(tmp_path):
-    """Regression for the audit finding (2026-07-05): the 'Claim IDs' column
+    """Regression for an audit finding: the 'Claim IDs' column
     was sliced to MATRIX_MAX_DISPLAY_ITEMS in lockstep with the display
     bullets, so a theme with more members than the display cap (HORIBA's
     328-item Recent news cell in the validation run, e.g.) silently dropped

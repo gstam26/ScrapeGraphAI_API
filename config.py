@@ -1,3 +1,13 @@
+"""Runtime configuration for the entity-extraction pipeline.
+
+Every tunable lives here, grouped by pipeline stage (Acquire → Filter →
+Extract → Verify → Aggregate → Group → Summarize), so behaviour changes are
+config edits, not code edits. Secrets and machine-local mode choices come
+from the environment via .env (python-dotenv); a handful of flags are
+env-overridable so per-machine settings never live as uncommitted edits to
+this file. The input workbook's config sheet can override a further subset
+per run (default < env < workbook — see pipeline._build_config).
+"""
 import os
 from dotenv import load_dotenv
 
@@ -20,8 +30,8 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 # TOOLS
 # ============================================================
 
-# Deployment default (signed off 2026-07-13; Firecrawl credits cover only
-# ~74/178 ADLM companies). Static-first hybrid: httpx + Trafilatura, escalating
+# Deployment default (Firecrawl credits cover only ~74/178 ADLM companies).
+# Static-first hybrid: httpx + Trafilatura, escalating
 # to the pooled browser only on quality-gate failure; politeness (robots.txt,
 # per-domain delay, honest UA) on both paths. Alternatives: "firecrawl" |
 # "playwright_pooled" | "sgai" | "playwright" | "requests" | "local".
@@ -65,7 +75,7 @@ CRAWL_RESPECT_ROBOTS = True
 
 # --- Headless-render wait budget (pooled render + hybrid render escalation) ---
 # Navigation stops at domcontentloaded, then a flat paint settle. A networkidle
-# wait was trialled 2026-07-13 to recover content on JS-heavy pages but was
+# wait was trialled to recover content on JS-heavy pages but was
 # DISCONFIRMED on Hologic: the gate-failing pages there are genuine link-grid
 # category pages (link_density 0.70+), not hydration-starved SPAs — rendering
 # longer recovered no prose and added ~5 s/page. Tunable here without a code
@@ -77,7 +87,7 @@ RENDER_SETTLE_MS = 2000          # paint settle after load
 # The hybrid's static httpx probe is only a fast-path check before escalating to
 # the browser, so it uses a shorter timeout than the full request_timeout: a
 # slow/hanging static response should escalate to render quickly, not burn the
-# full 30 s (observed 2026-07-13: a 52 s FUJIFILM fetch = 30 s dead static wait
+# full 30 s (observed: a 52 s FUJIFILM fetch = 30 s dead static wait
 # + render; with a 12 s cap the same page succeeds on static in 7 s).
 HYBRID_STATIC_TIMEOUT_S = 12
 
@@ -86,7 +96,7 @@ HYBRID_STATIC_TIMEOUT_S = 12
 # Explicit pass/fail rule applied after httpx + Trafilatura extraction.
 # A page that fails triggers a Playwright re-render (one attempt).
 # Motivation: silently returning nav/footer junk instead of real content
-# is the exact ScrapeGraphAI failure mode documented in Table 4.1.
+# is the exact ScrapeGraphAI failure mode documented in earlier evaluation.
 # These constants make every failure visible rather than silent.
 # ============================================================
 
@@ -102,11 +112,11 @@ QUALITY_MAX_LINK_DENSITY = 0.60
 # Very low retention means almost all content was classified as boilerplate and stripped.
 QUALITY_MIN_CONTENT_RATIO = 0.10
 
-# Full-page rescue (2026-07-23): when Trafilatura's extraction fails the gate
+# Full-page rescue: when Trafilatura's extraction fails the gate
 # but the page's FULL visible text is between QUALITY_MIN_CHARS and this cap,
 # ship the full text instead of the husk. Short link-grid "info card" pages
 # (locations / contact / leadership / about) carry their facts in link labels
-# and address blocks that Trafilatura strips — smoke run 2026-07-22:
+# and address blocks that Trafilatura strips — observed on a smoke run:
 # forjmedical /locations extracted 837 husk chars -> 0 items while the HQ
 # address sat in the DOM. Above the cap, a Trafilatura-failed page is a real
 # link farm (the gate's original prey) and stays failed.
@@ -145,7 +155,7 @@ CRAWL_MAX_LINKS_PER_PAGE = 30
 # "bfs" (default, all validation to date): explore in depth waves — every
 #   chosen depth-1 link before any depth-2 link. When the page budget binds
 #   before the frontier exhausts, BFS spends the whole budget on shallow
-#   breadth BY CONSTRUCTION (measured, CMO 2026-07-14: 3/5 entities pinned
+#   breadth BY CONSTRUCTION (measured on a CMO run: 3/5 entities pinned
 #   at budget with depth-3+ links discovered but never dequeued, while
 #   depth-2 pages carried 2.4x the extracted claims of depth-1).
 # "best_first": pop the highest-scoring queued link regardless of depth —
@@ -163,7 +173,7 @@ CRAWL_STRATEGY = os.getenv("CRAWL_STRATEGY", "bfs")  # "bfs" | "best_first"
 # pattern-based rule, no site list. Set False for before/after comparison runs.
 CRAWL_LOCALE_DEDUP = True
 
-# --- Link-discovery starvation fixes (2026-07-29 Arrk/Automatic diagnosis) ---
+# --- Link-discovery starvation fixes (Arrk/Automatic diagnosis) ---
 
 # Crawl scope: "host" keeps the historical behaviour (candidate must share the
 # seed's exact host, www-stripped). "site" widens to the registered domain, so
@@ -186,9 +196,9 @@ CRAWL_SCOPE = os.getenv("CRAWL_SCOPE", "host")  # "host" | "site"
 CRAWL_RENDER_FOR_DISCOVERY = os.getenv("CRAWL_RENDER_FOR_DISCOVERY", "false").lower() == "true"
 CRAWL_DISCOVERY_MIN_LINKS = 3
 
-# --- Boilerplate paths: classify and CAP, do not block (2026-07-31) ---------
+# --- Boilerplate paths: classify and CAP, do not block ----------------------
 #
-# The queued plan was a crawl-time blocklist for legal/compliance paths, on the
+# The original plan was a crawl-time blocklist for legal/compliance paths, on the
 # stated assumption of "near-zero recall risk". THAT ASSUMPTION IS REFUTED.
 # On the very run that motivated the work, Arrk's HQ answer — "Osaka, Japan",
 # verified, and available from no other page the crawl reached — came out of
@@ -207,7 +217,7 @@ CRAWL_DISCOVERY_MIN_LINKS = 3
 #   - they are NOT dropped from the crawl.
 # Only genuine infrastructure is blocked outright (BLOCKED_PATH_PATTERNS).
 #
-# This does NOT reopen the 2026-06-17 rejection of a URL blocklist. That
+# This does NOT reopen the earlier rejection of a URL blocklist. That
 # rejection was about TOPICAL paths (/products/ is boilerplate for a plant-milk
 # brand and core disclosure for a pharma company) — domain knowledge that does
 # not generalise, correctly left to the embedding page-type signal. Topical
@@ -258,7 +268,7 @@ BLOCKED_PATH_PATTERNS = (
 # Trade-off recorded: a fact sitting late in a very long legal page is lost.
 EXTRACT_MAX_CHUNKS_BOILERPLATE = 1
 
-# --- Single-answer display discipline (2026-08-01; DEFAULT ON 2026-08-03) ---
+# --- Single-answer display discipline ---------------------------------------
 #
 # A single-answer question gets ONE lead answer in the Matrix. The flags-on
 # 69-run showed the pattern at scale: fed entities answer more and every
@@ -271,12 +281,11 @@ EXTRACT_MAX_CHUNKS_BOILERPLATE = 1
 # deliverable just answers the question first. Render-time only: Provenance,
 # Grouped Themes and the evidence trail keep every candidate.
 #
-# DEFAULT FLIPPED ON after the 2026-08-03 real-render A/B (George's call):
-# vs the as-shipped render on gt42 (matrix+prose): P 0.492->0.572,
-# F1 0.545->0.577, hallucination 0.508->0.428, at R -0.029 (24 lead-pick
-# errors, the known residual class). Display-incoherence cells ("Yes" +
-# "Not disclosed" stacked) suppressed-null count 187->88. Set to "false"
-# to reproduce pre-08-03 renders.
+# Default on: an A/B test on real renders (gt42, matrix+prose) showed
+# P 0.492->0.572, F1 0.545->0.577, hallucination 0.508->0.428, at R -0.029
+# (24 lead-pick errors, the known residual class). Display-incoherence cells
+# ("Yes" + "Not disclosed" stacked) suppressed-null count 187->88. Set to
+# "false" to reproduce the previous multi-candidate renders.
 MATRIX_SINGLE_BEST = os.getenv("MATRIX_SINGLE_BEST", "true").lower() == "true"
 
 # --- Relevance scorer ---
@@ -342,7 +351,7 @@ FILTER_MODE = os.getenv("FILTER_MODE", "threshold")
 # INSTRUCTION ("R&D location. In which country does the company conduct its
 # R&D? ...") instead of the 2-3 word name alone. The instruction is a 30-50
 # word discriminative probe; name-only queries barely discriminate on ADLM
-# (score-vs-answered AUC 0.64 on the 2026-07-02 validation run). Applies to
+# (score-vs-answered AUC 0.64 on a validation run). Applies to
 # both the Filter (score_page_columns) and the crawler's baseline embed link
 # scorer. Exists as a flag purely for before/after A-B comparison: set False
 # to restore the old name-only queries.
@@ -374,7 +383,7 @@ EXTRACT_TIMEOUT = 120
 EXTRACT_CHUNK_SIZE = 8000
 EXTRACT_CHUNK_OVERLAP = 200
 
-# Extraction determinism (2026-07-23): the Azure extractor previously sent no
+# Extraction determinism: the Azure extractor previously sent no
 # temperature/seed and ran at the API default (temperature 1.0) — identical
 # input produced 5 vs 10 items across the two CMO smoke runs
 # (tecan.com/services, byte-identical text). The summary layer has run
@@ -388,7 +397,7 @@ EXTRACT_PAGE_WORKERS = 4
 
 # Bound extraction cost on pathological pages. HORIBA's /usa/company/news is a
 # 735 KB news archive -> 95 chunks -> 95 LLM calls -> 654 claims in one cell
-# (2026-07-02 validation). 40 chunks (~312 KB) covers every normal page — the
+# (validation run). 40 chunks (~312 KB) covers every normal page — the
 # plant-milk maximum (Oatly report, 113 KB) is 15 chunks, so the locked
 # benchmark is unaffected. Truncation is printed, never silent; archive pages
 # list newest items first, so the kept prefix is the "recent" part anyway.
@@ -433,8 +442,8 @@ GROUPING_ENABLED = True
 # are emitted as a single "(all items)" group without any embedding call.
 GROUP_MIN_ITEMS = 6
 
-# Per-cell mean-centering before clustering (anisotropy correction). The
-# 2026-07-03 calibration on real validation claims showed RAW nomic cosines
+# Per-cell mean-centering before clustering (anisotropy correction).
+# Calibration on real validation claims showed RAW nomic cosines
 # compress into one giant cluster at any threshold <= 0.70 (all claims from
 # one company share a dominant company/domain component); centering removes
 # that shared component so only what distinguishes claims within the cell
@@ -443,7 +452,7 @@ GROUP_MIN_ITEMS = 6
 GROUP_CENTER_VECTORS = True
 
 # Centroid-cosine threshold for joining an existing cluster. Applies in the
-# CENTERED space (GROUP_CENTER_VECTORS=True). Calibrated 2026-07-03 on the
+# CENTERED space (GROUP_CENTER_VECTORS=True). Calibrated on the
 # five biggest validation cells (65-862 claims): 0.15 puts every cell in the
 # scannable 6-19 theme range (HORIBA 862 news items -> 19 themes; the
 # provisional 0.30 fragmented it into 93). 0.10 is the tighter alternative
@@ -454,8 +463,8 @@ GROUP_SIMILARITY = 0.15
 # LLM SUMMARY LAYER (AI Summary sheet)
 # ============================================================
 
-# Synthesized prose per grouped cell (brain/proposals/llm-summary-layer.md,
-# approved 2026-07-07): Azure GPT-4.1-mini over the grouped-theme structure,
+# Synthesized prose per grouped cell:
+# Azure GPT-4.1-mini over the grouped-theme structure,
 # every sentence citing Provenance claim IDs. OFF by default — flips to True
 # in a client-facing config only after the pre-registered faithfulness bar
 # passes (judge >=0.90 on the corruption set, >=0.80 agreement with human
@@ -467,8 +476,8 @@ GROUP_SIMILARITY = 0.15
 SUMMARY_ENABLED = os.getenv("SUMMARY_ENABLED", "").strip().lower() in {"1", "true", "yes"}
 
 # temperature=0 + this fixed seed on every summarizer/judge call reduces
-# non-determinism at source (seed honoured on this deployment — probe
-# 2026-07-07, identical outputs + stable system_fingerprint). Best-effort per
+# non-determinism at source (seed honoured on this deployment — a probe
+# produced identical outputs + a stable system_fingerprint). Best-effort per
 # OpenAI docs, so each call's fingerprint is recorded in the Summary Log.
 SUMMARY_SEED = 42
 
@@ -476,22 +485,21 @@ SUMMARY_SEED = 42
 # drop members WITHIN a theme (marked "+N more"), never whole themes.
 SUMMARY_MAX_CLAIMS_PER_THEME = 15
 
-# s4/s5 compact format (brain/proposals/summary-compact-format.md, George
-# 2026-07-14): compact cited lines, "topic: synthesis [cites]". Cap on items
-# listed per line — themes with more end the list with a visible
+# Compact analyst format: cited lines, "topic: synthesis [cites]". Cap on
+# items listed per line — themes with more end the list with a visible
 # "(more in Provenance)" marker, nothing dropped silently.
 SUMMARY_MAX_ITEMS_PER_LINE = 8
 
-# Hard ceiling on lines per cell (s5). s4 said "one line per theme" with no
+# Hard ceiling on lines per cell. "One line per theme" alone imposes no
 # cell-level cap — CMO Description cells have 11 themes, so the "compact"
-# summary was an 11-line wall (George, 2026-07-14). Three lines covers the
+# summary became an 11-line wall. Three lines covers the
 # top-3 themes the Tier-1 coverage gate checks; omitted themes are marked
 # "(more in Provenance)".
 SUMMARY_MAX_LINES_PER_CELL = 3
 
 # Cells whose citable values are ALL no longer than this render
 # deterministically with no LLM call (src/summarize.py deterministic_answer,
-# 2026-07-15 — generalized from the single-tag s4 route): bare yes/no/true/
+# generalized from the original single-tag route): bare yes/no/true/
 # false claims collapse to one cited verdict ("Yes [C0046, C0089]"), every
 # other short value renders verbatim ("MIL-STD 810 testing [C0037]"),
 # '; '-joined and capped at SUMMARY_MAX_ITEMS_PER_LINE. Compact by
@@ -504,8 +512,8 @@ SUMMARY_TAG_MAX_CHARS = 80
 # hand-rolled retry here.
 SUMMARY_TIMEOUT = 60
 
-# Concurrent summarizer calls. Size against the deployment's TPM/RPM quota
-# (work-laptop checklist item 4); extraction runs share the deployment.
+# Concurrent summarizer calls. Size against the deployment's TPM/RPM quota;
+# extraction runs share the deployment.
 SUMMARY_MAX_CONCURRENT_CALLS = 4
 
 # ============================================================

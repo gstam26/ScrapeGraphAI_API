@@ -2,7 +2,7 @@
 Unit tests for LLMAPI 5xx retry behaviour. No network calls.
 
 Context: the Power Automate proxy intermittently returns 502 Bad Gateway under
-load (observed once in the 25-company validation run, 2026-07-02); without a
+load (observed in a 25-company validation run); without a
 retry the affected chunk's cells are silently blanked.
 """
 import pytest

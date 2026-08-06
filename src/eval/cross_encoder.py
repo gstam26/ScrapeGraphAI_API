@@ -38,9 +38,9 @@ from dotenv import load_dotenv
 # --semantic-backend cross-encoder).
 load_dotenv()
 
-# HF id of the model George has locally; override with a filesystem path via
-# env/.env when the auto-resolved cache is not available (e.g. on-network:
-# CROSS_ENCODER_MODEL=C:\path\to\ms-marco-MiniLM-L6-v2).
+# HF id of the model expected in the local cache; override with a filesystem
+# path via env/.env when the auto-resolved cache is not available (e.g.
+# on-network: CROSS_ENCODER_MODEL=C:\path\to\ms-marco-MiniLM-L6-v2).
 CROSS_ENCODER_MODEL = os.getenv(
     "CROSS_ENCODER_MODEL", "cross-encoder/ms-marco-MiniLM-L6-v2"
 )
@@ -66,7 +66,7 @@ class CrossEncoderScorer:
     # rescue like the embedding cosine. Reading the two values jointly, it
     # separates the -ology suffix collisions the lexical matcher conflated
     # (Urology vs laryngology) — validated against human labels on task1
-    # (0.967) and task2 (1.000), 2026-07-22. See _align_cell.
+    # (0.967) and task2 (1.000). See _align_cell.
     decisive = True
 
     def __init__(self, model=None, model_name: str = CROSS_ENCODER_MODEL,
@@ -82,8 +82,8 @@ class CrossEncoderScorer:
             # Force OFFLINE model resolution by default. hf_hub makes an
             # online HEAD check even for fully-cached models; on the Sagentia
             # network, corporate TLS interception turns that check into an
-            # SSL-handshake retry loop (observed 2026-07-21 on the work
-            # laptop). The model is required to exist locally anyway (HF
+            # SSL-handshake retry loop (observed on an on-network
+            # machine). The model is required to exist locally anyway (HF
             # downloads are blocked on-network), so offline-first is correct
             # on both machines. To deliberately download on a machine where
             # HF is reachable, set HF_HUB_OFFLINE=0 explicitly.

@@ -1,10 +1,10 @@
 """
 Shortlist layer — criteria-driven ranked shortlist from a deliverable Matrix.
 
-Design: brain/proposals/shortlist-layer.md (approved 2026-08-05). Mechanism
-test, not a client deliverable: criteria are PLACEHOLDERS to play with.
+The last stage of the pipeline (after Summarize). Mechanism test, not a
+client deliverable: criteria are PLACEHOLDERS to play with.
 
-George's approved gate semantics (2026-08-05), recorded here and in the spec:
+Gate semantics, recorded here and in the spec:
   * independence: EXCLUDE on explicit verified "No" (acquired companies out);
     "Not disclosed" / no-data / unparseable FLAG THROUGH. Polarity may flip
     later — it is spec data, not code.
@@ -32,8 +32,8 @@ Inputs are read-only. Three readers, one cell model:
   * read_flat_gt_cells   — a flat GT workbook (GroundTruth sheet), for the
                            shortlist(criteria, GT) legs of the evaluation
   * read_eval_detail_cells — reconstructs AI cells from an eval report's
-                           Detail sheet (Dell fallback when the raw pipeline
-                           workbook is on another machine; verified markers
+                           Detail sheet (fallback when the raw pipeline
+                           workbook is unavailable; verified markers
                            are unavailable → every cell carries
                            VERIFIED_UNKNOWN and unverified_policy cannot bite)
 """
@@ -56,6 +56,7 @@ from rapidfuzz import fuzz
 # ---------------------------------------------------------------------------
 @dataclass
 class Criterion:
+    """One shortlist criterion row from the spec workbook's Criteria sheet."""
     id: str
     question: str
     type: str                 # hard_gate | scored
@@ -72,6 +73,7 @@ class Criterion:
 
 @dataclass
 class Spec:
+    """A parsed spec workbook: criteria plus FX, guard and keyword tables."""
     criteria: list[Criterion]
     fx: dict[str, float]              # currency code -> USD multiplier
     guards: dict[str, list[str]]      # guard class -> keyword list
@@ -81,12 +83,14 @@ class Spec:
 
 @dataclass
 class CellItem:
+    """One answer item within a cell, with its verified marker."""
     raw: str
     verified: bool = True
 
 
 @dataclass
 class Cell:
+    """One (entity, question) cell as read from any of the three readers."""
     items: list[CellItem] = field(default_factory=list)
     flags: set = field(default_factory=set)   # CONFLICT, UNVERIFIED_CELL, CAPPED, DEMOTED_RIVALS, VERIFIED_UNKNOWN
     state: str = "data"                       # data | ND | NO_DATA
@@ -94,6 +98,7 @@ class Cell:
 
 @dataclass
 class Parsed:
+    """A parser's verdict on one cell item: value, bounds, vintage, flags."""
     ok: bool
     value: Optional[float] = None      # canonical point (count; USD for money; 1/0 for binary)
     lo: Optional[float] = None         # guaranteed lower bound (qualifiers/ranges)
@@ -105,6 +110,7 @@ class Parsed:
 
 @dataclass
 class GateVerdict:
+    """One hard gate's verdict for one entity, with full traceability."""
     criterion_id: str
     outcome: str          # PASS | FAIL
     label: str            # PASS | FAIL | PASS (not disclosed) | PASS (no data) | PASS (unparseable: ...) | PASS (parent-attributed) | ...
@@ -115,6 +121,7 @@ class GateVerdict:
 
 @dataclass
 class ScoredValue:
+    """One scored criterion's contribution for one entity."""
     criterion_id: str
     score: Optional[float]   # None = no data (excluded from renorm)
     label: str
@@ -123,6 +130,7 @@ class ScoredValue:
 
 @dataclass
 class EntityResult:
+    """One entity's gate verdicts, scores and final rank (None = excluded)."""
     entity: str
     gates: list[GateVerdict]
     excluded_by: str = ""            # first failing gate's criterion id ("" = survived)
@@ -134,6 +142,7 @@ class EntityResult:
 
 @dataclass
 class ShortlistResult:
+    """A full shortlist run: ranked entities plus the spec that produced them."""
     entities: list[EntityResult]     # ranked survivors first (by rank), then excluded
     k: int
     spec: Spec
@@ -152,6 +161,8 @@ class CellMap(dict):
 
 
 def _norm(text: str) -> str:
+    """Whitespace/case-normalise for join keys — local twin of the
+    _normalise_value helpers in aggregate.py/group.py."""
     return " ".join(str(text).strip().lower().split())
 
 
@@ -180,13 +191,13 @@ _CRITERIA_COLS = ["id", "question", "type", "parser", "direction",
                   "threshold_lo", "threshold_hi", "weight", "missing_policy",
                   "unverified_policy", "max_age_years", "notes"]
 
-# Launch spec — PLACEHOLDER criteria for the mechanism test (George,
-# 2026-08-05). Two hard gates per the approved decisions; scored criteria
-# exist to exercise ranking/renormalisation, their weights are toys.
+# Launch spec — PLACEHOLDER criteria for the mechanism test. Two hard
+# gates; scored criteria exist to exercise ranking/renormalisation, their
+# weights are toys.
 _DEFAULT_CRITERIA = [
-    # George 2026-08-05(3): client criteria REINTERPRETED. The first must is
-    # not corporate independence but "do they OFFER manufacturing as a
-    # service" (CMO/EMS/CDMO vs selling own products) — judged on the
+    # Client criteria reinterpreted: the first must is not corporate
+    # independence but "do they OFFER manufacturing as a service"
+    # (CMO/EMS/CDMO vs selling own products) — judged on the
     # Summary-description prose via the service-language keyword list
     # (sheet "Keywords"; deterministic, editable). Second must: MID-SIZED by
     # revenue (band, not just a giant cap). Independence gate superseded —
@@ -215,7 +226,7 @@ _DEFAULT_KEYWORDS = {
     ],
 }
 
-# Static coarse FX (order-of-magnitude gates; reviewed manually — Q7).
+# Static coarse FX (order-of-magnitude gates; reviewed manually).
 _DEFAULT_FX = {"USD": 1.0, "GBP": 1.27, "EUR": 1.08, "CHF": 1.10, "SEK": 0.095}
 
 _DEFAULT_GUARDS = {
@@ -249,6 +260,8 @@ def write_default_spec(path: str) -> None:
 
 
 def read_spec(path: str) -> Spec:
+    """Read a spec workbook (Criteria + FX + Guards, optional Keywords)
+    into a Spec. Workbooks predating the Keywords sheet stay readable."""
     import pandas as pd
 
     def _opt_float(v):
@@ -404,7 +417,7 @@ def read_flat_gt_cells(filepath: str) -> dict[tuple[str, str], Cell]:
 
 def read_eval_detail_cells(filepath: str) -> dict[tuple[str, str], Cell]:
     """Reconstruct the AI side's cells from an eval report's Detail sheet —
-    the Dell fallback when the raw pipeline workbook is on another machine.
+    the fallback when the raw pipeline workbook is unavailable.
     LIMITATION (recorded on every cell): verified/unverified and
     conflict/demotion markers are not in Detail, so every cell carries
     VERIFIED_UNKNOWN and unverified_policy cannot bite."""
@@ -583,9 +596,14 @@ def _one_money(fragment: str, fx: dict) -> Optional[tuple[float, set]]:
 
 def parse_money(text: str, guards: dict, fx: dict, ref_year: int,
                 max_age: Optional[int]) -> Parsed:
+    """Parse a revenue-style cell into a USD amount with bounds and flags.
+
+    Handles currency symbols/codes, scale words, ranges, qualifiers and
+    parenthetical annotations (year vintage, forecast/partial-period guards,
+    parent attribution). Never guesses: unparseable text is PARSE_FAIL."""
     # Human-typed thousands with a space after the comma ("4, 153 million
     # SEK" = 4,153) — rejoin before the amount regex, which otherwise stops
-    # at the comma and reads 4 (found scoring the final59 GT, Rosti).
+    # at the comma and reads 4 (seen in real ground-truth cells).
     text = re.sub(r"(?<=\d),\s+(?=\d{3})", ",", text)
     body, notes = _split_annotations(text)
     flags: set = set()
@@ -593,8 +611,8 @@ def parse_money(text: str, guards: dict, fx: dict, ref_year: int,
     for n in notes:
         kind, year = _classify_annotation(n, guards)
         if kind == "company":
-            # Q1 (approved): a non-year parenthetical naming another company
-            # = parent-attributed revenue. Parses, flagged, never trips the
+            # A non-year parenthetical naming another company =
+            # parent-attributed revenue. Parses, flagged, never trips the
             # giant gate.
             flags.add("PARENT_ATTRIBUTED")
         elif kind == "year":
@@ -686,6 +704,12 @@ def _missing_verdict(crit: Criterion, label: str, raw: str, flags: set) -> GateV
 
 def eval_gate(crit: Criterion, cell: Optional[Cell], spec: Spec,
               ref_year: int) -> GateVerdict:
+    """Judge one hard gate for one entity's cell.
+
+    Missing / not-disclosed / unparseable / unverified-only cells take the
+    criterion's missing_policy (never a silent pass); only explicit verified
+    data can FAIL an entity. Qualified bounds that leave the deciding side
+    open pass with a visible "bound open" label."""
     raw = "\n".join(i.raw for i in cell.items) if cell else ""
     cell_flags = set(cell.flags) if cell else set()
     if cell is None or cell.state == "NO_DATA":
@@ -709,8 +733,8 @@ def eval_gate(crit: Criterion, cell: Optional[Cell], spec: Spec,
     item, pick_flags = _pick_item(cell, crit)
     flags = cell_flags | pick_flags
     if item is None:
-        # Q3 (approved): only an explicit VERIFIED value can exclude; an
-        # unverified-only cell flags through like missing data.
+        # Only an explicit VERIFIED value can exclude; an unverified-only
+        # cell flags through like missing data.
         return _missing_verdict(crit, "unverified only", raw, flags)
 
     p = parse_value(crit, item.raw, spec, ref_year)
@@ -719,7 +743,7 @@ def eval_gate(crit: Criterion, cell: Optional[Cell], spec: Spec,
         return _missing_verdict(crit, f"unparseable: {p.reason}", raw, flags)
 
     if crit.parser == "money" and "PARENT_ATTRIBUTED" in p.flags:
-        # Q1 (approved): giant gate measures the entity's OWN size only.
+        # The giant gate measures the entity's OWN size only.
         return GateVerdict(crit.id, "PASS", "PASS (parent-attributed)",
                            f"{p.value:,.0f} USD (parent's)", raw, sorted(flags))
 
@@ -773,6 +797,8 @@ def eval_gate(crit: Criterion, cell: Optional[Cell], spec: Spec,
 
 def eval_scored(crit: Criterion, cell: Optional[Cell], spec: Spec,
                 ref_year: int) -> ScoredValue:
+    """Score one soft criterion for one entity's cell; score=None marks
+    no-data/unparseable cells so renormalisation can exclude them."""
     raw = "\n".join(i.raw for i in cell.items) if cell else ""
     if cell is None or cell.state in ("NO_DATA", "ND"):
         label = "no data" if (cell is None or cell.state == "NO_DATA") else "not disclosed"
@@ -815,6 +841,9 @@ def _match_questions(spec: Spec, cells: dict) -> dict[str, str]:
 
 def run_shortlist(cells: dict[tuple[str, str], Cell], spec: Spec,
                   k: int = 5, ref_year: int = 2026) -> ShortlistResult:
+    """Run the full shortlist: hard gates first (first FAIL excludes), then
+    weighted scoring renormalised over the criteria that had data; rank
+    survivors by total score, coverage, then name for determinism."""
     entities = sorted({e for e, _ in cells.keys()})
     qmap = _match_questions(spec, cells)
     gates = [c for c in spec.criteria if c.type == "hard_gate"]
@@ -852,6 +881,7 @@ def run_shortlist(cells: dict[tuple[str, str], Cell], spec: Spec,
 # Comparison helpers (the two-run experiment)
 # ---------------------------------------------------------------------------
 def top_k(result: ShortlistResult, k: Optional[int] = None) -> list[str]:
+    """The top-k ranked survivor entity names (defaults to the run's k)."""
     k = k or result.k
     return [r.entity for r in result.entities if r.rank is not None][:k]
 

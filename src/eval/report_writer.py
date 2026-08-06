@@ -251,6 +251,8 @@ def write_report(
     gt: GroundTruth,
     out_path: str,
 ) -> None:
+    """Write the six-sheet styled Excel report (see module docstring), with
+    verdict colouring and Manual Verdict dropdowns on the review sheets."""
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
 
     align_df = pd.DataFrame(_alignment_rows(result, gt))

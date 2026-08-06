@@ -1,3 +1,12 @@
+"""CLI entry point for the entity-extraction pipeline.
+
+Reads an .xlsx input workbook (entities, seed URLs, questions, optional
+config sheet), runs the full pipeline (Acquire → Filter → Extract → Verify →
+Aggregate, plus optional Grouping/Summary layers), and writes a multi-sheet
+.xlsx report under outputs/. Prompts interactively for any path not given as
+a flag; --backend overrides the acquire tool for one run. Ends with an
+honest run summary that names sites which yielded nothing.
+"""
 import argparse
 import os
 import time

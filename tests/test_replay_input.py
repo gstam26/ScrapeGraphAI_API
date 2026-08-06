@@ -1,6 +1,6 @@
 """
 Tests for diagnostics/build_replay_input.py — the page-set-pinning replay
-tool (standing requirement, decision-log 2026-07-06: before/after validations
+tool (standing requirement: before/after validations
 must replay a pinned URL list, never re-crawl).
 
 Fully offline: builds a fake baseline output workbook (Acquire Log) and a

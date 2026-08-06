@@ -1,3 +1,5 @@
+"""Verification-layer unit tests: quote-to-page matching (exact, fuzzy,
+none), char spans, and match_type bookkeeping in verify_cell/verify_cells."""
 from models import ExtractedCell, PageDoc, SourceQuote
 from src.verify import verify_cell, verify_cells
 

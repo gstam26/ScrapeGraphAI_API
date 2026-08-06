@@ -50,6 +50,8 @@ def _fmt(g) -> str:
 
 
 def run(gt_path: str, pipe_path: str, out_path: str, review_path: str | None) -> None:
+    """Align, optionally apply manual verdicts from a filled report, compute
+    metrics, write the Excel report, and print the summary."""
     gt = read_ground_truth(gt_path)
     pipe = read_pipeline_output(pipe_path)
     result = align(gt, pipe)
@@ -80,6 +82,8 @@ def run(gt_path: str, pipe_path: str, out_path: str, review_path: str | None) ->
 
 
 def main() -> None:
+    """CLI entry point; defaults the report path to a timestamped file
+    under outputs/."""
     ap = argparse.ArgumentParser(description="Stage 10 extraction evaluation (end-to-end).")
     ap.add_argument("--gt", required=True, help="ground-truth workbook")
     ap.add_argument("--pipeline", required=True, help="pipeline output workbook (Matrix + Provenance)")

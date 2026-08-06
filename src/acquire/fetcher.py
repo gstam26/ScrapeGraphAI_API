@@ -1,3 +1,14 @@
+"""Fetch backends for the Acquire layer: URL -> (text, html, provenance).
+
+The default local path is a static httpx GET with Trafilatura extraction,
+escalating to a headless Playwright render when the content quality gate
+fails; the pooled variants route renders through the shared, politeness-
+gated browser pool (playwright_pool.py). Hosted backends (Firecrawl,
+ScrapeGraphAI, plain requests) are also supported. Every backend returns a
+FetchProvenance record so gate failures and render fallbacks are
+inspectable rather than silent. Entry point: fetch_page_with_provenance().
+"""
+
 import os
 from typing import TypedDict
 
@@ -30,11 +41,11 @@ class FetchProvenance(TypedDict):
 # Consent-manager (CMP) overlay containers stripped from fetched HTML before
 # text extraction and gating. Rendered DOMs — and some static pages — carry the
 # CMP dialog as the most paragraph-like text block, so Trafilatura extracts the
-# cookie policy INSTEAD of the page content. Quantified on the 2026-07-10
-# hybrid bake-off: 4 Bruker pages returned an identical 2,539-char OneTrust
-# modal; 5 Hologic pages PASSED the gate with 651 chars of TrustArc text
-# (silent junk reaching extraction). Vendor container IDs only — generic and
-# deterministic, no site-specific rules.
+# cookie policy INSTEAD of the page content. Observed in practice: 4 Bruker
+# pages returned an identical 2,539-char OneTrust modal; 5 Hologic pages
+# PASSED the gate with 651 chars of TrustArc text (silent junk reaching
+# extraction). Vendor container IDs only — generic and deterministic, no
+# site-specific rules.
 _CONSENT_OVERLAY_SELECTORS = [
     "#onetrust-consent-sdk", "#onetrust-banner-sdk", "#onetrust-pc-sdk",   # OneTrust
     "#CybotCookiebotDialog",                                               # Cookiebot
@@ -148,8 +159,8 @@ def _gate_with_rescue(text: str, html: str) -> tuple[str, bool, str]:
     Trafilatura underperforms on short, link-dense "info card" pages
     (locations / contact / leadership / about grids): the facts live in link
     labels and address blocks it strips as boilerplate, the gate then fails,
-    and extraction sees a husk (2026-07-22 smoke run: forjmedical /locations
-    837 husk chars -> 0 items while the HQ address sat in the DOM). When the
+    and extraction sees a husk (e.g. a /locations page reduced to 837 husk
+    chars -> 0 items while the HQ address sat in the DOM). When the
     gate fails but the FULL visible text is substantial-yet-bounded
     (QUALITY_MIN_CHARS..FULL_PAGE_RESCUE_MAX_CHARS), ship the full text:
     rescued pages PASS, with the original failure kept in the reason for
@@ -363,8 +374,8 @@ def _fetch_playwright_pooled_hybrid(url: str, cfg: Config) -> tuple[str, str, Fe
 
     # Escalation must not LOSE good static content. Some SPA pages wipe the
     # server-rendered HTML on hydration, so the render can be far thinner than
-    # the static extraction (observed 2026-07-13: Neogen /categories static
-    # 20,346 chars -> render 1,560 -> the escalation used to ship the 1,560).
+    # the static extraction (observed: a /categories page went from 20,346
+    # static chars to a 1,560-char render — the escalation used to ship the 1,560).
     # Keep the render only when it passes the gate (incl. rescued) or is at
     # least as rich as the static text; otherwise fall back to the richer
     # static extraction. Mirrors the Firecrawl path's len() guard.

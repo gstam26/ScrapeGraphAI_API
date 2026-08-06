@@ -331,6 +331,14 @@ def _match_cell(
     emb: dict[str, list[float]],
     is_list: bool,
 ) -> tuple[list[GTAlignment], list[AIOnly]]:
+    """Match one cell's GT claims to its AI claims and band the verdicts.
+
+    Splits null vs real claims, expands comma-joined AI values in short-item
+    list cells, scores every GT-group x AI pair (containment shortcut for
+    single-answer names, else cosine/fuzz + quote overlap), then greedily
+    assigns groups to AI claims best-first at/above the auto-miss floor.
+    GT-nulls match AI-nulls structurally. Returns (GTAlignment per GT claim,
+    AIOnly leftovers for the precision side)."""
     gts: list[GTClaim] = slot["gt"]
     ais: list[AIClaim] = slot["ai"]
 

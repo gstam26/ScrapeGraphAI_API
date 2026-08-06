@@ -1,3 +1,12 @@
+"""Pydantic data models shared by every pipeline layer.
+
+Defines the request shapes (PipelineInput, UrlSpec, ColumnSpec), the
+per-layer artefacts (PageDoc from Acquire, RoutedPage from Filter,
+ExtractedCell/SourceQuote from Extract/Verify) and the final PipelineResult.
+Layers communicate only through these models plus the runtime Config —
+never by importing each other. Config field defaults read env-driven values
+from config.py at import so directly-constructed Configs honour them too.
+"""
 from typing import Any
 
 from pydantic import BaseModel, Field

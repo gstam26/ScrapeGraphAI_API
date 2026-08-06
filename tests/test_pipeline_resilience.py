@@ -1,6 +1,6 @@
 """
-Guards against the entity-parallelism crash-propagation bug found in the
-2026-07-03 code review: a print() call sat outside _process_url_spec's try
+Guards against an entity-parallelism crash-propagation bug found in
+code review: a print() call sat outside _process_url_spec's try
 block, so an encoding error there (realistic on Windows consoles for
 non-ASCII entity names/URLs) propagated through the unguarded future.result()
 in run_pipeline and discarded every already-completed entity's results.

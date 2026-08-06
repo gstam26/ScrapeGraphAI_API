@@ -1,3 +1,13 @@
+"""Pipeline orchestrator: wires the stage modules into one run.
+
+Flow per URL spec: Acquire → Filter → Extract → Verify, executed concurrently
+across specs (each spec is a different seed domain, so per-domain request
+rates are unchanged); results are then merged single-threaded in original
+spec order and passed through Aggregate, optional Grouping and the optional
+LLM summary layer. Entry point: run_pipeline(). Excel I/O lives outside this
+module (src/io_excel via main.py). Grouping and summarization are strictly
+additive and fail-soft — their failure can never fail the run.
+"""
 import sys
 import time
 from collections import defaultdict
@@ -34,6 +44,12 @@ from src.verify import verify_cells
 
 
 def _build_config(overrides: dict[str, Any] | None = None) -> Config:
+    """Build the run Config from module defaults plus workbook overrides.
+
+    Precedence: builtin default < env var < workbook config sheet. Only keys
+    in the override map are honoured; booleans and crawl_scope are validated
+    because Excel cells arrive as strings.
+    """
     cfg = Config(
         acquire_tool=ACQUIRE_TOOL,
         extract_tool=EXTRACT_TOOL,
@@ -95,8 +111,8 @@ def _safe_print(msg: str) -> None:
     A workbook entity name or URL containing a character outside the
     console's active codepage (common on Windows without PYTHONIOENCODING
     set) would otherwise raise UnicodeEncodeError from a bare print() call —
-    2026-07-03 code review found this sitting outside _process_url_spec's
-    try block, where it propagated through the unguarded future.result() in
+    code review found this sitting outside _process_url_spec's try block,
+    where it propagated through the unguarded future.result() in
     run_pipeline and discarded every already-completed entity's results.
     """
     try:
@@ -119,6 +135,11 @@ def _coerce_pipeline_input(
     pipeline_input: PipelineInput | list[tuple[str, int] | str],
     columns: list[ColumnSpec] | None,
 ) -> PipelineInput:
+    """Accept either a full PipelineInput or a bare URL/(url, depth) list.
+
+    The list form is a convenience for scripts: each URL becomes its own
+    entity. columns is then required.
+    """
     if isinstance(pipeline_input, PipelineInput):
         return pipeline_input
 
@@ -143,6 +164,8 @@ def _coerce_pipeline_input(
 
 
 def _pages_from_fetch_results(fetch_results: list[FetchedPage]) -> list[PageDoc]:
+    """Convert acquire-layer FetchedPage results into PageDoc models,
+    carrying fetch provenance (backend, gate outcome, timings) through."""
     return [
         PageDoc(
             url=fp.url,
@@ -168,6 +191,8 @@ def _annotate_acquire_diag(
     spec: UrlSpec,
     entities: list[str],
 ) -> None:
+    """Stamp seed URL and entity names onto the acquire/crawl diagnostic rows
+    appended since the given start offsets, so every row is attributable."""
     entity_text = ", ".join(entities)
     for row in diag["acquire_log"][acquire_start:]:
         row["seed_url"] = spec.url
@@ -354,8 +379,7 @@ def run_pipeline(
                 # to a specific spec; this is the backstop so one spec's
                 # unexpected failure (e.g. a bug outside that try block) can
                 # never discard every other already-completed entity's results
-                # (2026-07-03 code review) — mirrors the page-level pattern
-                # a few lines below in _process_url_spec.
+                # — mirrors the page-level pattern in _process_url_spec.
                 print(f"    X Spec crashed unexpectedly [{request.urls[index].url}]: {exc}")
                 import traceback
                 traceback.print_exc()
@@ -433,9 +457,9 @@ def run_pipeline(
     # LLM summary layer (AI Summary sheet). Strictly additive and fail-soft,
     # mirroring grouping: consumes diag["claim_groups"], never touches
     # result.rows; any failure — missing AZURE_API_KEY, unreachable endpoint,
-    # even an ImportError from the openai package — only skips the sheet
-    # (brain/proposals/llm-summary-layer.md). Import is deliberately lazy so
-    # the module loads only when the feature is on.
+    # even an ImportError from the openai package — only skips the sheet.
+    # Import is deliberately lazy so the module loads only when the feature
+    # is on.
     if SUMMARY_ENABLED and diag.get("claim_groups"):
         try:
             from src.summarize import summarize_groups

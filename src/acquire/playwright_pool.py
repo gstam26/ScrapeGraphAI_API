@@ -1,6 +1,6 @@
 """Pooled Playwright fetching with a politeness gate.
 
-Self-hosted alternative to Firecrawl (brain/proposals/firecrawl-replacement.md).
+Self-hosted alternative to Firecrawl for rendering JS-heavy pages.
 Unlike Firecrawl, requests come from THIS machine's IP, so politeness is not
 optional here — it is the mitigation the Sagentia IP-blocking history demands:
 
@@ -182,8 +182,8 @@ def fetch_rendered_html(
     """Politely fetch url with the pooled headless browser; return rendered HTML.
 
     Navigation stops at domcontentloaded, then a flat paint settle (see
-    config.RENDER_* for tuning). A networkidle wait was trialled and disconfirmed
-    (2026-07-13): the pages that gate-fail after render are link-grid category
+    config.RENDER_* for tuning). A networkidle wait was trialled and
+    disconfirmed: the pages that gate-fail after render are link-grid category
     pages, not hydration-starved SPAs, so waiting longer recovered no prose.
 
     Raises RobotsDisallowed if robots.txt forbids the URL. Other Playwright

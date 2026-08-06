@@ -1,9 +1,8 @@
 """
 LLM summary layer — synthesized prose over verified, grouped claims.
 
-Design: brain/proposals/llm-summary-layer.md (approved 2026-07-06/07). The
-summarizer consumes the grouped-theme structure (diag["claim_groups"]), not
-raw claims, so the verified-only guarantee is inherited from group.py's
+The summarizer consumes the grouped-theme structure (diag["claim_groups"]),
+not raw claims, so the verified-only guarantee is inherited from group.py's
 single choke point (_display_values) and every input claim carries a
 Provenance claim ID the prose must cite.
 
@@ -13,15 +12,14 @@ Properties honoured here:
     every existing sheet are byte-identical whether this layer runs or not.
   * FAIL-SOFT — a missing AZURE_API_KEY raises once at entry (the pipeline
     wraps the call and skips the sheet); per-call failures are captured in
-    the summary record and surface as a visible Digest-line fallback row,
-    never silently.
+    the summary record and surface as a visible fallback row, never silently.
   * CITED — every sentence must cite [C####] claim IDs from the closed input
     set. The Tier-1 mechanical gate below (no LLM, deterministic) fails a
-    summary to its Digest line; gate false-positives therefore fail SAFE
-    (deterministic text shown instead of prose).
-  * NON-DETERMINISM REDUCED AND AUDITED — temperature=0 + fixed seed
-    (honoured on this deployment, probe 2026-07-07), with system_fingerprint,
-    exact prompt and raw response recorded per call for the Summary Log.
+    summary to its deterministic fallback; gate false-positives therefore
+    fail SAFE (deterministic text shown instead of prose).
+  * NON-DETERMINISM REDUCED AND AUDITED — temperature=0 + fixed seed, with
+    system_fingerprint, exact prompt and raw response recorded per call for
+    the Summary Log.
 
 The Tier-2 LLM-judge is deliberately NOT here — it is a post-run diagnostics
 pass (diagnostics/summary_judge.py), not part of the deliverable pipeline.
@@ -47,58 +45,42 @@ from src.group import ALL_ITEMS_THEME
 from src.io_excel import _norm_claim, build_claim_index
 
 # Bumped whenever the prompt template changes — output is never compared
-# across prompt versions (design §3). s3 (2026-07-08, scaffolding round 2 of
-# 2, George-directed): dropped the 2-4 sentence FLOOR — it contradicted the
-# no-interpretation rule for one-tag cells (Company type), forcing the model
-# to pad ("this means the company...") or emit filler; 13/18 judge flags on
-# the 07b run were that self-inflicted pattern.
-# s4 (2026-07-14, George reopened the 07-08 format decision — compact
-# analyst format, brain/proposals/summary-compact-format.md): render the
-# themes instead of narrating them — one line per theme,
-# "label: items [cites]", capped items with a visible overflow marker; the
-# gate/judge unit becomes the line for multi-line output. The s3 ship bars
-# do NOT transfer: automated eval legs must re-run on s4 output before any
-# faithfulness claim.
-# s5 (2026-07-14, same day — George's eyeball test on real CMO output
-# failed s4 two ways): (a) "one line per theme" had no cell-level cap, so
-# an 11-theme Description cell rendered as an 11-line wall; s5 caps at
-# SUMMARY_MAX_LINES_PER_CELL covering the largest themes. (b) CMO theme
-# labels are whole verbatim claim sentences (not ADLM-style short tags),
-# and s4's "label: items" made the model ECHO the label then restate it as
-# the content; s5 has the model write a 2-5 word topic itself and
-# synthesize members instead of enumerating them.
-# s6 (2026-07-14, from the s5 review): two observed over-reach patterns
-# banned explicitly. (a) Range-blending: claims {80, 330, 3000} employees
-# (different DECADES, from a /history page) became "between 80 and 3,000
-# employees" — a statement no source makes. (b) Absence assertions: "No
-# evidence X manufactures in China" is an inference about the corpus, not
-# a claim's content. Both are cited-but-unsupported — the worst kind.
-# 2026-07-15 ROUTING change (prompt unchanged, version stays s6): the
-# deterministic route below now covers every all-short-values cell, not just
-# single-tag cells — binary verdicts, numbers, categories and location-style
-# lists render verbatim with per-value citations and no LLM call (George's
-# analyst-format direction: "Yes/No, a number, a list — easy on the eye";
-# Provenance carries the depth). The LLM path is reserved for cells with
-# prose-length claims, where synthesis actually adds something.
-# s7 (2026-07-15, George's s6c eyeball): three changes from the first CMO
-# check of the routed output. (a) MERGE route: verbatim rendering showed the
-# same fact under variant spellings ("Tempe, Arizona" / "Tempe, AZ" /
-# "Tempe, AZ 85288 USA"), each with its own citation — string matching can't
-# know US=USA=United States, so multi-value short cells now go to the LLM
-# with a dedicated merge prompt (pool citations of same-meaning variants,
-# never merge different numbers/places). (b) Bare boolean claims are pulled
-# out BEFORE any LLM call and rendered as a deterministic verdict — on the
-# s6c run 3 of 6 gate failures were the coverage gate demanding a citation
-# from a '"True" (2 items)' theme the model rightly ignored. (c) The prose
-# prompt template itself is UNCHANGED from s6.
+# across prompt versions. Rules the current version encodes, each a
+# refinement from reviewing real output:
+#   * No sentence-count floor: forcing 2-4 sentences on one-tag cells makes
+#     the model pad with the interpretation/filler the no-inference rule
+#     forbids.
+#   * Render themes, don't narrate them: one line per theme, capped at
+#     SUMMARY_MAX_LINES_PER_CELL lines per cell (covering the largest
+#     themes); the gate/judge unit is the line for multi-line output.
+#   * The model writes its own 2-5 word topic and synthesizes members —
+#     theme labels can be whole verbatim claim sentences, and using them as
+#     the line label makes the model echo the label then restate it as the
+#     content.
+#   * Two over-reach patterns banned explicitly: range-blending (claims
+#     {80, 330, 3000} employees from different decades must never become
+#     "between 80 and 3,000 employees" — a statement no source makes) and
+#     absence assertions ("No evidence X manufactures in China" is an
+#     inference about the corpus, not a claim's content). Both are
+#     cited-but-unsupported — the worst kind.
+#   * Routing: every all-short-values cell (binary verdicts, numbers,
+#     categories, location-style lists) renders verbatim with per-value
+#     citations and no LLM call; the LLM path is reserved for cells with
+#     prose-length claims, where synthesis actually adds something.
+#   * Multi-value short cells go to a dedicated MERGE prompt: string
+#     matching can't know "Tempe, AZ" = "Tempe, Arizona" = US/USA variants,
+#     so the LLM pools citations of same-meaning variants (never merging
+#     different numbers/places). Bare boolean claims are pulled out BEFORE
+#     any LLM call and rendered as a deterministic verdict, so a
+#     boolean-only theme can never fail the coverage gate uncited.
 PROMPT_VERSION = "s7"
 
 # Citation parsing. The model batches IDs inside one bracket —
 # "[C0183, C0184, C0185]" — and sometimes chains brackets "[C0183][C0184]".
-# The 2026-07-07 laptop eval showed the old single-ID-per-bracket regex
-# (r"\[(C\d{4,})\]") registered every multi-ID bracket as UNCITED, failing
-# 72/89 summaries at the gate on a parser bug, not a model fault. Match any
-# bracket containing >=1 claim ID, then pull all IDs from inside it.
+# A single-ID-per-bracket regex registers every multi-ID bracket as UNCITED,
+# failing summaries at the gate on a parser bug rather than a model fault.
+# So: match any bracket containing >=1 claim ID, then pull all IDs from
+# inside it.
 _CITED_BRACKET_RE = re.compile(r"\[[^\[\]]*?C\d{4,}[^\[\]]*?\]")
 _CLAIM_ID_RE = re.compile(r"C\d{4,}")
 
@@ -116,20 +98,20 @@ def has_citation(text: str) -> bool:
     return _CITED_BRACKET_RE.search(text or "") is not None
 
 # Unit split shared by the Tier-1 gate, the Tier-2 judge and the eval legs.
-# s4 output is one line per theme, so multi-line text splits on newlines
-# (defensively stripping bullet markers the prompt forbids); single-line
-# text keeps the s3-era sentence split, so older workbooks re-judge
-# unchanged. Sentence fragments created by splitting after a known
-# abbreviation are merged back — the 2026-07-07 laptop eval showed company
-# names ("Aalto Scientific Ltd.", "U.S.") chopping prose into citation-less
-# fragments that failed the gate and mis-fed the judge. Unknown abbreviations
-# still over-split, which only ever FAILS a summary toward its deterministic
-# Digest line — the safe direction.
+# Current output is one line per theme, so multi-line text splits on
+# newlines (defensively stripping bullet markers the prompt forbids);
+# single-line text keeps the older sentence split, so earlier workbooks
+# re-judge unchanged. Sentence fragments created by splitting after a known
+# abbreviation are merged back — company names ("Aalto Scientific Ltd.",
+# "U.S.") otherwise chop prose into citation-less fragments that fail the
+# gate and mis-feed the judge. Unknown abbreviations still over-split, which
+# only ever FAILS a summary toward its deterministic fallback — the safe
+# direction.
 # A unit that is ONLY the overflow marker is our own mandated text, not a
-# claim — it must not count as an uncited sentence. On the s6c CMO run the
-# model placed "(more in Provenance)" after the final period of single-line
-# output, and the sentence splitter turned it into a citation-less fragment
-# that failed the gate (Tecan Systems Integration, Mack Medical device).
+# claim — it must not count as an uncited sentence (the model sometimes
+# places "(more in Provenance)" after the final period of single-line
+# output, and the sentence splitter would turn it into a citation-less
+# fragment that fails the gate).
 _PROVENANCE_MARKER_RE = re.compile(r"^\(?\s*more in provenance\s*\)?\s*[.!]?$", re.IGNORECASE)
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
@@ -160,8 +142,8 @@ def _split_sentences(text: str) -> list[str]:
 
 def _join_units(units: list[str], like: str) -> str:
     """Rejoin units split by _split_sentences, preserving the original shape:
-    newline-joined when the source was multi-line (s4), space-joined
-    otherwise (s3 prose). Used by the eval corruption legs so a corrupted
+    newline-joined when the source was multi-line, space-joined otherwise
+    (single-line prose). Used by the eval corruption legs so a corrupted
     multi-line summary stays multi-line and unit indices stay aligned."""
     return ("\n" if "\n" in (like or "").strip() else " ").join(units)
 
@@ -208,10 +190,9 @@ def deterministic_answer(pairs: list[tuple[str, str]]) -> str | None:
     SUMMARY_TAG_MAX_CHARS (prose — the LLM path's job).
 
     Faithful by construction — every rendered token is a verified claim or a
-    citation. Since s7 this render is used two ways: directly for cells with
-    <=1 non-boolean value (nothing to merge), and as the visible FALLBACK for
-    the LLM merge route (an analyst-readable degradation, unlike the old
-    "N items across M themes" digest line George rejected on the s6c check).
+    citation. Used two ways: directly for cells with <=1 non-boolean value
+    (nothing to merge), and as the visible FALLBACK for the LLM merge route
+    (an analyst-readable degradation, not opaque digest bookkeeping).
     """
     if not pairs or any(len(v) > SUMMARY_TAG_MAX_CHARS for _, v in pairs):
         return None
@@ -232,7 +213,7 @@ def deterministic_answer(pairs: list[tuple[str, str]]) -> str | None:
 
 
 def _merge_prompt(entity: str, question: str, pairs: list[tuple[str, str]]) -> str:
-    """Prompt for the s7 merge route: multi-value short cells where verbatim
+    """Prompt for the merge route: multi-value short cells where verbatim
     rendering repeats the same fact under variant spellings. The one job the
     LLM adds over the deterministic render is SEMANTIC deduplication —
     knowing "U.S." = "USA" = "United States" — which no string metric does.
@@ -273,8 +254,8 @@ def _theme_fallback(
 ) -> str:
     """Analyst-readable fallback for a failed prose-cell LLM call: the top
     themes' MEDOID labels — real verified claim strings, never synthesized —
-    each cited with its resolvable members' pooled IDs. Replaces the
-    "N items across M themes" digest bookkeeping in the AI Summary sheet
+    each cited with its resolvable members' pooled IDs. Shown in the AI
+    Summary sheet instead of "N items across M themes" digest bookkeeping
     (the Digest sheet itself is unchanged). Capped at
     SUMMARY_MAX_LINES_PER_CELL lines with the standard overflow marker."""
     lines: list[str] = []
@@ -366,7 +347,7 @@ def _cell_prompt(
     uncitable claim must not be paraphrasable. Truncation is principled:
     members are capped per theme (marked "+N more"), whole themes never drop.
 
-    exclude_ids (s7): claims routed elsewhere — bare booleans rendered as a
+    exclude_ids: claims routed elsewhere — bare booleans rendered as a
     deterministic verdict — are kept out of the prompt AND the coverage
     sets, so a '"True" (2 items)' theme can no longer fail the gate by
     being a top theme the model rightly never cites.
@@ -443,7 +424,7 @@ def mechanical_gate(
     input_ids: set[str],
     top_theme_id_sets: list[tuple[str, set[str]]],
 ) -> tuple[list[str], set[str], list[str]]:
-    """Tier-1 gate (design §4): deterministic, free, runs inline.
+    """Tier-1 gate: deterministic, free, runs inline.
 
     Returns (failure_reasons, cited_ids, uncited_sentences); empty reasons
     means pass. Checks: no invented citations (set membership against the
@@ -476,13 +457,13 @@ def mechanical_gate(
 
 def summarize_groups(claim_groups: list[dict], rows: list) -> list[dict]:
     """Summarize each grouped cell (one Azure call per cell) and gate the
-    result. Returns diag["cell_summaries"] records (design §3):
+    result. Returns diag["cell_summaries"] records:
 
       {entity, question, summary, cited_ids, uncited_sentences,
        input_claim_ids, gate, model, prompt_version, generated_at,
        system_fingerprint, prompt, raw_response, duration_ms, error}
-    plus, on LLM-routed records since s7, fallback_text — the
-    analyst-readable degradation io_excel shows when gate != pass.
+    plus, on LLM-routed records, fallback_text — the analyst-readable
+    degradation io_excel shows when gate != pass.
 
     gate is "pass", "failed citation gate: ...", or "call failed: ..." —
     io_excel renders non-pass rows as their Digest line with the failure
@@ -519,7 +500,7 @@ def summarize_groups(claim_groups: list[dict], rows: list) -> list[dict]:
             # Nothing citable — no summary row, mirroring "no group, no row".
             continue
 
-        # s7 three-way routing (George's s6c review, 2026-07-15):
+        # Three-way routing:
         #   deterministic — bare booleans and <=1 non-boolean short value;
         #                   nothing to merge, render verbatim, no LLM.
         #   merge         — 2+ short values; the LLM's one job is SEMANTIC
@@ -527,10 +508,10 @@ def summarize_groups(claim_groups: list[dict], rows: list) -> list[dict]:
         #                   citations of same-meaning variants. Fallback =
         #                   the verbatim render (readable, never digest
         #                   bookkeeping).
-        #   prose         — any long value; the s6 synthesis prompt over the
+        #   prose         — any long value; the synthesis prompt over the
         #                   NON-boolean claims, with the boolean verdict
         #                   prepended deterministically (a '"True" (2 items)'
-        #                   top theme can no longer fail the coverage gate).
+        #                   top theme can never fail the coverage gate).
         bool_ids = {cid for cid, v in pairs if _bool_class(v) is not None}
         content = [(cid, v) for cid, v in pairs if cid not in bool_ids]
         verdict = _verdict_segment(pairs)
@@ -553,10 +534,9 @@ def summarize_groups(claim_groups: list[dict], rows: list) -> list[dict]:
                 "prompt": "",
                 # The judge and the eval legs read the Summary Log's Raw
                 # Response column (never the possibly-annotated sheet
-                # cell). An empty string here made every tag cell
-                # unjudgeable — 13 "no sentences" failures and 5 auto-miss
-                # corruptions on the 2026-07-14 CMO s6 run. The rendered
-                # line IS this deterministic path's raw response.
+                # cell); an empty string here would make every
+                # deterministic cell unjudgeable. The rendered line IS
+                # this path's raw response.
                 "raw_response": rendered,
                 "duration_ms": 0,
                 "error": None,
@@ -641,8 +621,8 @@ def summarize_groups(claim_groups: list[dict], rows: list) -> list[dict]:
             "raw_response": summary if gate == "pass" else (resp.get("text") or ""),
             # Analyst-readable degradation for the AI Summary sheet: the
             # verbatim value render (merge route) or the top themes' medoid
-            # claims (prose route) — never the "N items across M themes"
-            # digest bookkeeping George rejected on the s6c check.
+            # claims (prose route) — never opaque "N items across M themes"
+            # digest bookkeeping.
             "fallback_text": job["fallback"],
             "duration_ms": resp.get("duration_ms", 0),
             "error": resp.get("error"),

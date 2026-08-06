@@ -1,3 +1,17 @@
+"""Excel I/O at both edges of the pipeline.
+
+Reads the multi-sheet input workbook (entities / urls / questions / config)
+into a PipelineInput — read_input() — and writes the output workbook —
+write_output_excel(): deliverable sheets (Summary, AI Summary, Matrix,
+Digest, Grouped Themes, Provenance) plus DIAGNOSTICS-gated log sheets.
+
+Every claim in the output carries a sequential Provenance claim ID; other
+sheets cite and hyperlink those IDs, so claim-ID assignment must go through
+build_claim_index for pipeline-time consumers (the summarizer) and write
+time alike — the two can never drift apart. Cell text is clamped below
+Excel's 32,767-char hard limit with a visible truncation marker, never
+silently.
+"""
 import os
 from typing import Any
 
@@ -38,7 +52,7 @@ _RED_FONT = "C62828"
 _ORANGE_FILL = "FFE0B2"
 _LORANGE_FILL = "FFF3E0"  # light orange for mixed verified/unverified
 
-# Tab palette (George, 2026-07-23: professional, grouped by meaning).
+# Tab palette — grouped by meaning.
 # Blues = the deliverable pair (AI Summary darkest = the front page); steel =
 # the grouped-evidence pair (Digest + Grouped Themes, deliberately identical);
 # blue-grey = the Provenance ledger; uniform grey = diagnostics logs.
@@ -81,6 +95,7 @@ def _clean_str(value: Any) -> str:
 
 
 def _find_sheet(xls: pd.ExcelFile, target: str) -> str | None:
+    """Find a sheet by case-insensitive, whitespace-tolerant name match."""
     target_lower = target.lower()
     for sheet_name in xls.sheet_names:
         if sheet_name.strip().lower() == target_lower:
@@ -89,6 +104,7 @@ def _find_sheet(xls: pd.ExcelFile, target: str) -> str | None:
 
 
 def _find_column(df: pd.DataFrame, target: str) -> str | None:
+    """Find a column by case-insensitive, whitespace-tolerant name match."""
     target_lower = target.lower()
     for col in df.columns:
         if str(col).strip().lower() == target_lower:
@@ -97,6 +113,8 @@ def _find_column(df: pd.DataFrame, target: str) -> str | None:
 
 
 def _find_url_column(df: pd.DataFrame) -> str:
+    """Pick the URL column: any name containing 'url' or 'link', else the
+    first column (client sheets rarely label it consistently)."""
     for col in df.columns:
         name = str(col).strip().lower()
         if "url" in name or "link" in name:
@@ -107,23 +125,23 @@ def _find_url_column(df: pd.DataFrame) -> str:
 
 
 def _parse_depth(value: Any) -> int:
+    """Parse a crawl-depth cell into a non-negative int (blank -> 0)."""
     if value is None or pd.isna(value) or str(value).strip() == "":
         return 0
     try:
         depth = int(float(value))
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Depth must be an integer, got {value!r}") from exc
-    # Negative is nonsense; there is no upper cap. The old {0,1,2} whitelist
-    # predated depth experiments (first hit 2026-07-14 by the CMO depth sweep
-    # at depth 3) — an implicit "nobody crawls deeper than 2" assumption in a
-    # validator, not a real constraint. Total crawl volume is bounded by
-    # CRAWL_MAX_PAGES regardless of depth, so deep values are budget-safe.
+    # Negative is nonsense; there is deliberately no upper cap — total crawl
+    # volume is bounded by CRAWL_MAX_PAGES regardless of depth, so deep
+    # values are budget-safe.
     if depth < 0:
         raise ValueError(f"Depth must be a non-negative integer, got {depth!r}")
     return depth
 
 
 def _parse_entity_list(value: Any) -> list[str]:
+    """Split a comma-separated entities cell into a clean list of names."""
     raw = _clean_str(value)
     if not raw:
         return []
@@ -131,6 +149,7 @@ def _parse_entity_list(value: Any) -> list[str]:
 
 
 def _read_entities_sheet(xls: pd.ExcelFile, sheet_name: str) -> list[str]:
+    """Read the entities sheet into a deduplicated, order-preserving list."""
     df = pd.read_excel(xls, sheet_name=sheet_name)
     entity_col = _find_column(df, "entity") or (df.columns[0] if len(df.columns) else None)
     if entity_col is None:
@@ -147,6 +166,8 @@ def _read_entities_sheet(xls: pd.ExcelFile, sheet_name: str) -> list[str]:
 
 
 def _read_urls_sheet(xls: pd.ExcelFile, sheet_name: str) -> list[UrlSpec]:
+    """Read the urls sheet into UrlSpecs, validating each URL and repairing
+    scheme-less addresses ('www.acme.com') with a visible per-row note."""
     df = pd.read_excel(xls, sheet_name=sheet_name)
     url_col = _find_url_column(df)
     if url_col is None:
@@ -188,6 +209,8 @@ def _read_urls_sheet(xls: pd.ExcelFile, sheet_name: str) -> list[UrlSpec]:
 
 
 def _read_questions_sheet(xls: pd.ExcelFile, sheet_name: str) -> list[ColumnSpec]:
+    """Read the questions sheet into ColumnSpecs, rejecting duplicate
+    question names (each question becomes one output column)."""
     df = pd.read_excel(xls, sheet_name=sheet_name)
     question_col = _find_column(df, "question") or (df.columns[0] if len(df.columns) else None)
     if question_col is None:
@@ -214,6 +237,7 @@ def _read_questions_sheet(xls: pd.ExcelFile, sheet_name: str) -> list[ColumnSpec
 
 
 def _coerce_config_value(key: str, value: Any) -> Any:
+    """Coerce a config-sheet cell to the type its setting expects."""
     if value is None or pd.isna(value):
         return None
 
@@ -236,6 +260,8 @@ def _coerce_config_value(key: str, value: Any) -> Any:
 
 
 def _read_config_sheet(xls: pd.ExcelFile, sheet_name: str) -> dict[str, Any]:
+    """Read setting/value overrides, rejecting unsupported setting names so
+    a typo fails loudly instead of being silently ignored."""
     df = pd.read_excel(xls, sheet_name=sheet_name)
     setting_col = _find_column(df, "setting") or (df.columns[0] if len(df.columns) else None)
     value_col = _find_column(df, "value") or (df.columns[1] if len(df.columns) > 1 else None)
@@ -259,6 +285,9 @@ def _read_config_sheet(xls: pd.ExcelFile, sheet_name: str) -> dict[str, Any]:
 
 
 def _resolve_url_entities(urls: list[UrlSpec], entities: list[str], has_entities_sheet: bool) -> None:
+    """Fill each UrlSpec's entities in place: default to all entities,
+    validate explicit references, or (without an entities sheet) fall back
+    to one-entity-per-URL."""
     if has_entities_sheet:
         entity_set = set(entities)
         for spec in urls:
@@ -551,8 +580,9 @@ def _make_matrix_df(
 
 
 def _norm_claim(text) -> str:
-    # Mirrors aggregate.py/group.py _normalise_value so claim-ID lookups from
-    # the Grouped Themes / Digest builders land on the same Provenance rows.
+    """Normalise a claim for claim-index keys — mirrors aggregate.py/group.py
+    _normalise_value so lookups from the Grouped Themes / Digest builders
+    land on the same Provenance rows."""
     return " ".join(str(text).strip().lower().split())
 
 
@@ -567,10 +597,10 @@ def _make_provenance_df(
     provenance_excel_row) — the anchor the Grouped Themes and Digest sheets
     hyperlink back to. The anchor is the first VERIFIED occurrence of each
     claim, falling back to the first occurrence when no verified one exists
-    (standing decision 2026-07-06: grouping/digest cite verified rows only;
-    since group.py feeds them verified claims only, the fallback is never
-    consultant-visible). Claim IDs are sequential in Provenance order, which
-    is deterministic (spec merge order).
+    (grouping/digest cite verified rows only; since group.py feeds them
+    verified claims only, the fallback is never consultant-visible). Claim
+    IDs are sequential in Provenance order, which is deterministic (spec
+    merge order).
     """
     col_names = [
         "Claim ID", "Entity", "Source URL", "Question", "Claim", "Verbatim Quote",
@@ -768,11 +798,10 @@ def _make_digest_df(
     return df, digest_links
 
 
-# AI Summary provenance disclaimer (design §3): the deterministic/synthesized
-# boundary must be visible from the sheet itself. Originally a suffix on the
-# Entity header text; moved to a cell COMMENT on that header (George,
-# 2026-07-23: the explanation cluttered the deliverable's first column and
-# inflated its width) — hover the Entity header to read it.
+# AI Summary provenance disclaimer: the deterministic/synthesized boundary
+# must be visible from the sheet itself. Kept as a cell COMMENT on the
+# Entity header (hover to read it) rather than header text, which would
+# clutter the deliverable's first column and inflate its width.
 _AI_SUMMARY_NOTE = (
     "AI-synthesized prose (Azure GPT-4.1-mini). Not verified text — every "
     "statement cites Claim IDs; check them in Provenance."
@@ -786,8 +815,8 @@ def _make_ai_summary_df(
     columns: list[ColumnSpec],
 ) -> tuple[pd.DataFrame, dict]:
     """AI Summary sheet in MATRIX form — the consultant-facing presentation
-    (George, 2026-07-07: the deliverable is the matrix shape; the original
-    long format survives as the Summary Log audit surface).
+    (the deliverable is the matrix shape; the original long format survives
+    as the Summary Log audit surface).
 
     Entity rows × question columns, same order as the Matrix sheet. Three
     cell regimes, each visibly distinct:
@@ -819,9 +848,10 @@ def _make_ai_summary_df(
                 text = s.get("summary", "")
             else:
                 marker = "call failed" if gate.startswith("call failed") else "citation gate failed"
-                # s7 records carry an analyst-readable fallback (verbatim
-                # values / theme medoid claims); the digest bookkeeping line
-                # remains only for pre-s7 workbooks re-written offline.
+                # Current records carry an analyst-readable fallback
+                # (verbatim values / theme medoid claims); the digest
+                # bookkeeping line remains only for older workbooks
+                # re-written offline.
                 if s.get("fallback_text"):
                     text = (
                         s["fallback_text"]
@@ -843,7 +873,7 @@ def _make_summary_log_df(cell_summaries: list[dict]) -> pd.DataFrame:
     """Summary Log (DIAGNOSTICS-gated): full audit trail per summarizer call —
     exact prompt, raw response, system_fingerprint, prompt_version — because
     seeded determinism is best-effort; any workbook stays auditable
-    regardless (design §3)."""
+    regardless."""
     col_names = [
         "Entity", "Question", "Gate", "Faithfulness", "Judge Verdicts",
         "Cited Claim IDs", "Uncited Sentences", "Input Claim IDs",
@@ -952,7 +982,7 @@ def _style_sheet(ws, tab_color: str, matrix_fills: dict | None = None) -> None:
                 longest = max((len(line) for line in str(cell.value).split("\n")), default=0)
                 max_len = max(max_len, longest)
         # Deliverable answer columns get a wider floor so wrapped prose is
-        # readable without manual resizing (George, 2026-07-23).
+        # readable without manual resizing.
         floor = 30 if deliverable and col[0].column > 1 else 10
         ws.column_dimensions[letter].width = min(max(max_len + 2, floor), 60)
 
@@ -983,6 +1013,9 @@ def write_output_excel(
     output_path: str,
     diag: dict | None = None,
 ) -> None:
+    """Write the full output workbook: deliverable sheets always, log sheets
+    when DIAGNOSTICS is on, then style every sheet and add the traceability
+    hyperlinks (Digest -> Grouped Themes -> Provenance -> source URL)."""
     try:
         from config import DIAGNOSTICS
     except Exception:
@@ -1081,8 +1114,8 @@ def write_output_excel(
         ai_df, ai_fills = _make_ai_summary_df(cell_summaries, digest_text, result, columns)
         sheets.append(("AI Summary", ai_df))
 
-    # Reading order (George, 2026-07-23): answers before evidence. Stable
-    # sort so any sheet not named here (none today) trails the deliverables.
+    # Reading order: answers before evidence. Stable sort so any sheet not
+    # named here (none today) trails the deliverables.
     _READING_ORDER = {name: i for i, name in enumerate(
         ["Summary", "AI Summary", "Matrix", "Digest", "Grouped Themes", "Provenance"])}
     sheets.sort(key=lambda s: _READING_ORDER.get(s[0], len(_READING_ORDER)))

@@ -327,8 +327,8 @@ def test_provenance_reads_all_cells_not_cells():
 def test_matrix_conflict_label(monkeypatch):
     """When has_conflict is True the Matrix cell text starts with '(sources conflict)'.
 
-    Pinned to the pre-08-03 all-candidates render ('value B' must be visible
-    in the cell); with single-best (default on since 2026-08-03) the demoted
+    Pinned to the legacy all-candidates render ('value B' must be visible
+    in the cell); with single-best (now the default) the demoted
     candidate moves behind the [+N] marker — that path is covered in
     tests/test_matrix_single_best.py (conflict label survives there too)."""
     import src.io_excel as io_excel
@@ -558,7 +558,7 @@ def test_aggregate_list_column_no_conflict():
     list_cols = {"Sustainability claims"}
     # Distinct-topic strings (max pairwise token_sort_ratio ~46) so the fuzzy
     # near-duplicate dedup (_DEDUP_RATIO=85) keeps all 5. Earlier "claim {i}"
-    # values collided at 85.7 once _DEDUP_RATIO was lowered 95->85 (2026-06-29),
+    # values collided at 85.7 once _DEDUP_RATIO was lowered 95->85,
     # collapsing to 1 — a fixture artefact, not a product bug.
     claims = [
         "solar powered manufacturing",
@@ -702,7 +702,7 @@ def test_thin_content_gate_below_and_above_threshold():
 
 def test_parse_depth_accepts_any_nonnegative_int():
     # The old {0,1,2} whitelist was an implicit assumption that crashed the
-    # first depth-3 experiment (CMO sweep, 2026-07-14). Depth is budget-safe
+    # first depth-3 experiment (CMO depth sweep). Depth is budget-safe
     # at any value (CRAWL_MAX_PAGES bounds total volume), so only negatives
     # are rejected.
     import pytest

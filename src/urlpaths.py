@@ -10,8 +10,8 @@ Two categories, deliberately distinct:
     NOT blocked from the crawl. They carry the registered company name and
     address BY LAW (GDPR Art. 13 requires the controller's identity up front;
     a German Impressum is nothing but that address), which makes them among
-    the most reliable pages on a site for HQ / legal-entity questions. On the
-    2026-07-31 starved-2 run, Arrk's verified "Osaka, Japan" HQ came from
+    the most reliable pages on a site for HQ / legal-entity questions. On a
+    link-starvation diagnosis run, Arrk's verified "Osaka, Japan" HQ came from
     jp.arrk.com/company/en/privacypolicy and from no other page the crawl
     reached. Classified so Extract can cap their cost instead of paying 30
     Azure calls for a 234K-char privacy policy (Sanmina).
@@ -21,8 +21,8 @@ Two categories, deliberately distinct:
 
 Matching is a FULLMATCH against individual path segments with the page
 extension stripped — never a substring scan. That is what keeps this from
-becoming the brittle blocklist rejected on 2026-06-17: /privacy-first-
-manufacturing, /news/cookie-factory-opens and /glossary/terms-of-the-trade
+becoming the brittle blocklist rejected earlier in the project:
+/privacy-first-manufacturing, /news/cookie-factory-opens and /glossary/terms-of-the-trade
 all survive, while /privacypolicy and /en/cookie-policy.html classify.
 Topical segments (/products/, /services/) must never be added here — whether
 those are boilerplate is domain knowledge that does not generalise, and it

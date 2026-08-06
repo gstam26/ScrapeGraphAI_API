@@ -1,6 +1,6 @@
 """
-Typed (numeric) value matching in generic_eval — regression tests for the
-2026-07-21 label finding: token_sort_ratio("2003", "2004") = 75% confidently
+Typed (numeric) value matching in generic_eval — regression tests for a
+labeling finding: token_sort_ratio("2003", "2004") = 75% confidently
 auto-matched two DIFFERENT years. Pure-numeric pairs now compare exactly.
 """
 import os
@@ -41,7 +41,7 @@ def test_numeric_value_parsing():
 
 
 def test_different_years_no_longer_match():
-    # The bug George's labels caught: "2003" vs "2004" was an auto_match.
+    # A real labeling bug this catches: "2003" vs "2004" was an auto_match.
     r = evaluate([_gt("2003")], [_ai("2004")], semantic=False)
     verdicts = [p.verdict for c in r.cells for p in c.gt_pairs]
     assert verdicts == ["auto_miss"]
@@ -68,7 +68,7 @@ def test_non_numeric_values_keep_fuzzy_matching():
     assert verdicts == ["auto_match"]
 
 
-# ── Typed binary matching (2026-07-29: CE credited No↔Yes at 0.97) ───────────
+# ── Typed binary matching (regression: CE credited No↔Yes at 0.97) ───────────
 
 class _YesEqualsNoScorer:
     """Adversarial semantic scorer reproducing the relevance-CE trap: bare

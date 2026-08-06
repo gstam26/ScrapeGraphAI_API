@@ -1,11 +1,11 @@
 """
-Evaluation framework (Stage 10 / RQ3) — scores extraction quality against the
+Evaluation framework (Stage 10 / RQ3) — scores extraction quality against
 analyst ground truth.
 
-Module build order (see plan):
-  1. gt_reader.py        — parse analyst ground-truth workbook -> active GT set
-  2. pipeline_reader.py  — parse pipeline output (Matrix + Provenance) -> AI claims
-  3. aligner.py          — (not built yet)
-  4. metrics.py          — (not built yet)
-  5. report_writer.py    — (not built yet)
+Two evaluators share this package:
+  * Task-specific: gt_reader / pipeline_reader / aligner / metrics /
+    report_writer, driven end-to-end by eval_extraction.py.
+  * Generic (any pipeline task): generic_eval.py, with gt_convert.py to
+    flatten analyst matrices, matcher_eval.py to validate the matcher
+    against human labels, and run_eval_suite.py to run + score all tasks.
 """

@@ -286,6 +286,8 @@ def print_ce_report(report: dict) -> None:
 # CLI
 # ---------------------------------------------------------------------------
 def main() -> int:
+    """CLI entry point for the label-template / label-score / ce-rescore
+    subcommands. label-score exits non-zero below the agreement bar."""
     ap = argparse.ArgumentParser(
         description="Validate the generic evaluator's matcher against human labels."
     )

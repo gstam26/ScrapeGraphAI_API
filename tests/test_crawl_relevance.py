@@ -151,10 +151,10 @@ def test_normal_threshold_takes_precedence_over_fallback():
 # ── Junk-link filtering ────────────────────────────────────────────────────────
 
 def test_image_urls_never_become_crawl_candidates():
-    """Regression for the 2026-07-06 finding: cached-markdown link discovery
+    """Regression: cached-markdown link discovery
     matches the [alt](url) inside markdown images ![alt](url), so image URLs
     became crawl candidates — and .avif was missing from _JUNK_EXTS, producing
-    live Firecrawl calls against image files during George's validation
+    live Firecrawl calls against image files during a validation
     re-run. Every common image extension must be junk-filtered, on both the
     markdown and HTML discovery paths."""
     from src.acquire.crawler import _discover_links_from_markdown, _is_junk_link
@@ -193,7 +193,7 @@ def test_locale_key_collapses_language_homepages():
 
 def test_normalise_url_strips_tracking_and_lang_params():
     """utm_*/hsLang/click-id params never change content; keeping them fetched
-    the same page twice (2026-07-23 Tecan A/B: /services + /services?hsLang=en).
+    the same page twice (observed A/B: /services + /services?hsLang=en).
     Content-selecting params must survive."""
     from src.acquire.crawler import _normalise_url
     assert _normalise_url("https://t.com/services?hsLang=en") == "https://t.com/services"
@@ -225,7 +225,7 @@ def test_locale_key_released_after_fetch_failure(monkeypatch):
     """A locale-key claim must be released if the claimed URL's fetch fails,
     so a same-key sibling discovered later on a different page is still
     fetched rather than silently dropped as a 'duplicate' of a page that was
-    never actually acquired (2026-07-03 code review: this was previously a
+    never actually acquired (this was previously a
     permanent, silent coverage-loss bug — the threshold-skip path a few lines
     above crawl_entity's except block releases the same way, via the same
     one-line discard() call, so this test covers both release sites)."""
@@ -274,8 +274,8 @@ def test_locale_key_released_after_fetch_failure(monkeypatch):
 
 def test_best_first_frontier_spends_budget_on_score_not_breadth(monkeypatch):
     """CRAWL_STRATEGY=best_first pops the highest-scoring frontier link
-    regardless of depth. Motivating measurement (CMO depth sweep,
-    2026-07-14): with a binding page budget, BFS provably spent the whole
+    regardless of depth. Motivating measurement (CMO depth
+    sweep): with a binding page budget, BFS provably spent the whole
     budget on the shallow frontier — depth-3+ links were discovered but
     never dequeued — while depth-2 pages carried 2.4x the extracted claims.
 
@@ -358,7 +358,7 @@ if __name__ == "__main__":
     print("\nAll crawl relevance tests passed!")
 
 
-# ── Link-discovery starvation fixes (2026-07-29 Arrk/Automatic diagnosis) ────
+# ── Link-discovery starvation fixes (Arrk/Automatic diagnosis) ───────────────
 
 def test_same_domain_host_scope_rejects_subdomains(monkeypatch):
     """Default scope: historical behaviour, exact host only."""
@@ -418,7 +418,7 @@ def test_needs_discovery_render_trigger():
     # Deep pages: never.
     assert not with_flag(depth=1, backend="pooled_hybrid_static", n_links=0)
     # Cache hits count as static: cached pages carry no HTML, discovery fell
-    # back to a live static fetch — the 2026-07-29 Automatic re-test proved
+    # back to a live static fetch — the Automatic re-test proved
     # excluding them preserves the blind spot on every warm-cache run.
     assert with_flag(depth=0, backend="cache", n_links=0)
     # Rendered / unknown backends: nav links already exposed, or no basis.
@@ -449,7 +449,7 @@ def test_boilerplate_paths_classified():
 
 
 def test_boilerplate_never_matches_content_paths():
-    """The 2026-06-17 rejection stands: topical paths must not classify.
+    """A standing rejection: topical paths must not classify.
 
     Segment fullmatch, not substring — otherwise 'cookie' would eat a bakery's
     product page and 'terms' a glossary. Modern-slavery and code-of-conduct
@@ -515,7 +515,7 @@ def test_discovery_starvation_counts_novel_links_only():
     self-link plus Awards.html and Contact.php. Counted raw that reads as 3
     and clears CRAWL_DISCOVERY_MIN_LINKS, so the render never fires and the
     JS-injected nav (AboutUs/Division/News) stays invisible; counted as
-    novel candidates it is 2 and correctly starved (2026-07-31 probe).
+    novel candidates it is 2 and correctly starved (verified by probe).
     """
     import src.acquire.crawler as crawler
     from src.acquire.acquire_models import LinkCandidate

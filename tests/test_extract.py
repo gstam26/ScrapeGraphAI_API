@@ -1,4 +1,4 @@
-"""Extract-layer unit tests (2026-07-23 review): prompt rules, entity
+"""Extract-layer unit tests: prompt rules, entity
 context, cache-key sensitivity, Azure determinism params + retry.
 All LLM calls mocked — offline suite."""
 import sys

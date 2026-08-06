@@ -1,3 +1,13 @@
+"""Verification layer: check extracted quotes against the source page.
+
+Sits between Extract and Aggregate. Every evidence quote is matched against
+the page text — exact substring first, then normalised fuzzy matching
+(rapidfuzz partial_ratio), with a softer threshold for long quotes whose
+20-char anchors both appear literally. Entry points: verify_cells (batch,
+also adds value↔quote semantic similarity via embeddings when available)
+and verify_cell. Unverified evidence is marked, never discarded — the
+verified flag travels to the output so the reader can judge.
+"""
 import re
 
 from rapidfuzz import fuzz
@@ -30,13 +40,13 @@ def _verify_quote(quote: str | None, page_text: str) -> tuple[bool, float | None
         end = start + len(quote)
         return True, 100.0, (start, end), "exact"
 
-    # Option A: normalise away markdown/whitespace noise before fuzzy comparison.
-    # Exact substring check above is intentionally left untouched.
+    # Normalise away markdown/whitespace noise before fuzzy comparison.
+    # The exact substring check above is intentionally left untouched.
     score = fuzz.partial_ratio(_norm(quote).lower(), _norm(page_text).lower())
     if score >= VERIFY_THRESHOLD:
         return True, float(score), None, "fuzzy"
 
-    # Option C: soft threshold for long quotes whose anchors both appear literally.
+    # Soft threshold for long quotes whose anchors both appear literally.
     if len(quote) >= VERIFY_LONG_QUOTE_MIN:
         if quote[:20] in page_text and quote[-20:] in page_text:
             if score >= VERIFY_THRESHOLD_SOFT:

@@ -241,6 +241,8 @@ def convert(
 
 
 def write_gt(rows: list[dict], out_path: str, source_path: str) -> None:
+    """Write the flat GT workbook: GroundTruth sheet plus a Metadata sheet
+    recording the source file and how to run the evaluator on it."""
     gt_df = pd.DataFrame(
         rows,
         columns=["entity", "question", "value", "is_list",
@@ -267,6 +269,8 @@ def _csv_arg(text: str | None) -> set[str]:
 
 
 def main() -> None:
+    """CLI entry point: convert, write, round-trip-verify, and print every
+    per-column decision."""
     ap = argparse.ArgumentParser(
         description="Convert a matrix-shaped analyst answer table into the flat "
                     "GT workbook generic_eval.py reads."

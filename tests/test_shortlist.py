@@ -1,6 +1,5 @@
-"""Shortlist layer tests — parser fixtures are the REAL census values from
-the 2026-08-03 run (brain/proposals/shortlist-layer.md §1); gate semantics
-pin George's approved decisions (2026-08-05)."""
+"""Shortlist layer tests — parser fixtures are REAL census values from a
+production run; gate tests pin the approved gate semantics."""
 import os
 import sys
 
@@ -107,7 +106,7 @@ def test_money_unparseable():
 
 
 # ---------------------------------------------------------------------------
-# Gate semantics — George's approved decisions
+# Gate semantics — pins the approved gate decisions
 # ---------------------------------------------------------------------------
 IND = Criterion("independence", "q", "hard_gate", "binary", "require_yes",
                 None, None, 0, "flag", "verified_only", None)
@@ -204,7 +203,7 @@ def test_engine_gates_rank_and_flag_through():
 
 
 def test_keyword_gate_service_language():
-    # George 2026-08-05(3): first criterion = offers manufacturing as a service
+    # Approved decision: first criterion = offers manufacturing as a service
     from src.shortlist import keyword_match, _DEFAULT_KEYWORDS
     phrases = _DEFAULT_KEYWORDS["cmo_services"]
     # census: the real Adapt EMS description matches

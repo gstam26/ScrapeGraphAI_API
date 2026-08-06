@@ -24,7 +24,7 @@ Design choices worth knowing:
     calls for nothing. Pass --with-summary to leave it as configured.
   * Scoring uses generic_eval's semantic matching. Default backend is the local
     cross-encoder (it DECIDES value equivalence — validated vs human labels on
-    task1+task2, 2026-07-22); it falls back to nomic-embed cosine (needs Ollama)
+    task1+task2); it falls back to nomic-embed cosine (needs Ollama)
     when the CE model is absent, and to lexical-only if neither is reachable.
 
 Usage (from repo root, on the machine with keys/VPN):
@@ -116,6 +116,7 @@ def run_one_task(name, input_path, gt_path, out_dir, backend, verbose):
 
 
 def print_suite_summary(records: list[dict]) -> None:
+    """Print the cross-task table plus micro-averaged suite totals."""
     print(f"\n\n{'#'*72}\n  EVAL SUITE SUMMARY\n{'#'*72}")
     # Headline columns are SINGLE-ANSWER (trustworthy). List F1 is shown flagged
     # (its precision is a lower bound — GT lists are non-exhaustive).
@@ -152,6 +153,8 @@ def print_suite_summary(records: list[dict]) -> None:
 
 
 def write_suite_summary(records: list[dict], path: str) -> None:
+    """Write suite_summary.xlsx: one Tasks row per task, plus a PerQuestion
+    breakdown sheet."""
     import pandas as pd
     task_rows, pq_rows = [], []
     for r in records:
@@ -187,6 +190,8 @@ def write_suite_summary(records: list[dict], path: str) -> None:
 
 
 def main() -> int:
+    """CLI entry point: discover tasks, run + score each, summarise.
+    Exits non-zero if any task errored so scripting can gate on it."""
     ap = argparse.ArgumentParser(description="Run + score the full task eval suite")
     ap.add_argument("--tasks", default=None,
                     help="comma-separated task dir names to run (default: all discovered)")

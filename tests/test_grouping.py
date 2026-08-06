@@ -197,7 +197,7 @@ def test_empty_and_null_sentinel_cells_skipped(monkeypatch):
     print("OK test_empty_and_null_sentinel_cells_skipped passed")
 
 
-# ── Verified-only policy (standing decision, 2026-07-06) ─────────────────────
+# ── Verified-only policy (standing decision) ─────────────────────────────────
 
 def test_unverified_values_excluded_before_min_items_threshold(monkeypatch):
     """Unverified claims never reach grouping — and the exclusion applies
@@ -381,7 +381,7 @@ def test_no_sheet_when_no_claim_groups(tmp_path):
 # ── Mean-centering (anisotropy correction) ────────────────────────────────────
 
 def test_centering_separates_families_sharing_dominant_component():
-    """The real-data failure geometry (2026-07-03 calibration): every claim in
+    """The real-data failure geometry (found during calibration): every claim in
     a cell shares a large company/domain component, so RAW cosines all sit in
     a narrow high band and one giant cluster forms at any usable threshold.
     center_vector_map must remove the shared component so the same threshold

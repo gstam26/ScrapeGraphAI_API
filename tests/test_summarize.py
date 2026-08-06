@@ -3,7 +3,6 @@ Tests for the LLM summary layer (src/summarize.py) and its workbook
 integration — fully offline: azure_chat is monkeypatched with canned
 responses so the Tier-1 mechanical gate, prompt construction, fallback
 behaviour and sheet writing are all exercised without Azure or a key.
-Design under test: brain/proposals/llm-summary-layer.md.
 """
 import openpyxl
 import pytest
@@ -18,8 +17,8 @@ from src.summarize import mechanical_gate, summarize_groups
 
 # ── Fixture data: one entity/question cell, 8 verified claims -> C0001-C0008 ──
 # Values are deliberately prose-length (> SUMMARY_TAG_MAX_CHARS): the
-# 2026-07-15 deterministic answer route diverts all-short-value cells away
-# from the LLM, and these fixtures exercise the LLM path.
+# deterministic answer route diverts all-short-value cells away from the
+# LLM, and these fixtures exercise the LLM path.
 
 _VALUES = [
     "Regulatory clearance for assay Z was granted by the FDA following an expedited review of the submission",
@@ -130,8 +129,8 @@ def test_gate_fails_empty_summary():
 
 
 def test_multi_id_citation_parsing():
-    # The 2026-07-07 laptop eval: the model batches IDs in one bracket, which
-    # the old single-ID regex missed -> whole sentences read as uncited.
+    # Observed in eval: the model batches IDs in one bracket, which the old
+    # single-ID regex missed -> whole sentences read as uncited.
     from src.summarize import cited_ids, has_citation
 
     assert cited_ids("clearances [C0183, C0184, C0185]") == ["C0183", "C0184", "C0185"]
@@ -153,7 +152,7 @@ def test_multi_id_citation_parsing():
 
 
 def test_sentence_split_merges_abbreviation_fragments():
-    # The 2026-07-07 laptop eval: "Ltd."/"U.S." split prose into citation-less
+    # Observed in eval: "Ltd."/"U.S." split prose into citation-less
     # fragments that failed the gate and mis-fed the judge.
     from src.summarize import _split_sentences
 
@@ -218,12 +217,12 @@ def test_tag_only_cell_routed_deterministically(monkeypatch):
     assert s["cited_ids"] == ["C0001"] and s["input_claim_ids"] == ["C0001"]
     assert s["prompt_version"] == summarize_mod.PROMPT_VERSION
     # The judge/eval legs read Raw Response — empty made tag cells
-    # unjudgeable (13 "no sentences" on the 2026-07-14 CMO run).
+    # unjudgeable ("no sentences" verdicts on a full run).
     assert s["raw_response"] == "own-product [C0001]"
     print("OK test_tag_only_cell_routed_deterministically passed")
 
 
-# ── Deterministic answer route (2026-07-15, George's analyst format) ─────────
+# ── Deterministic answer route (analyst-style verdict format) ────────────────
 
 def _short_value_fixture(values: list[str], question: str = "EOL testing?"):
     cell = ExtractedCell(
@@ -239,7 +238,7 @@ def _short_value_fixture(values: list[str], question: str = "EOL testing?"):
 
 
 def test_binary_consensus_collapses_to_one_verdict(monkeypatch):
-    # The George-pasted EOL cell: {MIL-STD 810 testing, Yes, True} previously
+    # A real EOL cell: {MIL-STD 810 testing, Yes, True} previously
     # went to the LLM ("Benchmark Electronics confirms having end-of-line
     # testing capability") — now a verbatim verdict + evidence line, no call.
     groups, rows = _short_value_fixture(["MIL-STD 810 testing", "Yes", "True"])
@@ -266,7 +265,7 @@ def test_binary_conflict_never_merges_verdicts(monkeypatch):
 
 
 def test_multi_value_cell_routes_to_llm_merge(monkeypatch):
-    # George's s6c review: "Tempe, Arizona [C..]; Tempe, AZ [C..]" repeats the
+    # A real reviewed cell: "Tempe, Arizona [C..]; Tempe, AZ [C..]" repeats the
     # same fact under variant spellings — semantic dedup is the LLM's job.
     values = ["Tempe, Arizona", "Tempe, AZ", "U.S."]
     groups, rows = _short_value_fixture(values, question="HQ Location(s)?")
@@ -308,7 +307,7 @@ def test_merge_route_prompt_uncapped_fallback_capped(monkeypatch):
 def test_mixed_cell_verdict_prepended_and_booleans_kept_from_prompt(monkeypatch):
     # Prose route: bare booleans render as a deterministic verdict line; the
     # LLM never sees them, so a '"True" (2 items)' top theme can no longer
-    # fail the coverage gate (3 of 6 gate failures on the s6c CMO run).
+    # fail the coverage gate (3 of 6 gate failures on one CMO run).
     long_claim = ("The company confirmed end-of-line testing capability across "
                   "all three manufacturing campuses following the 2024 audit cycle")
     assert len(long_claim) > 80
@@ -330,7 +329,7 @@ def test_mixed_cell_verdict_prepended_and_booleans_kept_from_prompt(monkeypatch)
 
 
 def test_gate_exempts_trailing_provenance_marker():
-    # s6c: the model placed "(more in Provenance)" after the final period of
+    # Observed: the model placed "(more in Provenance)" after the final period of
     # single-line output; the fragment must not count as an uncited sentence.
     text = "Tecan acts as an OEM partner [C0001]. Helps with regulation [C0002]. (more in Provenance)"
     reasons, _, uncited = mechanical_gate(text, {"C0001", "C0002"}, [])
@@ -545,7 +544,7 @@ def _summary_record(**overrides):
 def test_ai_summary_sheet_is_matrix_shaped_in_reading_order(tmp_path):
     wb = _write_workbook(tmp_path, [_summary_record()])
     names = wb.sheetnames
-    # Reading order (2026-07-23): answers before evidence.
+    # Reading order: answers before evidence.
     assert names[:6] == ["Summary", "AI Summary", "Matrix", "Digest",
                          "Grouped Themes", "Provenance"]
     assert "Summary Log" in names  # DIAGNOSTICS=True in config
@@ -554,7 +553,7 @@ def test_ai_summary_sheet_is_matrix_shaped_in_reading_order(tmp_path):
     header = [c.value for c in ws[1]]
     # Matrix form: clean Entity column + one column per question; the
     # synthesized-prose disclaimer lives in a hover comment on the header
-    # (2026-07-23: it cluttered the deliverable as header text).
+    # (as plain header text it cluttered the deliverable).
     assert header[0] == "Entity"
     assert ws["A1"].comment is not None
     assert "AI-synthesized prose" in ws["A1"].comment.text
@@ -583,7 +582,7 @@ def test_gate_failed_cell_shows_marked_digest_fallback(tmp_path):
 
 def test_gate_failed_cell_with_fallback_text_shows_verbatim_claims(tmp_path):
     # s7: records carrying fallback_text degrade to readable verbatim claims,
-    # not the "N items across M themes" digest bookkeeping (George, s6c).
+    # not the "N items across M themes" digest bookkeeping.
     failed = _summary_record(
         gate="failed citation gate: 1 uncited sentence(s)",
         fallback_text="Launch of product line A [C0004, C0005]",

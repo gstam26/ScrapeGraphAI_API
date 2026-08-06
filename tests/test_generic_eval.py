@@ -1,7 +1,7 @@
 """
 Tests for src/eval/generic_eval.py — the domain-agnostic evaluator.
 
-Covers the three properties that were broken or added on 2026-07-15:
+Covers three properties:
   * Provenance column drift ('Question'/'Verbatim Quote' vs old 'Column'/'Quote').
   * Semantic value matching rescues a correct paraphrase that lexical scoring
     double-penalised as miss + hallucination (the Wikimedia mission case).
@@ -156,7 +156,7 @@ def test_genuine_extra_claim_still_counts_as_fp(monkeypatch):
 
 
 # ── Decisive cross-encoder backend ───────────────────────────────────────────
-# The 2026-07-22 rewire: when the semantic scorer is the cross-encoder it
+# When the semantic scorer is the cross-encoder it
 # DECIDES equivalence (veto + rescue) on list AND single-answer cells, rather
 # than only rescuing single-answer prose like the embedding cosine.
 
@@ -183,8 +183,8 @@ def test_ce_vetoes_lexical_list_false_positive(monkeypatch):
     # The -ology trap: lexical scores 'Urology' vs 'laryngology' as a confident
     # auto_match (~0.67), but they are different specialties. A decisive CE that
     # judges them NOT equivalent must VETO the match, leaving the GT item a miss
-    # and the AI item a real hallucination. (The production matcher failed all
-    # 9 of these on task2, 2026-07-22.)
+    # and the AI item a real hallucination. (The production matcher failed a
+    # whole batch of these on a real task.)
     _inject_decisive(monkeypatch, same_pairs=[])  # CE credits nothing
     gt = [_gt("BSC", "Product areas", "Urology", is_list=True)]
     ai = [_ai("BSC", "Product areas", "laryngology")]
@@ -219,7 +219,7 @@ def test_ce_numeric_identity_not_vetoed(monkeypatch):
 
 
 def test_qualified_numeric_pairs_match_without_ce(monkeypatch):
-    # 2026-08-03 audit class: "6,500+" vs "6500+", "20,000" vs "20000+",
+    # A real audit class: "6,500+" vs "6500+", "20,000" vs "20000+",
     # "over 1,500" vs "1500+" are the SAME count wearing different qualifiers.
     # They must match on the typed-numeric path even when the CE (a relevance
     # model scoring two bare number strings near 0) would veto everything.
@@ -275,7 +275,7 @@ def test_fuzzy_dedup_collapses_reorderings():
 
 def test_single_and_list_blocks_reported_separately():
     # Single-answer questions are the trustworthy headline; list precision is a
-    # separate lower-bound block (George's decision 2026-07-16).
+    # separate lower-bound block (approved reporting decision).
     gt = [_gt("M", "Year founded", "2003"),
           _gt("M", "Projects", "Firefox", is_list=True),
           _gt("M", "Projects", "Thunderbird", is_list=True)]
@@ -297,7 +297,7 @@ if __name__ == "__main__":
     print("run via pytest for the monkeypatch-based tests")
 
 
-# ── Page-local "Not disclosed" suppression (pre-registered 2026-07-22) ───────
+# ── Page-local "Not disclosed" suppression (pre-registered behaviour) ────────
 # The extractor emits per-page absence claims beside substantive answers in
 # the same cell ("Yes [C0002]; Not disclosed [C0079]"). Page-local absence is
 # not a competing answer: suppressed from precision when a substantive claim
@@ -385,7 +385,7 @@ def test_abstention_is_a_miss_but_never_a_hallucination():
     # a miss (FN) — and ONLY a miss. An abstention asserts nothing, so it
     # cannot be a false positive; billing it on both sides punishes the tool
     # twice for the honest behaviour the pipeline is designed to prefer.
-    # (Found scoring the starved-2 render arm, 2026-07-31: Automatic's
+    # (Found scoring the starved-2 render arm: Automatic's
     # systems-integration cell, GT "Yes" vs a lone "None (not disclosed)".)
     gt = [_gt("Acme", "Does the company have systems integration capability?",
               "Yes")]

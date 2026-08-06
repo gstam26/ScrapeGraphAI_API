@@ -11,6 +11,9 @@
 # Internal working notes and engagement history — never hand over.
 brain/
 CHANGELOG.md
+# The sanitisation tooling itself (this manifest names confidential terms).
+scripts/build_handover.py
+scripts/handover_manifest.txt
 # Engagement data directories (mostly gitignored anyway; belt and braces).
 adlm-inputs/
 adlm-outputs/

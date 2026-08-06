@@ -85,14 +85,14 @@ Where each stage lives, what it uses, and how it works:
 | **Group** | `src/group.py` | Ollama embeddings (mean-centered) + cosine | Cluster verified claims into themes and assign stable `[C####]` IDs — deterministic, so the audit trail is reproducible |
 | **Summarize** *(opt-in)* | `src/summarize.py` | Azure OpenAI (temp 0, seeded) + deterministic gate | 3-way route — deterministic (verbatim) / merge (semantic dedup) / prose (synthesis); every sentence must cite a `[C####]` ID; a mechanical gate falls back to verbatim claims on failure |
 
-Layers are separable by design: tools are swapped via `config.py` / workbook config, and Filter/Verify/Aggregate never know which fetcher or LLM ran upstream. Deep-dive notes per layer: `brain/layers/`.
+Layers are separable by design: tools are swapped via `config.py` / workbook config, and Filter/Verify/Aggregate never know which fetcher or LLM ran upstream.
 
 ## Sagentia network constraints (read first)
 
 These are IT-policy constraints, not preferences — the pipeline is built around them:
 
 - **No HuggingFace** (model downloads blocked). Embeddings come **only** from the internal Ollama server (`nomic-embed-text` at `OLLAMA_HOST`, reachable on Science Group WiFi/VPN only). Off VPN, the pipeline degrades gracefully: BM25 crawl scoring, route-all filtering, no semantic scores.
-- **Production extraction is Azure-direct GPT-4.1-mini** (`EXTRACT_TOOL=azure`, leadership-sanctioned 2026-07). The Power Automate proxy (`llmapi`) remains as a legacy path — it now serves the same model, so it buys nothing but an extra dependency. Claude direct is off-network spot checks only.
+- **Production extraction is Azure-direct GPT-4.1-mini** (`EXTRACT_TOOL=azure`). The Power Automate proxy (`llmapi`) remains as a legacy path for environments where direct API access is blocked — it now serves the same model, so it buys nothing but an extra dependency. Claude direct is off-network spot checks only.
 - **Polite crawling.** The default fetcher (`playwright_pooled_hybrid`) runs from THIS machine's IP, so politeness is enforced by construction: robots.txt respected, ≥2 s per-domain delay, honest User-Agent. Sagentia has had IPs blocked before — do not weaken these.
 - Corporate TLS interception can break vendor API calls (e.g. Firecrawl `SSL: CERTIFICATE_VERIFY_FAILED`) — a known on-network failure mode.
 
@@ -152,7 +152,7 @@ Sample: `samples/test_smoke.xlsx`. Workbook builders (ADLM, CMO): `scripts/build
 
 ### The two fetch backends that matter
 
-- **`playwright_pooled_hybrid`** (default): static-first (httpx + Trafilatura + quality gate), escalating to a pooled headless Chromium render only on gate failure — and keeping whichever extraction is richer. Free, polite by construction (robots.txt, per-domain delay, honest UA), full-DOM link discovery. Measured parity vs the Firecrawl baseline: 100% on Company type, 92% on Diagnostics type (the losses are WAF-denied sites — see `brain/proposals/vendor-fallback.md`).
+- **`playwright_pooled_hybrid`** (default): static-first (httpx + Trafilatura + quality gate), escalating to a pooled headless Chromium render only on gate failure — and keeping whichever extraction is richer. Free, polite by construction (robots.txt, per-domain delay, honest UA), full-DOM link discovery. Measured parity vs the Firecrawl baseline: 100% on Company type, 92% on Diagnostics type (the losses are WAF-denied sites).
 - **`firecrawl`** (vendor, credits): fetches from Firecrawl's anti-bot infrastructure, so it reaches sites that deny us (e.g. Akamai 403s). Kept for per-workbook use and as the proposed automatic fallback for protocol-level denials.
 
 ## Output workbook
@@ -187,7 +187,7 @@ python src/eval/matcher_eval.py label-template gt.xlsx output.xlsx --output labe
 python src/eval/matcher_eval.py label-score labels.xlsx
 ```
 
-The plant-milk Stage 10 evaluator (`eval_extraction.py`, aligner/metrics/gt_reader) lives in the same package; its 2026-06-29 metrics are locked for the dissertation. An experimental cross-encoder matching backend (`--semantic-backend cross-encoder`) exists behind a flag — unvalidated until the label-score leg passes, see `src/eval/cross_encoder.py`.
+The original Stage 10 evaluator (`eval_extraction.py`, aligner/metrics/gt_reader) lives in the same package; its metrics are frozen as the reference baseline. An experimental cross-encoder matching backend (`--semantic-backend cross-encoder`) exists behind a flag — unvalidated until the label-score leg passes, see `src/eval/cross_encoder.py`.
 
 ## Tests
 
@@ -206,13 +206,11 @@ src/                                           the pipeline layers
   group.py, summarize.py                       grouping + optional LLM summary
   io_excel.py, embed.py, llmapi.py
   eval/     (generic_eval, gt_convert, matcher_eval, run_eval_suite +
-             the Stage 10 plant-milk evaluator: aligner/metrics/gt_reader)
+             the original Stage 10 evaluator: aligner/metrics/gt_reader)
   resolve/  (company-name -> URL resolver; fallback to the directory scrape)
 tests/                                         offline + live smoke tests
+scripts/                                       workbook builders & one-off task tooling
 diagnostics/                                   standalone reports & calibration tools
-brain/                                         decision log, tool register, layer notes, proposals
-adlm-inputs/, adlm-outputs/                    ADLM engagement workbooks (tracked)
-cache/, outputs/                               generated (gitignored)
+tasks/                                         per-task input/ground-truth builders
+cache/, outputs/                               generated at runtime (gitignored)
 ```
-
-`brain/README.md` indexes the project's working memory — start at `brain/decision-log.md` for why anything is the way it is.

@@ -1,0 +1,36 @@
+# Environment
+.env
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Runtime data — the page cache and run outputs are regenerated on every run.
+# Renamed cache copies (e.g. cache_hybrid_*) made during backend comparisons
+# don't match the bare "cache/" pattern, hence the second rule.
+cache/
+cache_*/
+outputs/
+diagnostics/fetch_eval/
+*.xlsx
+*.csv
+
+# Sample input workbook — tracked despite the *.xlsx blanket ignore
+!samples/*.xlsx
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Excel lock/owner temp files (~$Book.xlsx) — must not be committed
+~$*.xlsx

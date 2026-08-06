@@ -1,0 +1,137 @@
+"""Pydantic data models shared by every pipeline layer.
+
+Defines the request shapes (PipelineInput, UrlSpec, ColumnSpec), the
+per-layer artefacts (PageDoc from Acquire, RoutedPage from Filter,
+ExtractedCell/SourceQuote from Extract/Verify) and the final PipelineResult.
+Layers communicate only through these models plus the runtime Config —
+never by importing each other. Config field defaults read env-driven values
+from config.py at import so directly-constructed Configs honour them too.
+"""
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from config import (
+    CRAWL_BLOCK_INFRA_PATHS as _ENV_CRAWL_BLOCK_INFRA_PATHS,
+    CRAWL_RENDER_FOR_DISCOVERY as _ENV_CRAWL_RENDER_FOR_DISCOVERY,
+    CRAWL_SCOPE as _ENV_CRAWL_SCOPE,
+)
+
+
+class ColumnSpec(BaseModel):
+    """User-defined extraction question."""
+    name: str
+    instruction: str | None = None
+
+
+class UrlSpec(BaseModel):
+    """Input URL plus crawl depth and the entities it applies to."""
+    url: str
+    depth: int = 0
+    entities: list[str] = Field(default_factory=list)
+    # Optional free-text context handed to the extractor about these entities
+    # (e.g. "Acquired by Forj Medical; this site is the acquirer's"). Empty =
+    # no prompt change. Read from an optional "context" column on the urls
+    # sheet; content policy is the workbook author's, not the pipeline's.
+    context: str = ""
+
+
+class PipelineInput(BaseModel):
+    """User-provided extraction request."""
+    entities: list[str] = Field(default_factory=list)
+    urls: list[UrlSpec] = Field(default_factory=list)
+    columns: list[ColumnSpec] = Field(default_factory=list)
+    config_overrides: dict[str, Any] = Field(default_factory=dict)
+
+
+class PageDoc(BaseModel):
+    """Raw fetched/cached page content."""
+    url: str
+    text: str
+    html: str | None = None
+    from_cache: bool = False
+    depth: int = 0
+    crawl_score: float = 1.0
+    fetch_time_ms: int = 0
+    # Fetch provenance — set by acquire layer, None/empty for cached pages
+    backend: str = ""          # "local_static" | "local_render" | "firecrawl" | "sgai" | "cache" | ...
+    render_fallback: bool = False  # True when Playwright re-render was used after gate failure
+    gate_passed: bool | None = None  # None = gate not run (cached or non-local backend)
+    gate_reason: str = ""      # empty when passed or not run; failure reason when gate_passed=False
+
+
+class Config(BaseModel):
+    """Runtime configuration passed to each pipeline layer."""
+    acquire_tool: str = "local"  # "local" | "requests" | "sgai" | "firecrawl" | "playwright" | "playwright_pooled" | "playwright_pooled_hybrid"
+    extract_tool: str = "sgai"
+    cache_dir: str = "cache"
+    request_headers: dict = Field(
+        default_factory=lambda: {"User-Agent": "Mozilla/5.0 entity-extraction-pipeline"}
+    )
+    request_timeout: int = 30
+    sgai_api_key: str | None = None
+    firecrawl_api_key: str | None = None
+    default_depth: int = 0
+    crawl_min_score: float = 0.12        # BM25 relative threshold
+    crawl_min_score_embed: float = 0.50  # Ollama absolute cosine threshold
+    crawl_max_pages: int = 2
+    crawl_scorer: str = "baseline"       # "baseline" | "experimental"
+    # Crawl-behaviour flags. Hierarchy: builtin default < env var (these
+    # defaults read the env at import, so directly-constructed Configs in
+    # scripts/diagnostics honour it too) < the input workbook's config sheet
+    # (applied in pipeline._build_config) — so an analyst can turn a flag on
+    # for one engagement without touching global defaults or the shell.
+    crawl_scope: str = _ENV_CRAWL_SCOPE                              # "host" | "site"
+    crawl_render_for_discovery: bool = _ENV_CRAWL_RENDER_FOR_DISCOVERY
+    crawl_block_infra_paths: bool = _ENV_CRAWL_BLOCK_INFRA_PATHS
+
+
+class SourceQuote(BaseModel):
+    """Evidence item: one piece of extracted data with a supporting quote."""
+    value: Any = None
+    quote: str | None = None
+    source_url: str = ""
+    page_title: str = ""
+    extraction_method: str = ""
+    confidence_score: float | None = None
+    verified: bool = False
+    verification_score: float | None = None
+    char_span: tuple[int, int] | None = None
+    match_type: str = "none"
+    semantic_score: float | None = None
+
+
+class RoutedPage(BaseModel):
+    """Page routed to extraction with cell relevance markers."""
+    page: PageDoc
+    relevant_columns: set[str] = Field(default_factory=set)
+
+
+class ExtractedCell(BaseModel):
+    """Extracted data for one entity/question/page combination."""
+    entity: str = ""
+    source_url: str
+    column: str
+    value: Any = None
+    # For list answers: store one evidence item per list element.
+    evidence: list[SourceQuote] = Field(default_factory=list)
+    # For scalar answers: use primary evidence.
+    verified: bool = False
+    verification_score: float | None = None
+    has_conflict: bool = False
+    num_sources: int = 0
+    num_unique_values: int = 0
+    # Structured list of distinct source URLs (aggregated cells only).
+    source_urls: list[str] = Field(default_factory=list)
+
+
+class ExtractedRow(BaseModel):
+    """All extracted cells for one entity across multiple pages."""
+    entity: str
+    cells: list[ExtractedCell] = Field(default_factory=list)        # aggregated (one per question)
+    all_cells: list[ExtractedCell] = Field(default_factory=list)    # pre-aggregation (one per page/question)
+
+
+class PipelineResult(BaseModel):
+    """Final output: one row per entity."""
+    rows: list[ExtractedRow] = Field(default_factory=list)

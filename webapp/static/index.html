@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entity Extraction Pipeline</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1a2233; --muted: #5c6675;
+    --line: #e3e7ee; --accent: #2f5aa8; --accent-ink: #ffffff;
+    --ok: #1e7a4c; --err: #b3392f; --mono: #0f1420;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 "Segoe UI", system-ui, sans-serif;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 32px 20px 60px; }
+  header { margin-bottom: 24px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 14px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 20px 22px; margin-bottom: 16px;
+  }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  button {
+    font: inherit; border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 16px; background: #fff; color: var(--ink); cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  a.quiet { color: var(--accent); font-size: 14px; }
+  #drop {
+    border: 2px dashed var(--line); border-radius: 10px; padding: 26px;
+    text-align: center; color: var(--muted); transition: border-color .15s;
+  }
+  #drop.hover { border-color: var(--accent); color: var(--accent); }
+  #fileName { font-weight: 600; color: var(--ink); }
+  .statusline { display: flex; gap: 10px; align-items: baseline; }
+  .badge {
+    font-size: 12px; font-weight: 600; letter-spacing: .04em;
+    padding: 3px 10px; border-radius: 999px; text-transform: uppercase;
+  }
+  .badge.idle    { background: #eef1f5; color: var(--muted); }
+  .badge.running { background: #e8effc; color: var(--accent); }
+  .badge.done    { background: #e6f4ec; color: var(--ok); }
+  .badge.failed  { background: #fbeae8; color: var(--err); }
+  #elapsed { color: var(--muted); font-size: 13px; }
+  #log {
+    background: var(--mono); color: #d7dce6; border-radius: 8px;
+    padding: 14px 16px; height: 320px; overflow-y: auto; white-space: pre-wrap;
+    font: 12.5px/1.45 Consolas, "Cascadia Mono", monospace; margin-top: 14px;
+  }
+  #error {
+    display: none; margin-top: 12px; padding: 12px 14px; border-radius: 8px;
+    background: #fbeae8; color: var(--err); font-size: 14px; white-space: pre-wrap;
+  }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Entity Extraction Pipeline</h1>
+    <div class="sub">Upload an input workbook &rarr; the pipeline crawls each company's
+    website and extracts source-verified answers &rarr; download the results.</div>
+  </header>
+
+  <div class="panel">
+    <div id="drop">
+      <div id="dropLabel">Drag an input workbook here, or
+        <a href="#" class="quiet" id="pick">choose a file</a></div>
+      <div id="fileName"></div>
+      <input type="file" id="file" accept=".xlsx" hidden>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button class="primary" id="run" disabled>Run pipeline</button>
+      <a class="quiet" href="/api/template">Download input template</a>
+    </div>
+    <div class="hint">First runs take roughly 30&ndash;60 seconds per company;
+    re-runs are much faster (pages and extractions are cached). Keep this tab open.</div>
+  </div>
+
+  <div class="panel">
+    <div class="statusline">
+      <span class="badge idle" id="badge">idle</span>
+      <span id="elapsed"></span>
+      <span style="flex:1"></span>
+      <button id="download" style="display:none">Download results</button>
+    </div>
+    <div id="error"></div>
+    <div id="log">Waiting for a run…</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  let file = null, polling = null;
+
+  function setFile(f) {
+    if (!f) return;
+    if (!f.name.toLowerCase().endsWith(".xlsx")) {
+      alert("The input must be a .xlsx workbook — download the template to get started.");
+      return;
+    }
+    file = f;
+    $("fileName").textContent = f.name;
+    $("run").disabled = false;
+  }
+
+  $("pick").addEventListener("click", (e) => { e.preventDefault(); $("file").click(); });
+  $("file").addEventListener("change", () => setFile($("file").files[0]));
+  const drop = $("drop");
+  ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => {
+    e.preventDefault(); drop.classList.add("hover");
+  }));
+  ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => {
+    e.preventDefault(); drop.classList.remove("hover");
+  }));
+  drop.addEventListener("drop", (e) => setFile(e.dataTransfer.files[0]));
+
+  $("run").addEventListener("click", async () => {
+    if (!file) return;
+    $("run").disabled = true;
+    const res = await fetch("/api/run", {
+      method: "POST",
+      headers: { "X-Filename": file.name },
+      body: await file.arrayBuffer(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      showError(err.error || "upload failed");
+      $("run").disabled = false;
+      return;
+    }
+    hideError();
+    startPolling();
+  });
+
+  $("download").addEventListener("click", () => { window.location = "/api/download"; });
+
+  function showError(msg) { $("error").style.display = "block"; $("error").textContent = msg; }
+  function hideError() { $("error").style.display = "none"; }
+
+  function fmtElapsed(s) {
+    if (s == null) return "";
+    const m = Math.floor(s / 60), sec = s % 60;
+    return m ? `${m}m ${sec}s` : `${sec}s`;
+  }
+
+  async function poll() {
+    const st = await (await fetch("/api/status")).json();
+    const badge = $("badge");
+    badge.className = "badge " + st.state;
+    badge.textContent = st.state;
+    $("elapsed").textContent = fmtElapsed(st.elapsed_seconds);
+    if (st.log && st.log.length) {
+      const el = $("log");
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
+      el.textContent = st.log.join("\n");
+      if (atBottom) el.scrollTop = el.scrollHeight;
+    }
+    if (st.state === "done") {
+      $("download").style.display = "";
+      $("run").disabled = !file;
+      stopPolling();
+    } else if (st.state === "failed") {
+      showError(st.error || "run failed — see the log above");
+      $("run").disabled = !file;
+      stopPolling();
+    }
+  }
+
+  function startPolling() {
+    $("download").style.display = "none";
+    if (!polling) polling = setInterval(poll, 1500);
+    poll();
+  }
+  function stopPolling() { clearInterval(polling); polling = null; }
+
+  poll();  // pick up an in-progress run on page reload
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1168 @@
+"""Excel I/O at both edges of the pipeline.
+
+Reads the multi-sheet input workbook (entities / urls / questions / config)
+into a PipelineInput — read_input() — and writes the output workbook —
+write_output_excel(): deliverable sheets (Summary, AI Summary, Matrix,
+Digest, Grouped Themes, Provenance) plus DIAGNOSTICS-gated log sheets.
+
+Every claim in the output carries a sequential Provenance claim ID; other
+sheets cite and hyperlink those IDs, so claim-ID assignment must go through
+build_claim_index for pipeline-time consumers (the summarizer) and write
+time alike — the two can never drift apart. Cell text is clamped below
+Excel's 32,767-char hard limit with a visible truncation marker, never
+silently.
+"""
+import os
+from typing import Any
+
+import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+
+from rapidfuzz import fuzz
+
+from config import MATRIX_MAX_DISPLAY_ITEMS, MATRIX_SINGLE_BEST
+from models import ColumnSpec, PipelineInput, PipelineResult, UrlSpec
+from src.aggregate import _DEDUP_RATIO, _is_list_column
+
+# Excel's hard per-cell character limit; text beyond it is silently truncated
+# by openpyxl/Excel. We clamp below it with an explicit marker instead.
+_EXCEL_CELL_MAX = 32767
+_TRUNCATION_MARKER = "\n[truncated — full list in Provenance]"
+
+
+def _clamp_cell_text(text: str) -> str:
+    """Keep cell text under Excel's 32,767-char limit, marked, never silent."""
+    if len(text) <= _EXCEL_CELL_MAX:
+        return text
+    keep = _EXCEL_CELL_MAX - len(_TRUNCATION_MARKER)
+    clipped = text[:keep]
+    # Cut on a line boundary so we never show half a claim.
+    if "\n" in clipped:
+        clipped = clipped.rsplit("\n", 1)[0]
+    return clipped + _TRUNCATION_MARKER
+
+# Colour palette
+_HEADER_FILL = "2E4057"
+_HEADER_FONT = "FFFFFF"
+_ALT_ROW = "F5F5F5"
+_RED_FILL = "FFCDD2"
+_RED_FONT = "C62828"
+_ORANGE_FILL = "FFE0B2"
+_LORANGE_FILL = "FFF3E0"  # light orange for mixed verified/unverified
+
+# Tab palette — grouped by meaning.
+# Blues = the deliverable pair (AI Summary darkest = the front page); steel =
+# the grouped-evidence pair (Digest + Grouped Themes, deliberately identical);
+# blue-grey = the Provenance ledger; uniform grey = diagnostics logs.
+_TAB_COLORS = {
+    "Summary": "44546A",
+    "AI Summary": "1F4E79",
+    "Matrix": "2E75B6",
+    "Digest": "8497B0",
+    "Grouped Themes": "8497B0",
+    "Provenance": "546E7A",
+    "Summary Log": "A6A6A6",
+    "Acquire Log": "A6A6A6",
+    "Crawl Candidates": "A6A6A6",
+    "Filter Log": "A6A6A6",
+    "Extract Log": "A6A6A6",
+    "Verify Log": "A6A6A6",
+}
+
+_SUPPORTED_CONFIG_KEYS = {
+    "ACQUIRE_TOOL",
+    "EXTRACT_TOOL",
+    "CRAWL_MIN_SCORE",
+    "CRAWL_MIN_SCORE_EMBED",
+    "CRAWL_SCORER",
+    "CRAWL_MAX_PAGES",
+    "CRAWL_SCOPE",                  # "host" | "site"
+    "CRAWL_RENDER_FOR_DISCOVERY",   # true/false
+    "CRAWL_BLOCK_INFRA_PATHS",      # true/false
+    "CACHE_DIR",
+    "DEFAULT_DEPTH",
+}
+
+
+# Public helpers used by main.py
+
+def _clean_str(value: Any) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
+def _find_sheet(xls: pd.ExcelFile, target: str) -> str | None:
+    """Find a sheet by case-insensitive, whitespace-tolerant name match."""
+    target_lower = target.lower()
+    for sheet_name in xls.sheet_names:
+        if sheet_name.strip().lower() == target_lower:
+            return sheet_name
+    return None
+
+
+def _find_column(df: pd.DataFrame, target: str) -> str | None:
+    """Find a column by case-insensitive, whitespace-tolerant name match."""
+    target_lower = target.lower()
+    for col in df.columns:
+        if str(col).strip().lower() == target_lower:
+            return col
+    return None
+
+
+def _find_url_column(df: pd.DataFrame) -> str:
+    """Pick the URL column: any name containing 'url' or 'link', else the
+    first column (client sheets rarely label it consistently)."""
+    for col in df.columns:
+        name = str(col).strip().lower()
+        if "url" in name or "link" in name:
+            return col
+    if len(df.columns) == 0:
+        raise ValueError("URL sheet must contain a url column")
+    return df.columns[0]
+
+
+def _parse_depth(value: Any) -> int:
+    """Parse a crawl-depth cell into a non-negative int (blank -> 0)."""
+    if value is None or pd.isna(value) or str(value).strip() == "":
+        return 0
+    try:
+        depth = int(float(value))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Depth must be an integer, got {value!r}") from exc
+    # Negative is nonsense; there is deliberately no upper cap — total crawl
+    # volume is bounded by CRAWL_MAX_PAGES regardless of depth, so deep
+    # values are budget-safe.
+    if depth < 0:
+        raise ValueError(f"Depth must be a non-negative integer, got {depth!r}")
+    return depth
+
+
+def _parse_entity_list(value: Any) -> list[str]:
+    """Split a comma-separated entities cell into a clean list of names."""
+    raw = _clean_str(value)
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _read_entities_sheet(xls: pd.ExcelFile, sheet_name: str) -> list[str]:
+    """Read the entities sheet into a deduplicated, order-preserving list."""
+    df = pd.read_excel(xls, sheet_name=sheet_name)
+    entity_col = _find_column(df, "entity") or (df.columns[0] if len(df.columns) else None)
+    if entity_col is None:
+        return []
+
+    entities: list[str] = []
+    seen: set[str] = set()
+    for value in df[entity_col].tolist():
+        entity = _clean_str(value)
+        if entity and entity not in seen:
+            entities.append(entity)
+            seen.add(entity)
+    return entities
+
+
+def _read_urls_sheet(xls: pd.ExcelFile, sheet_name: str) -> list[UrlSpec]:
+    """Read the urls sheet into UrlSpecs, validating each URL and repairing
+    scheme-less addresses ('www.acme.com') with a visible per-row note."""
+    df = pd.read_excel(xls, sheet_name=sheet_name)
+    url_col = _find_url_column(df)
+    if url_col is None:
+        raise ValueError(
+            f"'{sheet_name}' sheet: no URL column found. Expected a column "
+            f"named 'url' (or 'website'/'link'). Columns present: "
+            + ", ".join(str(c) for c in df.columns)
+        )
+    depth_col = _find_column(df, "depth")
+    entities_col = _find_column(df, "entities")
+    context_col = _find_column(df, "context")
+
+    url_specs: list[UrlSpec] = []
+    for idx, row in df.iterrows():
+        excel_row = idx + 2  # header is row 1, pandas index is 0-based
+        url = _clean_str(row.get(url_col))
+        if not url:
+            continue
+
+        # Real client sheets carry scheme-less URLs ("www.acme.com"). Fixing
+        # them beats erroring — but never silently: the note names the row.
+        if not url.lower().startswith(("http://", "https://")):
+            if "." not in url or " " in url:
+                raise ValueError(
+                    f"'{sheet_name}' sheet row {excel_row}: {url!r} does not "
+                    f"look like a URL. Give a full address such as "
+                    f"https://www.example.com"
+                )
+            print(f"  note: '{sheet_name}' row {excel_row}: no http(s) scheme "
+                  f"on {url!r} — using https://{url}")
+            url = f"https://{url}"
+
+        depth = _parse_depth(row.get(depth_col)) if depth_col is not None else 0
+        entities = _parse_entity_list(row.get(entities_col)) if entities_col is not None else []
+        context = _clean_str(row.get(context_col)) if context_col is not None else ""
+        url_specs.append(UrlSpec(url=url, depth=depth, entities=entities, context=context))
+
+    return url_specs
+
+
+def _read_questions_sheet(xls: pd.ExcelFile, sheet_name: str) -> list[ColumnSpec]:
+    """Read the questions sheet into ColumnSpecs, rejecting duplicate
+    question names (each question becomes one output column)."""
+    df = pd.read_excel(xls, sheet_name=sheet_name)
+    question_col = _find_column(df, "question") or (df.columns[0] if len(df.columns) else None)
+    if question_col is None:
+        return []
+
+    instructions_col = _find_column(df, "instructions")
+    columns: list[ColumnSpec] = []
+    seen: dict[str, int] = {}
+    for idx, row in df.iterrows():
+        excel_row = idx + 2
+        question = _clean_str(row.get(question_col))
+        if not question:
+            continue
+        if question in seen:
+            raise ValueError(
+                f"'{sheet_name}' sheet row {excel_row}: duplicate question "
+                f"{question!r} (first seen at row {seen[question]}). Each "
+                f"question becomes one output column — names must be unique."
+            )
+        seen[question] = excel_row
+        instruction = _clean_str(row.get(instructions_col)) if instructions_col is not None else ""
+        columns.append(ColumnSpec(name=question, instruction=instruction or None))
+    return columns
+
+
+def _coerce_config_value(key: str, value: Any) -> Any:
+    """Coerce a config-sheet cell to the type its setting expects."""
+    if value is None or pd.isna(value):
+        return None
+
+    if key in {"ACQUIRE_TOOL", "EXTRACT_TOOL", "CRAWL_SCORER", "CRAWL_SCOPE",
+               "CACHE_DIR"}:
+        return str(value).strip()
+
+    if key in {"CRAWL_RENDER_FOR_DISCOVERY", "CRAWL_BLOCK_INFRA_PATHS"}:
+        # Excel may deliver a real boolean (TRUE cell) or a string ("true");
+        # pipeline._build_config parses strings, booleans pass through.
+        return value if isinstance(value, bool) else str(value).strip()
+
+    if key in {"CRAWL_MAX_PAGES", "DEFAULT_DEPTH"}:
+        return int(float(value))
+
+    if key in {"CRAWL_MIN_SCORE", "CRAWL_MIN_SCORE_EMBED"}:
+        return float(value)
+
+    return value
+
+
+def _read_config_sheet(xls: pd.ExcelFile, sheet_name: str) -> dict[str, Any]:
+    """Read setting/value overrides, rejecting unsupported setting names so
+    a typo fails loudly instead of being silently ignored."""
+    df = pd.read_excel(xls, sheet_name=sheet_name)
+    setting_col = _find_column(df, "setting") or (df.columns[0] if len(df.columns) else None)
+    value_col = _find_column(df, "value") or (df.columns[1] if len(df.columns) > 1 else None)
+    if setting_col is None or value_col is None:
+        return {}
+
+    overrides: dict[str, Any] = {}
+    for _, row in df.iterrows():
+        key = _clean_str(row.get(setting_col)).upper()
+        if not key:
+            continue
+        if key not in _SUPPORTED_CONFIG_KEYS:
+            raise ValueError(
+                f"Unsupported config setting {key!r}. Supported settings: "
+                + ", ".join(sorted(_SUPPORTED_CONFIG_KEYS))
+            )
+        value = _coerce_config_value(key, row.get(value_col))
+        if value is not None:
+            overrides[key] = value
+    return overrides
+
+
+def _resolve_url_entities(urls: list[UrlSpec], entities: list[str], has_entities_sheet: bool) -> None:
+    """Fill each UrlSpec's entities in place: default to all entities,
+    validate explicit references, or (without an entities sheet) fall back
+    to one-entity-per-URL."""
+    if has_entities_sheet:
+        entity_set = set(entities)
+        for spec in urls:
+            if not spec.entities:
+                spec.entities = list(entities)
+                continue
+            unknown = [entity for entity in spec.entities if entity not in entity_set]
+            if unknown:
+                raise ValueError(
+                    f"URL {spec.url!r} references unknown entities: {', '.join(unknown)}"
+                )
+        return
+
+    # Backward compatibility: without an entities sheet, each URL is its own entity.
+    for spec in urls:
+        spec.entities = [spec.url]
+
+
+def read_input(filepath: str) -> PipelineInput:
+    """Read the four-sheet input workbook.
+
+    Expected sheets:
+    - entities: entity
+    - urls: url, depth, entities
+    - questions: question, instructions
+    - config: setting, value
+
+    If the workbook has no entities sheet, each URL becomes its own entity.
+    """
+    try:
+        xls = pd.ExcelFile(filepath)
+    except FileNotFoundError:
+        raise ValueError(f"Input workbook not found: {filepath!r}") from None
+    except Exception as e:
+        raise ValueError(
+            f"Could not open {filepath!r} as an Excel workbook ({e}). "
+            f"The input must be a .xlsx file — see docs/QUICKSTART.md."
+        ) from e
+    try:
+        entities_sheet = _find_sheet(xls, "entities")
+        urls_sheet = _find_sheet(xls, "urls")
+        questions_sheet = _find_sheet(xls, "questions")
+        config_sheet = _find_sheet(xls, "config")
+
+        has_entities_sheet = entities_sheet is not None
+
+        if urls_sheet is None:
+            if has_entities_sheet:
+                raise ValueError("Input workbook must contain a urls sheet")
+            urls_sheet = xls.sheet_names[0]
+
+        entities = _read_entities_sheet(xls, entities_sheet) if entities_sheet else []
+        urls = _read_urls_sheet(xls, urls_sheet)
+
+        if not entities:
+            entities = []
+            seen_urls: set[str] = set()
+            for spec in urls:
+                if spec.url not in seen_urls:
+                    entities.append(spec.url)
+                    seen_urls.add(spec.url)
+
+        _resolve_url_entities(urls, entities, has_entities_sheet)
+
+        columns = _read_questions_sheet(xls, questions_sheet) if questions_sheet else []
+        config_overrides = _read_config_sheet(xls, config_sheet) if config_sheet else {}
+    finally:
+        xls.close()
+
+    return PipelineInput(
+        entities=entities,
+        urls=urls,
+        columns=columns,
+        config_overrides=config_overrides,
+    )
+
+
+def read_urls_from_excel(filepath: str) -> list[tuple[str, int]]:
+    """Backward-compatible URL reader."""
+    xls = pd.ExcelFile(filepath)
+    try:
+        urls_sheet = _find_sheet(xls, "urls") or xls.sheet_names[0]
+        return [(spec.url, spec.depth) for spec in _read_urls_sheet(xls, urls_sheet)]
+    finally:
+        xls.close()
+
+
+def parse_columns(raw_columns: list[str]) -> list[ColumnSpec]:
+    """Parse old terminal-style question specs."""
+    columns = []
+    for raw in raw_columns:
+        if ":" in raw:
+            name, instruction = raw.split(":", 1)
+            columns.append(ColumnSpec(name=name.strip(), instruction=instruction.strip()))
+        else:
+            columns.append(ColumnSpec(name=raw.strip()))
+    return columns
+
+
+# DataFrame builders
+
+def _make_df(rows: list[dict], keys: list[str], col_names: list[str]) -> pd.DataFrame:
+    if not rows:
+        return pd.DataFrame(columns=col_names)
+    records = [{col: row.get(key, "") for col, key in zip(col_names, keys)} for row in rows]
+    return pd.DataFrame(records, columns=col_names)
+
+
+def _make_summary_df(diag: dict | None, result: PipelineResult) -> pd.DataFrame:
+    col_names = [
+        "Entity", "Pages Fetched", "Pages Crawled", "Total Claims Found",
+        "Claims Verified", "Claims Unverified", "Cells With No Data",
+        "Total Fetch Time", "Total Extract Time", "Acquire Tool Used", "Extract Tool Used",
+    ]
+    keys = [
+        "entity", "pages_fetched", "pages_crawled", "total_claims_found",
+        "claims_verified", "claims_unverified", "cells_with_no_data",
+        "total_fetch_time", "total_extract_time", "acquire_tool_used", "extract_tool_used",
+    ]
+    if diag and diag.get("summary"):
+        return _make_df(diag["summary"], keys, col_names)
+
+    rows = []
+    for row in result.rows:
+        src = row.all_cells  # always raw — never read aggregated cells here
+        all_ev = [e for c in src for e in c.evidence]
+        rows.append({
+            "entity": row.entity,
+            "pages_fetched": len({c.source_url for c in src}),
+            "pages_crawled": "",
+            "total_claims_found": len(all_ev),
+            "claims_verified": sum(1 for e in all_ev if e.verified),
+            "claims_unverified": sum(1 for e in all_ev if not e.verified),
+            "cells_with_no_data": sum(1 for c in src if not c.evidence),
+            "total_fetch_time": "",
+            "total_extract_time": "",
+            "acquire_tool_used": "",
+            "extract_tool_used": "",
+        })
+    return pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
+
+
+def _match_type_str(verified: bool, score) -> str:
+    if score is None or score == "":
+        return "none"
+    try:
+        s = float(score)
+    except (TypeError, ValueError):
+        return "none"
+    if s >= 100:
+        return "exact"
+    if verified:
+        return "fuzzy"
+    return "none"
+
+
+def _attestation(value: str, evidence) -> int:
+    """How many independent evidence items back this display value.
+
+    Mirror of aggregate's fuzzy dedup (_DEDUP_RATIO): an evidence value that
+    aggregate would have merged into this display value counts toward it.
+    """
+    norm_v = " ".join(value.strip().lower().split())
+    count = 0
+    for ev in evidence:
+        ev_str = " ".join(str(ev.value).strip().lower().split()) if ev.value is not None else ""
+        if ev_str and (ev_str == norm_v
+                       or fuzz.token_sort_ratio(ev_str, norm_v) >= _DEDUP_RATIO):
+            count += 1
+    return count
+
+
+def _best_candidate(verified_vals: list[str], unverified_vals: list[str],
+                    evidence) -> str:
+    """Pick the lead answer for a single-answer cell.
+
+    Verified beats unverified regardless of counts (the pipeline's core
+    trust ordering); within a tier, most-attested wins; ties keep first-seen
+    order (deterministic — evidence is ranked upstream).
+    """
+    pool = verified_vals or unverified_vals
+    return max(pool, key=lambda v: (_attestation(v, evidence), -pool.index(v)))
+
+
+def _make_matrix_df(
+    result: PipelineResult,
+    columns: list[ColumnSpec],
+) -> tuple[pd.DataFrame, dict]:
+    """Returns (DataFrame, cell_fills) where cell_fills maps (row, col) to hex color."""
+    col_order = ["Entity"] + [c.name for c in columns]
+    matrix_rows = []
+    fills: dict[tuple[int, int], str] = {}
+
+    for row_data_idx, row in enumerate(result.rows):
+        excel_row = row_data_idx + 2  # 1-indexed + header
+        src = row.cells if row.cells else row.all_cells  # prefer aggregated/deduplicated
+        matrix_row: dict = {"Entity": row.entity}
+
+        for col_excel_idx, col in enumerate(columns, start=2):
+            # Aggregated src has at most one cell per (entity, column).
+            agg_cell = next((c for c in src if c.column == col.name), None)
+
+            if agg_cell is None or not agg_cell.evidence:
+                text = "No data found"
+                fills[(excel_row, col_excel_idx)] = _RED_FILL
+                matrix_row[col.name] = text
+                continue
+
+            # Look up verified status from ranked evidence, but render only the
+            # fuzzy-deduped values from agg_cell.value so _DEDUP_RATIO takes effect.
+            ev_verified: dict[str, bool] = {}
+            for ev in agg_cell.evidence:
+                val_str = str(ev.value).strip() if ev.value is not None else ""
+                if val_str and val_str not in ev_verified:
+                    ev_verified[val_str] = ev.verified
+
+            raw_val = agg_cell.value
+            if isinstance(raw_val, list):
+                display_vals = [str(v).strip() for v in raw_val if v not in (None, "", [])]
+            elif raw_val not in (None, "", []):
+                display_vals = [str(raw_val).strip()]
+            else:
+                display_vals = []
+            verified_vals = [v for v in display_vals if ev_verified.get(v, agg_cell.verified)]
+            unverified_vals = [v for v in display_vals if not ev_verified.get(v, agg_cell.verified)]
+
+            # Single-answer discipline (flag-gated): one lead answer, the
+            # rest demoted to Provenance. Verified-first, then attestation.
+            # Conflict flag and fill survive below — the consultant still
+            # sees that sources disagreed; the cell just answers first.
+            # PROSE cells are exempt: a multi-sentence description is one
+            # composed answer, not competing candidates (80-char boundary,
+            # same as the summary router and the eval's prose grain).
+            demoted = 0
+            _is_prose_cell = any(len(v) >= 80
+                                 for v in verified_vals + unverified_vals)
+            if (MATRIX_SINGLE_BEST and not _is_list_column(col.instruction)
+                    and not _is_prose_cell
+                    and len(verified_vals) + len(unverified_vals) > 1):
+                best = _best_candidate(verified_vals, unverified_vals,
+                                       agg_cell.evidence)
+                demoted = len(verified_vals) + len(unverified_vals) - 1
+                if best in verified_vals:
+                    verified_vals, unverified_vals = [best], []
+                else:
+                    verified_vals, unverified_vals = [], [best]
+
+            # Cap rendered items (verified kept preferentially); everything
+            # remains in Provenance and the overflow is stated in the cell.
+            hidden = 0
+            total_items = len(verified_vals) + len(unverified_vals)
+            if total_items > MATRIX_MAX_DISPLAY_ITEMS:
+                hidden = total_items - MATRIX_MAX_DISPLAY_ITEMS
+                keep_v = min(len(verified_vals), MATRIX_MAX_DISPLAY_ITEMS)
+                verified_vals = verified_vals[:keep_v]
+                unverified_vals = unverified_vals[:MATRIX_MAX_DISPLAY_ITEMS - keep_v]
+
+            if not verified_vals and not unverified_vals:
+                text = "No data found"
+                fills[(excel_row, col_excel_idx)] = _RED_FILL
+            elif agg_cell.has_conflict:
+                lines = ["- " + v for v in verified_vals]
+                if verified_vals and unverified_vals:
+                    lines += ["-- Unverified --"]
+                lines += ["- " + v for v in unverified_vals]
+                text = "(sources conflict)\n" + "\n".join(lines)
+                fills[(excel_row, col_excel_idx)] = _ORANGE_FILL
+            elif not verified_vals:
+                lines = ["- " + v for v in unverified_vals] + ["(unverified)"]
+                text = "\n".join(lines)
+                fills[(excel_row, col_excel_idx)] = _ORANGE_FILL
+            elif unverified_vals:
+                lines = ["- " + v for v in verified_vals]
+                lines += ["-- Unverified --"] + ["- " + v for v in unverified_vals]
+                text = "\n".join(lines)
+                fills[(excel_row, col_excel_idx)] = _LORANGE_FILL
+            else:
+                text = "\n".join("- " + v for v in verified_vals)
+
+            if demoted:
+                text += f"\n[+{demoted} other candidate(s) — see Provenance]"
+            if hidden:
+                text += f"\n[+{hidden} more items — see Provenance]"
+            matrix_row[col.name] = _clamp_cell_text(text)
+
+        matrix_rows.append(matrix_row)
+
+    df = pd.DataFrame(matrix_rows, columns=col_order) if matrix_rows else pd.DataFrame(columns=col_order)
+    return df, fills
+
+
+def _norm_claim(text) -> str:
+    """Normalise a claim for claim-index keys — mirrors aggregate.py/group.py
+    _normalise_value so lookups from the Grouped Themes / Digest builders
+    land on the same Provenance rows."""
+    return " ".join(str(text).strip().lower().split())
+
+
+def _make_provenance_df(
+    result: PipelineResult,
+    columns: list[ColumnSpec],
+    diag: dict | None,
+) -> tuple[pd.DataFrame, dict]:
+    """Returns (df, claim_index).
+
+    claim_index maps (entity, question, normalised claim) -> (claim_id,
+    provenance_excel_row) — the anchor the Grouped Themes and Digest sheets
+    hyperlink back to. The anchor is the first VERIFIED occurrence of each
+    claim, falling back to the first occurrence when no verified one exists
+    (grouping/digest cite verified rows only; since group.py feeds them
+    verified claims only, the fallback is never consultant-visible). Claim
+    IDs are sequential in Provenance order, which is deterministic (spec
+    merge order).
+    """
+    col_names = [
+        "Claim ID", "Entity", "Source URL", "Question", "Claim", "Verbatim Quote",
+        "Page Title", "Extraction Method", "Confidence Score", "Verified",
+        "Verification Score", "Match Type", "Semantic Score", "Source Page Depth",
+    ]
+
+    url_to_depth: dict[str, int] = {}
+    if diag:
+        for r in diag.get("acquire_log", []):
+            url_to_depth[r.get("page_url", "")] = r.get("depth", 0)
+
+    rows = []
+    claim_index: dict[tuple[str, str, str], tuple[str, int]] = {}
+    verified_anchor_keys: set[tuple[str, str, str]] = set()
+    for entity_row in result.rows:
+        src = entity_row.all_cells  # always granular — never read aggregated cells here
+        for cell in src:
+            for ev in cell.evidence:
+                if ev.value is None:
+                    continue
+                score = ev.verification_score
+                verified = ev.verified
+                source_url = ev.source_url or cell.source_url
+                claim_id = f"C{len(rows) + 1:04d}"
+                entity = cell.entity or entity_row.entity
+                key = (entity, cell.column, _norm_claim(ev.value))
+                if key not in claim_index or (verified and key not in verified_anchor_keys):
+                    claim_index[key] = (claim_id, len(rows) + 2)  # +2: 1-based + header
+                    if verified:
+                        verified_anchor_keys.add(key)
+                rows.append({
+                    "Claim ID": claim_id,
+                    "Entity": entity,
+                    "Source URL": source_url,
+                    "Question": cell.column,
+                    "Claim": str(ev.value),
+                    "Verbatim Quote": ev.quote or "",
+                    "Page Title": ev.page_title,
+                    "Extraction Method": ev.extraction_method,
+                    "Confidence Score": round(ev.confidence_score, 3) if isinstance(ev.confidence_score, float) else "",
+                    "Verified": verified,
+                    "Verification Score": round(score, 1) if isinstance(score, float) else "",
+                    "Match Type": _match_type_str(verified, score),
+                    "Semantic Score": round(ev.semantic_score, 3) if isinstance(ev.semantic_score, float) else "",
+                    "Source Page Depth": url_to_depth.get(source_url, 0),
+                })
+
+    df = pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
+    return df, claim_index
+
+
+def build_claim_index(rows: list) -> dict[tuple[str, str, str], tuple[str, int]]:
+    """Claim IDs for a run's rows, assigned by the SAME function the
+    Provenance writer uses — so pipeline-time consumers (the summarizer,
+    src/summarize.py) and the write-time sheets can never drift apart.
+    rows is list[ExtractedRow]; the throwaway DataFrame is cheap at run scale.
+    """
+    return _make_provenance_df(PipelineResult(rows=rows), [], None)[1]
+
+
+def _group_claim_refs(group: dict, claim_index: dict) -> tuple[list[tuple[str, str]], tuple[str, int] | None]:
+    """Resolve a theme's member values against the Provenance claim index.
+
+    Returns ([(value, claim_id_or_empty)], anchor) where anchor is the
+    (claim_id, provenance_excel_row) of the theme-label claim itself, falling
+    back to the first member that resolved — the row the theme hyperlinks to.
+    """
+    entity = group.get("entity", "")
+    question = group.get("question", "")
+
+    def _lookup(value) -> tuple[str, int] | None:
+        return claim_index.get((entity, question, _norm_claim(value)))
+
+    pairs: list[tuple[str, str]] = []
+    anchor = _lookup(group.get("theme", ""))
+    for v in group.get("values", []):
+        if v in (None, "", []):
+            continue
+        hit = _lookup(v)
+        pairs.append((str(v).strip(), hit[0] if hit else ""))
+        if anchor is None and hit is not None:
+            anchor = hit
+    return pairs, anchor
+
+
+def _make_grouped_themes_df(
+    claim_groups: list[dict],
+    claim_index: dict,
+) -> tuple[pd.DataFrame, dict[int, int]]:
+    """Grouped Themes sheet: deterministic claim clusters per aggregated cell.
+
+    Traceability (Advisory requirement): every bullet carries its Provenance
+    claim ID (`[C0042]`), a "Claim IDs" column lists the theme's references,
+    and the returned theme_links map {sheet_excel_row: provenance_excel_row}
+    is used post-write to hyperlink each Theme cell to its anchor claim.
+
+    Mirrors the Matrix writer's display conventions without touching it:
+    bullets capped at MATRIX_MAX_DISPLAY_ITEMS with the same overflow marker,
+    final text clamped below Excel's hard cell limit. Every member claim
+    remains fully listed in Provenance.
+    """
+    col_names = ["Entity", "Question", "Theme", "Items", "Values", "Claim IDs", "Distinct Sources"]
+    rows = []
+    theme_links: dict[int, int] = {}
+    for group in claim_groups:
+        pairs, anchor = _group_claim_refs(group, claim_index)
+        # Claim IDs column must stay complete even when the bullet display is
+        # capped — it is the traceability escape hatch for oversized cells
+        # (e.g. HORIBA's 328-item Recent news theme), so truncating it in
+        # lockstep with the display bullets silently dropped every ID past
+        # MATRIX_MAX_DISPLAY_ITEMS, leaving the "+N more — see Provenance"
+        # items with no ID to search Provenance by. Compute ids from the
+        # FULL pairs list, before slicing for display.
+        all_ids = [cid for _, cid in pairs if cid]
+        hidden = 0
+        display_pairs = pairs
+        if len(pairs) > MATRIX_MAX_DISPLAY_ITEMS:
+            hidden = len(pairs) - MATRIX_MAX_DISPLAY_ITEMS
+            display_pairs = pairs[:MATRIX_MAX_DISPLAY_ITEMS]
+        bullets = [
+            f"- {value} [{cid}]" if cid else f"- {value}"
+            for value, cid in display_pairs
+        ]
+        text = "\n".join(bullets)
+        if hidden:
+            text += f"\n[+{hidden} more items — see Provenance]"
+
+        ids_text = ", ".join(all_ids)
+
+        excel_row = len(rows) + 2  # 1-based + header
+        if anchor is not None:
+            theme_links[excel_row] = anchor[1]
+        rows.append({
+            "Entity": group.get("entity", ""),
+            "Question": group.get("question", ""),
+            "Theme": group.get("theme", ""),
+            "Items": group.get("n_items", ""),
+            "Values": _clamp_cell_text(text),
+            "Claim IDs": _clamp_cell_text(ids_text),
+            "Distinct Sources": group.get("sources", ""),
+        })
+    df = pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
+    return df, theme_links
+
+
+def _make_digest_df(
+    claim_groups: list[dict],
+    claim_index: dict,
+) -> tuple[pd.DataFrame, dict[int, int]]:
+    """Digest sheet: one deterministic template line per grouped cell.
+
+    NO LLM — the text is assembled mechanically from the theme structure, so
+    it is faithful and traceable by construction: theme labels are verbatim
+    member claims and each carries its Provenance claim ID. Returns
+    (df, digest_links) where digest_links maps {digest_excel_row:
+    grouped_themes_excel_row} for post-write hyperlinking.
+    """
+    from src.group import ALL_ITEMS_THEME
+
+    col_names = ["Entity", "Question", "Items", "Themes", "Digest"]
+    # Preserve claim_groups order; remember each cell's first Grouped Themes row.
+    cells: dict[tuple[str, str], dict] = {}
+    for i, group in enumerate(claim_groups):
+        key = (group.get("entity", ""), group.get("question", ""))
+        entry = cells.setdefault(key, {"groups": [], "first_row": i + 2})
+        entry["groups"].append(group)
+
+    rows = []
+    digest_links: dict[int, int] = {}
+    for (entity, question), entry in cells.items():
+        groups = entry["groups"]
+        total = sum(g.get("n_items", 0) for g in groups)
+        real = [g for g in groups if g.get("theme") != ALL_ITEMS_THEME]
+        if not real:
+            digest = f"{total} items (below grouping threshold — see Grouped Themes)."
+        else:
+            tops = []
+            for g in real[:3]:  # groups arrive size-desc from group_rows
+                label = str(g.get("theme", "")).strip()
+                hit = claim_index.get((entity, question, _norm_claim(label)))
+                ref = f" [{hit[0]}]" if hit else ""
+                tops.append(f"“{label}” ({g.get('n_items', '?')} items){ref}")
+            digest = f"{total} items across {len(groups)} themes. Top: " + "; ".join(tops) + "."
+        excel_row = len(rows) + 2
+        digest_links[excel_row] = entry["first_row"]
+        rows.append({
+            "Entity": entity,
+            "Question": question,
+            "Items": total,
+            "Themes": len(groups),
+            "Digest": _clamp_cell_text(digest),
+        })
+    df = pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
+    return df, digest_links
+
+
+# AI Summary provenance disclaimer: the deterministic/synthesized boundary
+# must be visible from the sheet itself. Kept as a cell COMMENT on the
+# Entity header (hover to read it) rather than header text, which would
+# clutter the deliverable's first column and inflate its width.
+_AI_SUMMARY_NOTE = (
+    "AI-synthesized prose (Azure GPT-4.1-mini). Not verified text — every "
+    "statement cites Claim IDs; check them in Provenance."
+)
+
+
+def _make_ai_summary_df(
+    cell_summaries: list[dict],
+    digest_text: dict[tuple[str, str], str],
+    result: PipelineResult,
+    columns: list[ColumnSpec],
+) -> tuple[pd.DataFrame, dict]:
+    """AI Summary sheet in MATRIX form — the consultant-facing presentation
+    (the deliverable is the matrix shape; the original long format survives
+    as the Summary Log audit surface).
+
+    Entity rows × question columns, same order as the Matrix sheet. Three
+    cell regimes, each visibly distinct:
+      - gate-passed prose (with its [C####] citations);
+      - the deterministic Digest line with an explicit "[fallback: ...]"
+        marker and light-orange fill when the Tier-1 gate or the Azure call
+        failed — degradation visible, never silent;
+      - "No data found" (red fill) when the cell produced no summary at all
+        (no verified claims -> no groups -> nothing to summarize).
+    Per-cell audit detail (gate reasons, faithfulness, fingerprints) lives in
+    the Summary Log; the Tier-2 judge annotates flagged cells here post-run.
+    Returns (df, cell_fills) like the Matrix builder.
+    """
+    by_cell = {(s.get("entity", ""), s.get("question", "")): s for s in cell_summaries}
+    col_order = ["Entity"] + [c.name for c in columns]
+    fills: dict[tuple[int, int], str] = {}
+    out_rows = []
+    for row_idx, row in enumerate(result.rows):
+        excel_row = row_idx + 2  # 1-indexed + header
+        out_row: dict = {"Entity": row.entity}
+        for col_idx, col in enumerate(columns, start=2):
+            s = by_cell.get((row.entity, col.name))
+            if s is None:
+                out_row[col.name] = "No data found"
+                fills[(excel_row, col_idx)] = _RED_FILL
+                continue
+            gate = s.get("gate", "")
+            if gate == "pass":
+                text = s.get("summary", "")
+            else:
+                marker = "call failed" if gate.startswith("call failed") else "citation gate failed"
+                # Current records carry an analyst-readable fallback
+                # (verbatim values / theme medoid claims); the digest
+                # bookkeeping line remains only for older workbooks
+                # re-written offline.
+                if s.get("fallback_text"):
+                    text = (
+                        s["fallback_text"]
+                        + f"\n[fallback: verbatim claims — {marker}; see Summary Log]"
+                    )
+                else:
+                    text = (
+                        digest_text.get((row.entity, col.name), "(digest unavailable)")
+                        + f"\n[fallback: deterministic digest — {marker}; see Summary Log]"
+                    )
+                fills[(excel_row, col_idx)] = _LORANGE_FILL
+            out_row[col.name] = _clamp_cell_text(text)
+        out_rows.append(out_row)
+    df = pd.DataFrame(out_rows, columns=col_order) if out_rows else pd.DataFrame(columns=col_order)
+    return df, fills
+
+
+def _make_summary_log_df(cell_summaries: list[dict]) -> pd.DataFrame:
+    """Summary Log (DIAGNOSTICS-gated): full audit trail per summarizer call —
+    exact prompt, raw response, system_fingerprint, prompt_version — because
+    seeded determinism is best-effort; any workbook stays auditable
+    regardless."""
+    col_names = [
+        "Entity", "Question", "Gate", "Faithfulness", "Judge Verdicts",
+        "Cited Claim IDs", "Uncited Sentences", "Input Claim IDs",
+        "System Fingerprint", "Prompt Version", "Generated At",
+        "Duration (ms)", "Error", "Prompt", "Raw Response", "Model",
+    ]
+    rows = []
+    for s in cell_summaries:
+        gate = s.get("gate", "")
+        if gate == "pass":
+            faith = "not-assessed"  # the Tier-2 judge overwrites this
+        elif gate.startswith("call failed"):
+            faith = "fallback (call failed)"
+        else:
+            faith = "fallback (failed citation gate)"
+        rows.append({
+            "Entity": s.get("entity", ""),
+            "Question": s.get("question", ""),
+            "Gate": gate,
+            "Faithfulness": faith,
+            "Judge Verdicts": "",  # per-sentence JSON, filled by summary_judge.py
+            "Cited Claim IDs": ", ".join(s.get("cited_ids", [])),
+            "Uncited Sentences": _clamp_cell_text(" | ".join(s.get("uncited_sentences", []))),
+            "Input Claim IDs": _clamp_cell_text(", ".join(s.get("input_claim_ids", []))),
+            "System Fingerprint": s.get("system_fingerprint") or "",
+            "Prompt Version": s.get("prompt_version", ""),
+            "Generated At": s.get("generated_at", ""),
+            "Duration (ms)": s.get("duration_ms", ""),
+            "Error": s.get("error") or "",
+            "Prompt": _clamp_cell_text(s.get("prompt", "")),
+            "Raw Response": _clamp_cell_text(s.get("raw_response", "")),
+            "Model": s.get("model", ""),
+        })
+    return pd.DataFrame(rows, columns=col_names) if rows else pd.DataFrame(columns=col_names)
+
+
+# Workbook formatting
+
+def _style_sheet(ws, tab_color: str, matrix_fills: dict | None = None) -> None:
+    ws.sheet_properties.tabColor = tab_color
+    # Deliverable matrices freeze the Entity column too, so scrolling right
+    # through 17 question columns keeps the row's company visible.
+    ws.freeze_panes = "B2" if ws.title in ("Matrix", "AI Summary") else "A2"
+
+    if ws.title == "AI Summary":
+        from openpyxl.comments import Comment
+        ws["A1"].comment = Comment(_AI_SUMMARY_NOTE, "pipeline", height=90, width=340)
+
+    h_fill = PatternFill("solid", fgColor=_HEADER_FILL)
+    h_font = Font(name="Arial", bold=True, color=_HEADER_FONT, size=10)
+    h_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for cell in ws[1]:
+        cell.fill = h_fill
+        cell.font = h_font
+        cell.alignment = h_align
+    ws.row_dimensions[1].height = 28
+
+    verified_cols: set[int] = set()
+    for cell in ws[1]:
+        if cell.value and "verified" in str(cell.value).lower():
+            verified_cols.add(cell.column)
+
+    b_font = Font(name="Arial", size=10)
+    b_align = Alignment(horizontal="left", vertical="top", wrap_text=True)
+    alt = PatternFill("solid", fgColor=_ALT_ROW)
+
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
+        for cell in row:
+            cell.font = b_font
+            cell.alignment = b_align
+            if row_idx % 2 == 0:
+                cell.fill = alt
+
+    if matrix_fills:
+        for (r, c), hex_color in matrix_fills.items():
+            cell = ws.cell(row=r, column=c)
+            cell.fill = PatternFill("solid", fgColor=hex_color)
+            if hex_color == _RED_FILL:
+                cell.font = Font(name="Arial", size=10, color=_RED_FONT)
+
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            if cell.value is None:
+                continue
+            val = str(cell.value)
+            vl = val.lower()
+
+            if "no data found" in vl:
+                cell.fill = PatternFill("solid", fgColor=_RED_FILL)
+                cell.font = Font(name="Arial", size=10, color=_RED_FONT)
+            elif cell.column in verified_cols and vl == "false":
+                # Excel stores booleans as Python bool -> str(False) == "False",
+                # so an exact "FALSE" comparison never matched; compare on the
+                # lowercased value. This is the analyst-review flag for
+                # unverified Provenance / Verify Log rows.
+                cell.fill = PatternFill("solid", fgColor=_ORANGE_FILL)
+            elif any(kw in vl for kw in ("timed out", "timeout", "status: error")):
+                cell.fill = PatternFill("solid", fgColor=_RED_FILL)
+
+    deliverable = ws.title in ("Matrix", "AI Summary")
+    for col in ws.columns:
+        letter = get_column_letter(col[0].column)
+        max_len = 0
+        for cell in col:
+            if cell.value is not None:
+                longest = max((len(line) for line in str(cell.value).split("\n")), default=0)
+                max_len = max(max_len, longest)
+        # Deliverable answer columns get a wider floor so wrapped prose is
+        # readable without manual resizing.
+        floor = 30 if deliverable and col[0].column > 1 else 10
+        ws.column_dimensions[letter].width = min(max(max_len + 2, floor), 60)
+
+    if deliverable:
+        for row_idx in range(2, ws.max_row + 1):
+            max_lines = 1
+            for cells in ws.iter_cols(min_row=row_idx, max_row=row_idx):
+                cell = cells[0]
+                if not cell.value:
+                    continue
+                width = ws.column_dimensions[get_column_letter(cell.column)].width or 60
+                # Wrapped display lines: explicit newlines plus soft wraps of
+                # each line at the column width, so tall cells actually show
+                # their full content instead of clipping at the old cap.
+                lines = sum(
+                    max(1, -(-len(line) // max(int(width) - 2, 10)))
+                    for line in str(cell.value).split("\n")
+                )
+                max_lines = max(max_lines, lines)
+            ws.row_dimensions[row_idx].height = min(max(max_lines * 14, 16), 320)
+
+
+# Main entry point
+
+def write_output_excel(
+    result: PipelineResult,
+    columns: list[ColumnSpec],
+    output_path: str,
+    diag: dict | None = None,
+) -> None:
+    """Write the full output workbook: deliverable sheets always, log sheets
+    when DIAGNOSTICS is on, then style every sheet and add the traceability
+    hyperlinks (Digest -> Grouped Themes -> Provenance -> source URL)."""
+    try:
+        from config import DIAGNOSTICS
+    except Exception:
+        DIAGNOSTICS = False
+
+    write_diag = DIAGNOSTICS and diag is not None
+
+    os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
+
+    summary_df = _make_summary_df(diag, result)
+    matrix_df, matrix_fills = _make_matrix_df(result, columns)
+    provenance_df, claim_index = _make_provenance_df(result, columns, diag)
+
+    acq_col_keys = [
+        "entities", "seed_url", "page_url", "parent_url", "depth", "crawl_score",
+        "above_threshold", "fetch_tool", "crawl_scorer", "page_length", "fetch_time_ms",
+        "from_cache", "status", "skip_reason",
+        # Fetch provenance (recorded by the crawler since the pooled backends
+        # landed but previously dropped by this column list): which backend/path
+        # served the page and the quality-gate outcome — the columns per-site
+        # fetch diagnosis needs (e.g. WAF block vs gate fail vs thin static).
+        "backend", "render_fallback", "gate_passed", "gate_reason",
+    ]
+    acq_col_names = [
+        "Entities", "Seed URL", "Page URL", "Parent URL", "Depth", "Crawl Score",
+        "Above Threshold", "Fetch Tool", "Crawl Scorer", "Page Length (chars)", "Fetch Time (ms)",
+        "From Cache", "Status", "Skip Reason",
+        "Backend", "Render Fallback", "Gate Passed", "Gate Reason",
+    ]
+
+    cand_col_keys = [
+        "seed_url", "entities", "parent_url", "candidate_url", "anchor_text",
+        "url_path", "crawl_score", "crawl_scorer", "threshold", "followed", "skip_reason",
+    ]
+    cand_col_names = [
+        "Seed URL", "Entities", "Parent URL", "Candidate URL", "Anchor Text",
+        "URL Path", "Crawl Score", "Crawl Scorer", "Threshold", "Followed", "Skip Reason",
+    ]
+
+    flt_col_keys = [
+        "url", "column", "embedding_score", "keyword_gate", "included", "reason",
+    ]
+    flt_col_names = [
+        "URL", "Column", "Embedding Score", "Keyword Gate", "Included", "Reason",
+    ]
+
+    ext_col_keys = [
+        "entity", "source_url", "question", "extract_tool", "items_extracted",
+        "extraction_time_ms", "timed_out", "retry_count", "page_length_input",
+        "raw_answer_preview",
+    ]
+    ext_col_names = [
+        "Entity", "Source URL", "Question", "Extract Tool", "Items Extracted",
+        "Extraction Time (ms)", "Timed Out", "Retry Count", "Page Length Input (chars)",
+        "Raw Answer Preview",
+    ]
+
+    ver_col_keys = [
+        "entity", "source_url", "question", "claim_preview", "quote_preview",
+        "verified", "match_type", "verification_score", "semantic_score", "verifier_tool",
+    ]
+    ver_col_names = [
+        "Entity", "Source URL", "Question", "Claim Preview", "Quote Preview",
+        "Verified", "Match Type", "Verification Score", "Semantic Score", "Verifier Tool",
+    ]
+
+    sheets: list[tuple[str, pd.DataFrame]] = [
+        ("Summary", summary_df),
+        ("Matrix", matrix_df),
+        ("Provenance", provenance_df),
+    ]
+
+    # Digest + Grouped Themes are deliverable-facing (consultant view of big
+    # cells), written whenever grouping produced rows — NOT gated on
+    # DIAGNOSTICS. Traceability chain: Digest -> Grouped Themes -> Provenance
+    # (claim IDs + internal hyperlinks) -> source URL.
+    claim_groups = (diag or {}).get("claim_groups") or []
+    theme_links: dict[int, int] = {}
+    digest_links: dict[int, int] = {}
+    digest_text: dict[tuple[str, str], str] = {}
+    if claim_groups:
+        themes_df, theme_links = _make_grouped_themes_df(claim_groups, claim_index)
+        digest_df, digest_links = _make_digest_df(claim_groups, claim_index)
+        sheets.insert(2, ("Digest", digest_df))
+        sheets.append(("Grouped Themes", themes_df))
+        digest_text = {
+            (r["Entity"], r["Question"]): r["Digest"] for _, r in digest_df.iterrows()
+        }
+
+    # AI Summary is deliverable-facing like Digest (not DIAGNOSTICS-gated);
+    # it exists only when the summary layer ran (SUMMARY_ENABLED + grouping),
+    # and its gate-failed rows fall back to the deterministic Digest line.
+    cell_summaries = (diag or {}).get("cell_summaries") or []
+    ai_fills: dict[tuple[int, int], str] = {}
+    if cell_summaries:
+        ai_df, ai_fills = _make_ai_summary_df(cell_summaries, digest_text, result, columns)
+        sheets.append(("AI Summary", ai_df))
+
+    # Reading order: answers before evidence. Stable sort so any sheet not
+    # named here (none today) trails the deliverables.
+    _READING_ORDER = {name: i for i, name in enumerate(
+        ["Summary", "AI Summary", "Matrix", "Digest", "Grouped Themes", "Provenance"])}
+    sheets.sort(key=lambda s: _READING_ORDER.get(s[0], len(_READING_ORDER)))
+
+    if write_diag:
+        if cell_summaries:
+            sheets.append(("Summary Log", _make_summary_log_df(cell_summaries)))
+        sheets += [
+            ("Acquire Log", _make_df(diag.get("acquire_log", []), acq_col_keys, acq_col_names)),
+            ("Crawl Candidates", _make_df(diag.get("crawl_candidates", []), cand_col_keys, cand_col_names)),
+            ("Filter Log", _make_df(diag.get("filter_log", []), flt_col_keys, flt_col_names)),
+            ("Extract Log", _make_df(diag.get("extract_log", []), ext_col_keys, ext_col_names)),
+            ("Verify Log", _make_df(diag.get("verify_log", []), ver_col_keys, ver_col_names)),
+        ]
+
+    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+        for sheet_name, df in sheets:
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    wb = load_workbook(output_path)
+    for ws in wb.worksheets:
+        fills = {"Matrix": matrix_fills, "AI Summary": ai_fills}.get(ws.title)
+        _style_sheet(ws, _TAB_COLORS.get(ws.title, _HEADER_FILL), matrix_fills=fills)
+
+    # Traceability hyperlinks (applied after styling so the link font wins).
+    link_font = Font(name="Arial", size=9, color="0563C1", underline="single")
+    if theme_links and "Grouped Themes" in wb.sheetnames:
+        ws = wb["Grouped Themes"]
+        for row, prov_row in theme_links.items():
+            c = ws.cell(row=row, column=3)  # Theme
+            c.hyperlink = f"#Provenance!A{prov_row}"
+            c.font = link_font
+    if digest_links and "Digest" in wb.sheetnames and "Grouped Themes" in wb.sheetnames:
+        ws = wb["Digest"]
+        for row, gt_row in digest_links.items():
+            c = ws.cell(row=row, column=2)  # Question
+            c.hyperlink = f"#'Grouped Themes'!A{gt_row}"
+            c.font = link_font
+    if "Provenance" in wb.sheetnames:
+        # Source URL column (C) as real links — the last hop of the chain.
+        # Excel caps workbook hyperlinks around 65k; stay well below.
+        ws = wb["Provenance"]
+        for row in range(2, min(ws.max_row, 20000) + 1):
+            c = ws.cell(row=row, column=3)
+            url = str(c.value or "")
+            if url.startswith("http"):
+                c.hyperlink = url
+                c.font = link_font
+
+    wb.save(output_path)

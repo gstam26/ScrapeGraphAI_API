@@ -1,0 +1,871 @@
+"""Extraction layer: turn routed pages into evidence-backed answer cells.
+
+Sits between Filter and Verify. Pages are chunked, each chunk goes through
+one LLM call against the shared JSON prompt (_build_prompt), and per-chunk
+results are merged and parsed into ExtractedCell/SourceQuote models. Entry
+point: extract_cells(). Four selectable backends behind EXTRACT_TOOL:
+"azure" (default), "claude", "sgai", "llmapi" (corporate-proxy fallback —
+see src/llmapi.py). Non-obvious constraints: a global semaphore caps
+concurrent LLM calls across all entities/pages/chunks; per-chunk results
+are cached on disk keyed by everything that shapes the call, including the
+prompt template version; boilerplate (legal/compliance) pages are capped to
+EXTRACT_MAX_CHUNKS_BOILERPLATE chunks.
+"""
+from typing import Any
+import hashlib
+import httpx
+import json
+import os
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
+
+try:
+    from scrapegraph_py import JsonFormatConfig, ScrapeGraphAI
+except ImportError:
+    JsonFormatConfig = None
+    ScrapeGraphAI = None
+
+from config import (
+    API_KEY,
+    AZURE_API_KEY,
+    AZURE_DEPLOYMENT,
+    AZURE_ENDPOINT,
+    CLAUDE_API_KEY,
+    CLAUDE_MODEL,
+    EXTRACT_CHUNK_OVERLAP,
+    EXTRACT_CHUNK_SIZE,
+    EXTRACT_CACHE_DIR,
+    EXTRACT_MAX_CHUNKS_BOILERPLATE,
+    EXTRACT_MAX_CHUNKS_PER_PAGE,
+    EXTRACT_MAX_CONCURRENT_CALLS,
+    EXTRACT_MAX_WORKERS,
+    EXTRACT_SEED,
+    EXTRACT_TEMPERATURE,
+    EXTRACT_TIMEOUT,
+    EXTRACT_TOOL,
+)
+from models import ColumnSpec, Config, ExtractedCell, PageDoc, SourceQuote
+from src.urlpaths import is_boilerplate_path
+
+# Global cap on concurrent extractor LLM calls. With entity-level parallelism
+# in run_pipeline, worst-case concurrency is entity workers x page workers x
+# chunk workers — far more than the LLMAPI proxy tolerates (502s observed).
+# Cache hits do not take a slot.
+_LLM_CALL_SEMAPHORE = threading.BoundedSemaphore(EXTRACT_MAX_CONCURRENT_CALLS)
+
+
+# Prompt identity stamped into extraction records, so outputs stay
+# attributable to the prompt that produced them. Letter = prompt family
+# (e = extract), number = revision.
+#
+# Bump whenever the prompt template below changes in ANY way: the version is
+# part of the extract-cache key, so edits invalidate cached extractions
+# instead of silently no-opping on cache hits (a past bug class: the key
+# previously hashed only chunk+column NAMES+entities+tool — neither
+# instructions nor the template were in it).
+EXTRACT_PROMPT_VERSION = "e2"
+
+
+def _build_prompt(
+    columns: list[ColumnSpec],
+    entities: list[str],
+    page_text: str | None = None,
+    entity_context: str = "",
+) -> str:
+    """Build the shared extraction prompt: per-entity, per-question JSON with
+    a verbatim supporting quote per answer. Used identically by every
+    backend so results stay comparable across EXTRACT_TOOL choices."""
+    entity_fields = "".join(f'- "{entity}"\n' for entity in entities)
+    question_fields = ""
+    for col in columns:
+        if col.instruction:
+            question_fields += f'- "{col.name}": {col.instruction}\n'
+        else:
+            question_fields += f'- "{col.name}"\n'
+
+    context_block = (
+        f"\nContext about these entities (from the requester):\n{entity_context}\n"
+        if entity_context else ""
+    )
+    base = f"""
+Extract answers to these questions about these specific entities from this page.
+
+Specific entities:
+{entity_fields}{context_block}
+Return a JSON object with exactly these top-level keys, one per specific entity:
+{entity_fields}
+
+For each entity key, return an object with exactly these question keys:
+{question_fields}
+
+For each question key, return an object with this structure:
+{{
+  "value": the extracted answer, or null if not found,
+  "quote": one single verbatim sentence (or shortest contiguous span) copied
+           character-for-character from the page text, or null if not found
+}}
+
+Rules:
+- Extract only answers about the specific entities listed above.
+- Use exactly the requested entity names and question names.
+- Do not invent information.
+- Only use information present in the content provided.
+- If the answer is not found, use null for both value and quote.
+- "Not disclosed", "not found", "unknown" and similar are NOT extractable
+  answers: when this page does not state the information, use null — even if
+  a question's guidance lists "Not disclosed" as an allowed answer (that
+  guidance is for the final aggregated answer, not for a single page).
+  Exception: if the page itself explicitly states the information is not
+  disclosed, extract that statement with its quote.
+- If multiple answers exist, return a JSON array of objects, one per answer.
+  Each object must have exactly one value and exactly one quote.
+- Treat each distinct programme, metric, certification, partnership, or commitment
+  as its own separate array entry, even when multiple distinct claims appear in
+  the same sentence or paragraph. Do not merge related but distinct claims into
+  one entry.
+- Quote rules (all must hold):
+    * Copy the quote character-for-character from the page — no changes, no ellipses,
+      no joining fragments with newlines or punctuation.
+    * Use the single shortest sentence or span that directly supports the value.
+      Never combine multiple sentences or clauses into one quote string.
+    * Never return a list or array as the quote — quote must always be a string or null.
+    * If a claim is supported by multiple separate sentences, create a separate
+      {{"value": ..., "quote": ...}} entry for each sentence — do not bundle them
+      under one shared quote.
+- Return only JSON, no other text.
+"""
+    if page_text:
+        return base + "\nPage content:\n'''\n" + page_text + "\n'''\n"
+    return base
+
+
+def _strip_json_fence(raw: str) -> str:
+    """Strip a Markdown ```json code fence some models wrap around the
+    JSON payload despite the return-only-JSON instruction."""
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.split("```", 2)[1]
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.rsplit("```", 1)[0].strip()
+    return text
+
+
+def _extract_with_sgai(
+    page: PageDoc,
+    columns: list[ColumnSpec],
+    entities: list[str],
+    entity_context: str = "",
+) -> tuple[dict[str, Any], dict]:
+    """
+    Extract fields using ScrapeGraphAI.
+
+    Returns (data_dict, timing_info) where timing_info has keys:
+      extraction_time_ms, timed_out, retry_count
+    """
+    page_text = page.text if getattr(page, "text", None) else None
+    prompt = _build_prompt(columns, entities, page_text, entity_context)
+
+    if ScrapeGraphAI is None or JsonFormatConfig is None:
+        raise RuntimeError("scrapegraph-py is required when EXTRACT_TOOL='sgai'")
+    if not API_KEY:
+        raise RuntimeError("Missing SGAI_API_KEY in .env")
+
+    print(f"      -> SGAI extracting: {page.url}")
+    t0 = time.time()
+
+    max_attempts = 2
+    retry_wait_s = 5
+    timed_out = False
+    attempts_made = 0
+
+    def make_timing():
+        return {
+            "extraction_time_ms": int((time.time() - t0) * 1000),
+            "timed_out": timed_out,
+            "retry_count": max(attempts_made - 1, 0),
+        }
+
+    result = None
+    try:
+        for attempt in range(1, max_attempts + 1):
+            attempts_made = attempt
+            sgai = ScrapeGraphAI(api_key=API_KEY)
+
+            def do_scrape():
+                content_candidates = [
+                    ("content", page.text),
+                    ("html", page.html),
+                    ("text", page.text),
+                ]
+                for name, content in content_candidates:
+                    if not content:
+                        continue
+                    try:
+                        return sgai.scrape(**{name: content}, formats=[JsonFormatConfig(prompt=prompt)])
+                    except TypeError:
+                        continue
+                return sgai.scrape(page.url, formats=[JsonFormatConfig(prompt=prompt)])
+
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(do_scrape)
+                try:
+                    result = future.result(timeout=EXTRACT_TIMEOUT)
+                except FuturesTimeoutError:
+                    timed_out = True
+                    duration = time.time() - t0
+                    try:
+                        sgai.close()
+                    except Exception:
+                        pass
+                    if attempt < max_attempts:
+                        print(
+                            f"      ! SGAI timed out after {EXTRACT_TIMEOUT}s "
+                            f"(attempt {attempt}/{max_attempts}); retrying in {retry_wait_s}s..."
+                        )
+                        time.sleep(retry_wait_s)
+                        continue
+                    print(f"      ! SGAI timed out on final attempt after {duration:.2f}s")
+                    return {}, make_timing()
+                except Exception as e:
+                    duration = time.time() - t0
+                    print(f"      X Extraction error during call after {duration:.2f}s: {e}")
+                    try:
+                        sgai.close()
+                    except Exception:
+                        pass
+                    return {}, make_timing()
+
+            duration = time.time() - t0
+            print(f"      -> SGAI call completed in {duration:.2f}s (attempt {attempt}/{max_attempts})")
+            try:
+                sgai.close()
+            except Exception:
+                pass
+            break
+
+        if result is None:
+            print("      ! Result is None")
+            return {}, make_timing()
+
+        data_obj = getattr(result, "data", None)
+        if data_obj is None:
+            print("      ! result.data is None")
+            return {}, make_timing()
+
+        results = getattr(data_obj, "results", None)
+        if not results:
+            print("      ! result.data.results is empty or falsy")
+            return {}, make_timing()
+
+        json_data = {}
+        if isinstance(results, dict):
+            json_entry = results.get("json") or results.get("json_format") or results.get("json_result")
+            if json_entry and isinstance(json_entry, dict):
+                json_data = json_entry.get("data", {})
+
+        if not json_data and isinstance(results, dict):
+            json_data = results
+
+        if not json_data:
+            keys = list(results.keys()) if isinstance(results, dict) else type(results)
+            print(f"      ! Extraction returned no usable JSON data (keys: {keys})")
+            return {}, make_timing()
+
+        if not isinstance(json_data, dict):
+            print(f"      ! Parsed json_data is not a dict: {type(json_data)}")
+            return {}, make_timing()
+
+        return json_data, make_timing()
+
+    except Exception as e:
+        duration = time.time() - t0
+        print(f"      X Extraction error after {duration:.2f}s: {e}")
+        return {}, make_timing()
+
+
+def _extract_with_llmapi(
+    page: PageDoc,
+    columns: list[ColumnSpec],
+    entities: list[str],
+    entity_context: str = "",
+) -> tuple[dict[str, Any], dict]:
+    """Extract fields using the internal LLMAPI HTTP endpoint."""
+    from src.llmapi import LLMAPI
+
+    page_text = page.text if getattr(page, "text", None) else None
+    prompt = _build_prompt(columns, entities, page_text, entity_context)
+
+    print(f"      -> LLMAPI extracting: {page.url}")
+    t0 = time.time()
+    timed_out = False
+
+    def make_timing():
+        return {
+            "extraction_time_ms": int((time.time() - t0) * 1000),
+            "timed_out": timed_out,
+            "retry_count": 0,
+        }
+
+    try:
+        llm = LLMAPI()
+        try:
+            raw = llm.call(prompt, timeout=EXTRACT_TIMEOUT)
+        except TimeoutError:
+            timed_out = True
+            duration = time.time() - t0
+            print(f"      ! LLMAPI timed out after {duration:.2f}s")
+            return {}, make_timing()
+        except Exception as e:
+            duration = time.time() - t0
+            print(f"      X LLMAPI call error after {duration:.2f}s: {e}")
+            return {}, make_timing()
+
+        duration = time.time() - t0
+        print(f"      -> LLMAPI call completed in {duration:.2f}s")
+
+        text = _strip_json_fence(raw)
+
+        json_data = json.loads(text)
+        if not isinstance(json_data, dict):
+            print(f"      ! LLMAPI response is not a dict: {type(json_data)}")
+            return {}, make_timing()
+
+        return json_data, make_timing()
+
+    except Exception as e:
+        duration = time.time() - t0
+        print(f"      X LLMAPI extraction error after {duration:.2f}s: {e}")
+        return {}, make_timing()
+
+
+def _extract_with_azure(
+    page: PageDoc,
+    columns: list[ColumnSpec],
+    entities: list[str],
+    entity_context: str = "",
+) -> tuple[dict[str, Any], dict]:
+    """Extract fields using Azure OpenAI via the OpenAI Python SDK."""
+    from openai import OpenAI
+
+    if not AZURE_API_KEY:
+        raise RuntimeError("Missing AZURE_API_KEY in .env")
+
+    page_text = page.text if getattr(page, "text", None) else None
+    prompt = _build_prompt(columns, entities, page_text, entity_context)
+
+    print(f"      -> Azure extracting: {page.url}")
+    t0 = time.time()
+    timed_out = False
+    retries = 0
+
+    def make_timing():
+        return {
+            "extraction_time_ms": int((time.time() - t0) * 1000),
+            "timed_out": timed_out,
+            "retry_count": retries,
+        }
+
+    try:
+        client = OpenAI(base_url=AZURE_ENDPOINT, api_key=AZURE_API_KEY)
+        completion = None
+        max_attempts = 2  # one retry on transient (non-timeout) errors
+        for attempt in range(1, max_attempts + 1):
+            try:
+                completion = client.chat.completions.create(
+                    model=AZURE_DEPLOYMENT,
+                    messages=[{"role": "user", "content": prompt}],
+                    timeout=EXTRACT_TIMEOUT,
+                    # Determinism hints (config note): default temperature 1.0
+                    # produced 5-vs-10 items on identical input across runs.
+                    temperature=EXTRACT_TEMPERATURE,
+                    seed=EXTRACT_SEED,
+                )
+                break
+            except Exception as e:
+                if "timeout" in str(e).lower() or "timed out" in str(e).lower():
+                    timed_out = True
+                    duration = time.time() - t0
+                    print(f"      ! Azure timed out after {duration:.2f}s")
+                    return {}, make_timing()
+                duration = time.time() - t0
+                if attempt < max_attempts:
+                    retries += 1
+                    print(f"      ! Azure call error after {duration:.2f}s: {e} — retrying in 5s")
+                    time.sleep(5)
+                    continue
+                print(f"      X Azure call error after {duration:.2f}s: {e}")
+                return {}, make_timing()
+
+        duration = time.time() - t0
+        print(f"      -> Azure call completed in {duration:.2f}s")
+
+        raw = completion.choices[0].message.content or ""
+        text = _strip_json_fence(raw)
+
+        json_data = json.loads(text)
+        if not isinstance(json_data, dict):
+            print(f"      ! Azure response is not a dict: {type(json_data)}")
+            return {}, make_timing()
+
+        return json_data, make_timing()
+
+    except Exception as e:
+        duration = time.time() - t0
+        print(f"      X Azure extraction error after {duration:.2f}s: {e}")
+        return {}, make_timing()
+
+
+def _extract_with_claude(
+    page: PageDoc,
+    columns: list[ColumnSpec],
+    entities: list[str],
+    entity_context: str = "",
+) -> tuple[dict[str, Any], dict]:
+    """Extract fields using Anthropic Claude via the Messages HTTP API."""
+    if not CLAUDE_API_KEY:
+        raise RuntimeError("Missing CLAUDE_API_KEY in .env")
+
+    page_text = page.text if getattr(page, "text", None) else None
+    prompt = _build_prompt(columns, entities, page_text, entity_context)
+
+    print(f"      -> Claude extracting: {page.url}")
+    t0 = time.time()
+    timed_out = False
+
+    def make_timing():
+        return {
+            "extraction_time_ms": int((time.time() - t0) * 1000),
+            "timed_out": timed_out,
+            "retry_count": 0,
+        }
+
+    try:
+        payload = {
+            "model": CLAUDE_MODEL,
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        headers = {
+            "x-api-key": CLAUDE_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        try:
+            response = httpx.post(
+                "https://api.anthropic.com/v1/messages",
+                headers=headers,
+                json=payload,
+                timeout=EXTRACT_TIMEOUT,
+            )
+            response.raise_for_status()
+        except Exception as e:
+            if "timeout" in str(e).lower() or "timed out" in str(e).lower():
+                timed_out = True
+                duration = time.time() - t0
+                print(f"      ! Claude timed out after {duration:.2f}s")
+                return {}, make_timing()
+            duration = time.time() - t0
+            print(f"      X Claude call error after {duration:.2f}s: {e}")
+            return {}, make_timing()
+
+        duration = time.time() - t0
+        print(f"      -> Claude call completed in {duration:.2f}s")
+
+        response_data = response.json()
+        raw = "".join(
+            block.get("text", "")
+            for block in response_data.get("content", [])
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+        text = _strip_json_fence(raw)
+        json_data = json.loads(text)
+        if not isinstance(json_data, dict):
+            print(f"      ! Claude response is not a dict: {type(json_data)}")
+            return {}, make_timing()
+
+        return json_data, make_timing()
+
+    except Exception as e:
+        duration = time.time() - t0
+        print(f"      X Claude extraction error after {duration:.2f}s: {e}")
+        return {}, make_timing()
+
+
+def _normalise_quote(quote: Any) -> list[str | None]:
+    """Return quote(s) as a flat list suitable for SourceQuote construction.
+
+    - str or None  → [quote]          (single item, existing behaviour)
+    - list         → one str per item  (LLM sometimes returns multiple quotes)
+    - other type   → []               (warn and produce no evidence for this field)
+    """
+    if quote is None or isinstance(quote, str):
+        return [quote]
+    if isinstance(quote, list):
+        strings = [q for q in quote if isinstance(q, str) and q]
+        return strings if strings else [None]
+    print(f"      ! Unexpected quote type {type(quote).__name__!r} — dropping quote")
+    return []
+
+
+def _parse_field_value(raw: Any) -> tuple[Any, list[SourceQuote]]:
+    """Parse one question's raw LLM answer into (value, evidence).
+
+    Tolerates every shape the models return: {value, quote} dicts, lists of
+    dicts or scalars, or a bare scalar. Empty values produce no evidence.
+    """
+    evidence = []
+
+    if raw is None:
+        return None, evidence
+
+    if isinstance(raw, dict):
+        value = raw.get("value")
+        quote = raw.get("quote")
+        if value not in (None, "", []):
+            for q in _normalise_quote(quote):
+                evidence.append(SourceQuote(value=value, quote=q))
+        return value, evidence
+
+    if isinstance(raw, list):
+        values = []
+        for item in raw:
+            if isinstance(item, dict):
+                value = item.get("value")
+                quote = item.get("quote")
+                if value not in (None, "", []):
+                    values.append(value)
+                    for q in _normalise_quote(quote):
+                        evidence.append(SourceQuote(value=value, quote=q))
+            else:
+                if item not in (None, "", []):
+                    values.append(item)
+                    evidence.append(SourceQuote(value=item, quote=None))
+        return values if values else None, evidence
+
+    if raw not in (None, "", []):
+        evidence.append(SourceQuote(value=raw, quote=None))
+    return raw, evidence
+
+
+def _get_case_insensitive(mapping: dict[str, Any], key: str) -> Any:
+    if key in mapping:
+        return mapping[key]
+    key_lower = key.lower()
+    for candidate_key, value in mapping.items():
+        if str(candidate_key).lower() == key_lower:
+            return value
+    return None
+
+
+def _entity_payload(data: dict[str, Any], entity: str, entities: list[str]) -> dict[str, Any]:
+    payload = _get_case_insensitive(data, entity)
+    if isinstance(payload, dict):
+        return payload
+
+    # Backward tolerance for single-entity outputs that return the old flat shape.
+    if len(entities) == 1:
+        return data
+
+    return {}
+
+
+def _chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
+    """Split page text into overlapping fixed-size chunks for per-chunk LLM
+    calls, capped at EXTRACT_MAX_CHUNKS_PER_PAGE with a printed warning
+    (archives list newest first, so the kept prefix is the useful part)."""
+    if not text:
+        return []
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end])
+        if end >= len(text):
+            break
+        if len(chunks) >= EXTRACT_MAX_CHUNKS_PER_PAGE:
+            # Pathological page (news archive / index). Keep the prefix —
+            # archives list newest first — and say so, never truncate silently.
+            print(
+                f"      ! Page exceeds {EXTRACT_MAX_CHUNKS_PER_PAGE} chunks "
+                f"({len(text):,} chars); extracting first "
+                f"{EXTRACT_MAX_CHUNKS_PER_PAGE} chunks only"
+            )
+            break
+        start = end - overlap
+    return chunks
+
+
+def _extract_cache_key(
+    chunk_text: str,
+    columns: list[ColumnSpec],
+    entities: list[str],
+    extract_tool: str,
+    entity_context: str = "",
+) -> str:
+    """Deterministic cache key for one chunk-level extraction call.
+
+    Everything that shapes the LLM call must be in the key, or edits
+    silently no-op on cache hits (instructions and the prompt template were
+    previously absent — an instruction change kept serving stale
+    extractions).
+    """
+    payload = {
+        "chunk_text": chunk_text,
+        "columns": sorted(f"{c.name}\x1f{c.instruction or ''}" for c in columns),
+        "entities": sorted(entities),
+        "entity_context": entity_context,
+        "extract_tool": extract_tool,
+        "prompt_version": EXTRACT_PROMPT_VERSION,
+        "temperature": EXTRACT_TEMPERATURE,
+        "seed": EXTRACT_SEED,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _extract_cache_path(cache_key: str) -> str:
+    os.makedirs(EXTRACT_CACHE_DIR, exist_ok=True)
+    return os.path.join(EXTRACT_CACHE_DIR, f"{cache_key}.json")
+
+
+def _read_extract_cache(cache_key: str) -> dict[str, Any] | None:
+    """Read a cached chunk extraction; None on miss or unreadable/invalid
+    file (fail-soft — a corrupt cache entry just costs one LLM call)."""
+    path = _extract_cache_path(cache_key)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"      ! Extract cache read failed: {exc}")
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _write_extract_cache(cache_key: str, data: dict[str, Any]) -> None:
+    """Persist one chunk's extraction result; a write failure only warns —
+    caching is an optimisation, never a correctness dependency."""
+    path = _extract_cache_path(cache_key)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except OSError as exc:
+        print(f"      ! Extract cache write failed: {exc}")
+
+
+def _merge_chunk_data(chunk_results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge per-chunk extraction dicts. Non-null answers accumulate; nulls are dropped."""
+    merged: dict[str, dict[str, list]] = {}
+
+    def normalise_items(raw: Any) -> list[dict[str, Any]]:
+        if raw is None:
+            return []
+
+        if isinstance(raw, dict):
+            value = raw.get("value")
+            if value in (None, "", []):
+                return []
+            if isinstance(value, list):
+                items = []
+                for item in value:
+                    if isinstance(item, dict):
+                        items.extend(normalise_items(item))
+                    else:
+                        items.extend(normalise_items({"value": item, "quote": raw.get("quote")}))
+                return items
+            return [{"value": value, "quote": raw.get("quote")}]
+
+        if isinstance(raw, list):
+            items = []
+            for item in raw:
+                items.extend(normalise_items(item))
+            return items
+
+        if raw in (None, "", []):
+            return []
+        return [{"value": raw, "quote": None}]
+
+    def merge_item(items: list[dict[str, Any]], item: dict[str, Any]) -> None:
+        value_key = str(item.get("value"))
+        for existing in items:
+            if str(existing.get("value")) == value_key:
+                if existing.get("quote") in (None, "") and item.get("quote") not in (None, ""):
+                    existing["quote"] = item.get("quote")
+                return
+        items.append(item)
+
+    for chunk_data in chunk_results:
+        if not chunk_data:
+            continue
+        for entity, entity_data in chunk_data.items():
+            if not isinstance(entity_data, dict):
+                continue
+            merged.setdefault(entity, {})
+            for question, raw in entity_data.items():
+                merged[entity].setdefault(question, [])
+                for item in normalise_items(raw):
+                    merge_item(merged[entity][question], item)
+
+    result: dict[str, Any] = {}
+    for entity, questions in merged.items():
+        result[entity] = {}
+        for question, items in questions.items():
+            if not items:
+                result[entity][question] = None
+            elif len(items) == 1:
+                result[entity][question] = items[0]
+            else:
+                result[entity][question] = items
+
+    return result
+
+
+def extract_cells(
+    page: PageDoc,
+    columns: list[ColumnSpec],
+    entities: list[str],
+    cfg: Config | None = None,
+    diag: dict | None = None,
+    use_cache: bool = True,
+    entity_context: str = "",
+) -> list[ExtractedCell]:
+    """Extract answer cells from one page for the routed columns.
+
+    Chunks the page text, runs the configured EXTRACT_TOOL backend per chunk
+    (concurrently, under the global call semaphore, with per-chunk disk
+    caching), merges chunk results and parses them into one ExtractedCell
+    per entity/column with evidence quotes. Appends per-entity rows to
+    diag["extract_log"] when diag is given.
+    """
+    cells = []
+    if not columns:
+        return cells
+
+    runtime_cfg = cfg or Config(extract_tool=EXTRACT_TOOL)
+
+    text = page.text or ""
+    chunks = _chunk_text(text, EXTRACT_CHUNK_SIZE, EXTRACT_CHUNK_OVERLAP) or [""]
+
+    # Legal/compliance pages: keep the page, cap the spend. Sanmina's privacy
+    # policy is 234K chars = 30 Azure calls of retention-and-rights legalese,
+    # but the part worth extracting is the legally mandated identity block —
+    # company name and registered address — which convention puts early (GDPR
+    # Art. 13; an Impressum is nothing else). Arrk's verified "Osaka, Japan" HQ
+    # came from such a page at char 3,439, comfortably inside chunk 1. Blocking
+    # these pages outright, the original plan, would have deleted that answer.
+    # Trade-off: a fact sitting late in a very long legal page is lost.
+    if len(chunks) > EXTRACT_MAX_CHUNKS_BOILERPLATE and is_boilerplate_path(page.url):
+        print(f"      -> Boilerplate page, extracting first "
+              f"{EXTRACT_MAX_CHUNKS_BOILERPLATE} of {len(chunks)} chunks: {page.url}")
+        chunks = chunks[:EXTRACT_MAX_CHUNKS_BOILERPLATE]
+
+    chunk_results: list[dict[str, Any]] = [{} for _ in chunks]
+    agg_timing: dict = {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
+
+    def extract_chunk(chunk: str) -> tuple[dict[str, Any], dict]:
+        cache_key = _extract_cache_key(
+            chunk, columns, entities, runtime_cfg.extract_tool, entity_context)
+        if use_cache:
+            cached = _read_extract_cache(cache_key)
+            if cached is not None:
+                print(f"      -> Extract cache hit: {page.url}")
+                return cached, {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
+
+        chunk_page = PageDoc(
+            url=page.url, text=chunk, html=None,
+            from_cache=page.from_cache, depth=page.depth,
+            crawl_score=page.crawl_score, fetch_time_ms=page.fetch_time_ms,
+            backend=page.backend, render_fallback=page.render_fallback,
+            gate_passed=page.gate_passed, gate_reason=page.gate_reason,
+        )
+        with _LLM_CALL_SEMAPHORE:
+            if runtime_cfg.extract_tool == "sgai":
+                chunk_data, timing = _extract_with_sgai(chunk_page, columns, entities, entity_context)
+            elif runtime_cfg.extract_tool == "llmapi":
+                chunk_data, timing = _extract_with_llmapi(chunk_page, columns, entities, entity_context)
+            elif runtime_cfg.extract_tool == "azure":
+                chunk_data, timing = _extract_with_azure(chunk_page, columns, entities, entity_context)
+            elif runtime_cfg.extract_tool == "claude":
+                chunk_data, timing = _extract_with_claude(chunk_page, columns, entities, entity_context)
+            else:
+                print(f"      X Unknown EXTRACT_TOOL: {runtime_cfg.extract_tool}")
+                return {}, {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
+        if use_cache and chunk_data and not timing["timed_out"]:
+            _write_extract_cache(cache_key, chunk_data)
+        return chunk_data, timing
+
+    if runtime_cfg.extract_tool not in {"sgai", "llmapi", "azure", "claude"}:
+        print(f"      X Unknown EXTRACT_TOOL: {runtime_cfg.extract_tool}")
+        return cells
+
+    max_workers = min(EXTRACT_MAX_WORKERS, len(chunks))
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {ex.submit(extract_chunk, chunk): index for index, chunk in enumerate(chunks)}
+        for future in as_completed(futures):
+            index = futures[future]
+            try:
+                chunk_data, timing = future.result()
+            except Exception as exc:
+                print(f"      X Chunk extraction failed: {exc}")
+                chunk_data = {}
+                timing = {"extraction_time_ms": 0, "timed_out": False, "retry_count": 0}
+            chunk_results[index] = chunk_data
+            agg_timing["extraction_time_ms"] += timing["extraction_time_ms"]
+            agg_timing["timed_out"] = agg_timing["timed_out"] or timing["timed_out"]
+            agg_timing["retry_count"] += timing["retry_count"]
+
+    data = _merge_chunk_data(chunk_results)
+    timing = agg_timing
+
+    for entity in entities:
+        payload = _entity_payload(data, entity, entities)
+
+        if diag is not None:
+            items_extracted = sum(
+                len(v) if isinstance(v, list) else (1 if v is not None else 0)
+                for v in payload.values()
+            ) if payload else 0
+            diag.setdefault("extract_log", []).append({
+                "entity": entity,
+                "source_url": page.url,
+                "question": "; ".join(c.name for c in columns),
+                "extract_tool": runtime_cfg.extract_tool,
+                "items_extracted": items_extracted,
+                "extraction_time_ms": timing["extraction_time_ms"],
+                "timed_out": timing["timed_out"],
+                "retry_count": timing["retry_count"],
+                "page_length_input": len(page.text) if page.text else 0,
+                "raw_answer_preview": str(payload)[:300] if payload else "",
+            })
+
+        for col in columns:
+            raw = _get_case_insensitive(payload, col.name)
+            try:
+                value, evidence = _parse_field_value(raw)
+            except Exception as exc:
+                print(f"      ! Parse error {entity}/{col.name}: {exc} — skipping field")
+                continue
+
+            cell = ExtractedCell(
+                entity=entity,
+                source_url=page.url,
+                column=col.name,
+                value=value,
+                evidence=evidence,
+            )
+
+            if not evidence:
+                print(f"      - {entity} / {col.name}: (no data extracted)")
+            elif value is None:
+                print(f"      - {entity} / {col.name}: (null value, {len(evidence)} evidence items)")
+            elif isinstance(value, list):
+                print(f"      - {entity} / {col.name}: [{len(value)} items] ({len(evidence)} evidence)")
+            else:
+                print(f"      - {entity} / {col.name}: {str(value)[:40]} ({len(evidence)} evidence)")
+
+            cells.append(cell)
+
+    return cells

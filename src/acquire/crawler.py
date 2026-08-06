@@ -1,0 +1,717 @@
+"""Guided crawler: expand one entity URL into the pages most likely to answer the schema.
+
+Sits in the Acquire layer between the fetch backends (fetcher.py) and the
+sha256-keyed page cache (cache.py). Starting from a seed URL, it discovers
+in-scope links, scores them against the user's extraction questions
+(link_scorer.py: BM25 or embeddings), and follows only candidates above a
+score threshold — BFS by default, optionally best-first — within depth and
+page budgets. Locale-variant pages are collapsed so translated copies don't
+burn budget. Entry point: crawl_entity().
+"""
+
+import heapq
+import itertools
+import re
+import time
+from collections import deque
+from urllib.parse import urljoin, urlparse
+
+import requests
+from bs4 import BeautifulSoup
+
+from config import (
+    CRAWL_BLOCK_INFRA_PATHS,
+    CRAWL_DISCOVERY_MIN_LINKS,
+    CRAWL_LOCALE_DEDUP,
+    CRAWL_MAX_DEPTH,
+    CRAWL_MAX_LINKS_PER_PAGE,
+    CRAWL_MIN_SCORE_EMBED,
+    CRAWL_RENDER_FOR_DISCOVERY,
+    CRAWL_SCOPE,
+    CRAWL_STRATEGY,
+    SCORER_TOOL,
+)
+from models import ColumnSpec, Config, PageDoc
+from src.acquire.cache import read_cache, write_cache
+from src.acquire.fetcher import fetch_page_with_provenance
+from src.acquire.link_scorer import (
+    _tokenize,
+    score_links,
+    score_links_embed,
+    score_links_embed_experimental,
+)
+from src.acquire.acquire_models import EntityDoc, LinkCandidate
+from src.filter import query_text
+from src.urlpaths import is_blocked_path
+
+
+# ── Crawl planner ─────────────────────────────────────────────────────────────
+
+_QUERY_WEIGHTS = {"question": 3.0, "instruction": 1.0}
+
+_FALLBACK_TOP_K = 2
+_FALLBACK_MAX_DEPTH = 1
+
+
+def build_crawl_query(
+    columns: list[ColumnSpec],
+    entities: list[str] | None = None,
+) -> dict[str, float]:
+    """
+    Build a weighted term dict from questions and instruction text (BM25 scorer).
+
+    Entity names are intentionally excluded — they dilute relevance scoring
+    and belong in link hygiene filtering (_same_domain) instead.
+    Term weights: question (3.0) > instruction (1.0).
+    """
+    tiers = {
+        "question":    " ".join(col.name for col in columns),
+        "instruction": " ".join(col.instruction or "" for col in columns),
+    }
+    term_weights: dict[str, float] = {}
+    for tier, text in tiers.items():
+        w = _QUERY_WEIGHTS[tier]
+        for token in _tokenize(text):
+            if token not in term_weights or term_weights[token] < w:
+                term_weights[token] = w
+    return term_weights
+
+
+def _select_links_to_follow(
+    scored: list,
+    min_score: float,
+    depth: int,
+) -> list:
+    """
+    Return the subset of scored LinkCandidates to follow.
+
+    Normal: all candidates with score >= min_score.
+    Fallback (depth <= _FALLBACK_MAX_DEPTH, no candidate passes): top-_FALLBACK_TOP_K only.
+    """
+    above = [c for c in scored if c.score >= min_score]
+    if above:
+        return above
+    if depth <= _FALLBACK_MAX_DEPTH and scored:
+        return scored[:_FALLBACK_TOP_K]
+    return []
+
+
+# ── URL helpers ───────────────────────────────────────────────────────────────
+
+# Presentation/tracking query params that never change page content: utm_*
+# (analytics) and hsLang (HubSpot locale mirror — /services and
+# /services?hsLang=en are the same page, and without stripping they cost two
+# budget slots). Content-selecting params (?id=, ?p=, ?page=) are
+# deliberately untouched.
+_JUNK_QUERY_PARAMS_EXACT = {"hslang", "gclid", "fbclid", "msclkid"}
+
+
+def _normalise_url(url: str) -> str:
+    """Canonicalise a URL: drop fragments, junk query params, trailing slash."""
+    url = url.split("#")[0]
+    parsed = urlparse(url)
+    if parsed.query:
+        kept = [
+            pair for pair in parsed.query.split("&")
+            if pair and not (
+                (name := pair.split("=", 1)[0].lower()).startswith("utm_")
+                or name in _JUNK_QUERY_PARAMS_EXACT
+            )
+        ]
+        query = "&".join(kept)
+        base = url.split("?")[0]
+        url = f"{base}?{query}" if query else base
+    return url.rstrip("/")
+
+
+# Country-code second-level labels under which the registered domain needs
+# THREE labels (automatic.com.hk, bbc.co.uk), not two. Deliberately a small
+# builtin set rather than a public-suffix-list dependency: covers the corporate
+# patterns seen in the cohorts; an unlisted exotic suffix degrades to slightly
+#-too-wide scope, never to dropping a valid candidate.
+_SECOND_LEVEL_LABELS = {"co", "com", "org", "net", "gov", "edu", "ac"}
+
+
+def _registered_domain(netloc: str) -> str:
+    """Heuristic registered domain (eTLD+1) for a netloc, e.g. 'bbc.co.uk'."""
+    labels = netloc.lower().split(":")[0].split(".")
+    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL_LABELS:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:]) if len(labels) >= 2 else netloc.lower()
+
+
+def _same_domain(start_url: str, candidate_url: str, scope: str | None = None) -> bool:
+    """Whether candidate_url is in crawl scope for start_url.
+
+    scope="site" compares registered domains (own subdomains stay in scope);
+    any other scope requires an exact host match.
+    """
+    # scope=None falls back to the env-configured module default, so direct
+    # callers (diagnostics, tests) keep working; crawl_entity passes the
+    # per-run cfg value so a workbook's config sheet can flip it.
+    if scope is None:
+        scope = CRAWL_SCOPE
+    start_netloc = urlparse(start_url).netloc.replace("www.", "")
+    candidate_netloc = urlparse(candidate_url).netloc.replace("www.", "")
+    if scope == "site":
+        # Same registered domain: own subdomains are in scope, so hub
+        # homepages that delegate content to engineering.example.com /
+        # asia.example.com stay crawlable (the Arrk starvation mechanism).
+        return _registered_domain(start_netloc) == _registered_domain(candidate_netloc)
+    return start_netloc == candidate_netloc
+
+
+_JUNK_EXTS = (
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico",
+    ".avif", ".heic", ".heif", ".bmp", ".tif", ".tiff", ".jxl", ".apng",
+    ".css", ".js", ".mp4", ".webm", ".pdf", ".zip",
+)
+
+
+def _is_junk_link(url: str) -> bool:
+    """True for asset/media URLs (images, CSS, PDFs, ...) not worth crawling."""
+    return urlparse(url).path.lower().rstrip("/").endswith(_JUNK_EXTS)
+
+
+# Infrastructure paths are dropped outright at discovery; legal/compliance
+# ("boilerplate") paths are deliberately NOT — see src/urlpaths for why.
+def _drop_blocked(
+    candidates: list[LinkCandidate],
+    enabled: bool | None = None,
+) -> tuple[list[LinkCandidate], list[LinkCandidate]]:
+    """Split candidates into (kept, dropped). Dropped are reported, not hidden."""
+    if enabled is None:
+        enabled = CRAWL_BLOCK_INFRA_PATHS
+    if not enabled:
+        return candidates, []
+    kept, dropped = [], []
+    for c in candidates:
+        (dropped if is_blocked_path(c.url) else kept).append(c)
+    return kept, dropped
+
+
+# Path segments that are pure locale/language codes: "fr", "en-us", "ko_kr".
+_LOCALE_SEG_RE = re.compile(r"^[a-z]{2}([_-][a-z]{2})?$")
+
+
+def _locale_key(url: str) -> str:
+    """Collapse locale path segments so language variants of one page share a key.
+
+    bruker.com/fr.html and /de.html -> same key (translated homepages);
+    quidelortho.com/de/de and /jp/ja -> same key;
+    aladdinsci.com/us_en/contact and /us_en/products -> DIFFERENT keys (the
+    locale segment is normalised, the content segments still distinguish them).
+    The query string is kept so ?id=... product pages are never collapsed.
+    Known trade-off: a genuine 2-letter content segment (e.g. /it/ meaning
+    "information technology") is treated as a locale — first variant is kept.
+    """
+    parsed = urlparse(url)
+    segments = []
+    for seg in parsed.path.split("/"):
+        stem = seg[:-5] if seg.endswith(".html") else seg
+        if seg and _LOCALE_SEG_RE.match(stem.lower()):
+            segments.append("{locale}.html" if seg.endswith(".html") else "{locale}")
+        else:
+            segments.append(seg)
+    netloc = parsed.netloc.replace("www.", "")
+    # Locale SUBDOMAINS (es.arrk.com / fr.arrk.com) are the host-level twin of
+    # locale path segments; only reachable under CRAWL_SCOPE="site", where
+    # they would otherwise burn budget on translated homepage copies. Same
+    # known trade-off as path segments: a genuine 2-letter content subdomain
+    # collapses too — first variant is kept.
+    host_labels = netloc.split(".")
+    if len(host_labels) >= 3 and _LOCALE_SEG_RE.match(host_labels[0].lower()):
+        netloc = ".".join(["{locale}"] + host_labels[1:])
+    key = f"{netloc}{'/'.join(segments)}"
+    if parsed.query:
+        key += f"?{parsed.query}"
+    return key
+
+
+# ── Page fetcher ──────────────────────────────────────────────────────────────
+
+def _acquire_page_cfg(url: str, cfg: Config) -> PageDoc:
+    """Fetch one page as a PageDoc, serving from and writing to the cache."""
+    cached = read_cache(url, cfg.cache_dir)
+    if cached is not None:
+        return PageDoc(
+            url=url, text=cached, html=None, from_cache=True,
+            backend="cache", render_fallback=False, gate_passed=None, gate_reason="",
+        )
+
+    text, html, prov = fetch_page_with_provenance(url, cfg)
+    write_cache(url, text, cfg.cache_dir)
+    return PageDoc(
+        url=url, text=text, html=html, from_cache=False,
+        backend=prov["backend"], render_fallback=prov["render_fallback"],
+        gate_passed=prov["gate_passed"], gate_reason=prov["gate_reason"],
+    )
+
+
+# ── Link discovery ────────────────────────────────────────────────────────────
+
+_MD_LINK_RE = re.compile(r'\[([^\]]+)\]\(([^)\s"]+)(?:\s+"[^"]*")?\)')
+
+
+def _discover_links_from_markdown(
+    page_url: str,
+    start_url: str,
+    depth: int,
+    text: str,
+    scope: str | None = None,
+) -> list[LinkCandidate]:
+    """Extract links with ±120-char context from Firecrawl markdown."""
+    seen: set[str] = set()
+    candidates = []
+
+    for m in _MD_LINK_RE.finditer(text):
+        anchor = m.group(1).strip()
+        raw_url = m.group(2).strip()
+
+        if raw_url.startswith(("mailto:", "javascript:", "#", "tel:", "data:")):
+            continue
+
+        absolute_url = _normalise_url(urljoin(page_url, raw_url))
+        if not absolute_url.startswith("http"):
+            continue
+        if not _same_domain(start_url, absolute_url, scope):
+            continue
+        if _is_junk_link(absolute_url):
+            continue
+        if absolute_url in seen:
+            continue
+        seen.add(absolute_url)
+
+        cs = max(0, m.start() - 120)
+        ce = min(len(text), m.end() + 120)
+        raw = text[cs:ce].replace("\n", " ")
+        rs, re_ = m.start() - cs, m.end() - cs
+        ctx = (raw[:rs].rstrip() + " " + raw[re_:].lstrip()).strip()
+
+        candidates.append(
+            LinkCandidate(url=absolute_url, anchor_text=anchor, depth=depth, context=ctx)
+        )
+
+    # No truncation here: the CRAWL_MAX_LINKS_PER_PAGE cap is applied in
+    # crawl_entity AFTER scoring (top-N by score, not first-N in DOM order).
+    return candidates
+
+
+def _discover_links_from_html(
+    page_url: str,
+    start_url: str,
+    depth: int,
+    html: str,
+    scope: str | None = None,
+) -> list[LinkCandidate]:
+    """Extract links from HTML; context comes from the parent element text."""
+    soup = BeautifulSoup(html, "html.parser")
+    seen: set[str] = set()
+    candidates = []
+
+    for a in soup.find_all("a", href=True):
+        absolute_url = _normalise_url(urljoin(page_url, a["href"]))
+        if not absolute_url.startswith("http"):
+            continue
+        if not _same_domain(start_url, absolute_url, scope):
+            continue
+        if _is_junk_link(absolute_url):
+            continue
+        if absolute_url in seen:
+            continue
+        seen.add(absolute_url)
+
+        anchor_text = a.get_text(" ", strip=True)
+        parent = a.parent
+        ctx = parent.get_text(" ", strip=True)[:240] if parent else ""
+
+        candidates.append(
+            LinkCandidate(url=absolute_url, anchor_text=anchor_text, depth=depth, context=ctx)
+        )
+
+    # No truncation here: the CRAWL_MAX_LINKS_PER_PAGE cap is applied in
+    # crawl_entity AFTER scoring (top-N by score, not first-N in DOM order).
+    return candidates
+
+
+def _discover_links(
+    page_url: str,
+    start_url: str,
+    depth: int,
+    html: str | None = None,
+    page_text: str | None = None,
+    cfg: Config | None = None,
+) -> list[LinkCandidate]:
+    """Discover in-scope child links from a page, choosing the best source
+    (rendered HTML, markdown, or a fallback static fetch) per backend."""
+    # Firecrawl + pooled backends: prefer real HTML. Firecrawl drops some
+    # nav/footer links (About/Contact) from both its markdown and cleaned html;
+    # only raw_html keeps them. playwright_pooled hands us the real rendered DOM,
+    # which has them by construction; the hybrid returns a full DOM either way
+    # (static page source or rendered). This re-enables the parent-element
+    # ("nav-soup") context an earlier design moved away from — scoped to
+    # these backends; the local backend keeps its markdown path
+    # (Trafilatura include_links=True) and its ±120-char prose context.
+    scope = cfg.crawl_scope if cfg is not None else None
+    if html and cfg is not None and cfg.acquire_tool in (
+        "firecrawl", "playwright_pooled", "playwright_pooled_hybrid",
+    ):
+        return _discover_links_from_html(page_url, start_url, depth, html, scope)
+
+    # Markdown path: Firecrawl cache hits / local backend — context comes naturally.
+    if page_text and "](" in page_text:
+        return _discover_links_from_markdown(page_url, start_url, depth, page_text,
+                                             scope)
+
+    # No usable HTML or markdown links: fetch HTML ourselves (unchanged fallback).
+    if html is None:
+        timeout = cfg.request_timeout if cfg else 30
+        headers = cfg.request_headers if cfg else {"User-Agent": "Mozilla/5.0 guided-entity-crawler"}
+        try:
+            response = requests.get(page_url, timeout=timeout, headers=headers)
+            response.raise_for_status()
+        except Exception as e:
+            print(f"    ✗ Could not discover links from {page_url}: {e}")
+            return []
+        html = response.text
+
+    return _discover_links_from_html(page_url, start_url, depth, html, scope)
+
+
+def _needs_discovery_render(
+    depth: int, backend: str | None, n_links: int, enabled: bool | None = None,
+) -> bool:
+    """Seed page, not already rendered, link-starved -> render once for links.
+
+    `n_links` must be the count of NOVEL candidates (not yet visited) — a
+    self-link or a link back to an already-fetched page grows the raw count
+    without growing the frontier. See the call site.
+
+    Depth-0 only by design: a starved SEED strands the whole entity (the
+    Automatic mechanism), while a starved deep page costs one leaf. Cache
+    hits count as static: cached pages carry no HTML, so discovery already
+    fell back to a live static fetch — excluding them (the first cut of this
+    trigger) silently preserved the blind spot on every warm-cache run.
+    Rendered and Firecrawl fetches are excluded: their HTML already exposes
+    nav links.
+    """
+    if enabled is None:
+        enabled = CRAWL_RENDER_FOR_DISCOVERY
+    return (
+        enabled
+        and depth == 0
+        and backend is not None
+        and (backend == "cache" or backend.endswith("static"))
+        and n_links < CRAWL_DISCOVERY_MIN_LINKS
+    )
+
+
+# ── Guided crawl ─────────────────────────────────────────────────────────────
+
+def crawl_entity(
+    start_url: str,
+    columns: list[ColumnSpec],
+    cfg: Config,
+    max_depth: int | None = None,
+    entities: list[str] | None = None,
+    diag: dict | None = None,
+) -> EntityDoc:
+    """Crawl one entity's site, guided by the extraction schema, and return
+    an EntityDoc of the pages acquired.
+
+    Inputs: the seed start_url; the schema columns (their names/instructions
+    drive link scoring); cfg for backend, budgets, and scope; optional
+    max_depth override; optional entity names (excluded from scoring, kept
+    for the query builder); optional diag dict populated with per-page and
+    per-candidate log rows.
+
+    Strategy: frontier search from the seed — BFS (FIFO) by default, or
+    best-first on link score (CRAWL_STRATEGY). Each fetched page's in-scope
+    links are scored against the schema (BM25 or embeddings, per SCORER_TOOL
+    / cfg.crawl_scorer, with fallback on scorer failure); only candidates at
+    or above the score threshold are followed — capped per page, within the
+    depth budget and cfg.crawl_max_pages. Locale-duplicate URLs (translated
+    copies of an already-acquired page) are skipped, with their claim
+    released if the fetch never happens. Link-starved static seeds trigger a
+    one-off discovery render to expose JS-injected navigation.
+    """
+    _max_depth = max_depth if max_depth is not None else CRAWL_MAX_DEPTH
+    _max_pages = cfg.crawl_max_pages
+    _min_score = (
+        cfg.crawl_min_score_embed if SCORER_TOOL == "ollama"
+        else cfg.crawl_min_score
+    )
+    crawl_scorer = (cfg.crawl_scorer or "baseline").strip().lower()
+    if crawl_scorer not in {"baseline", "experimental"}:
+        raise ValueError("crawl_scorer must be 'baseline' or 'experimental'")
+    crawl_query = build_crawl_query(columns, entities=entities)
+
+    visited: set[str] = set()
+    # Locale keys of pages already fetched (or queued for fetch): a candidate
+    # whose key matches is a translated copy of a page we already have.
+    visited_locale_keys: set[str] = set()
+    if CRAWL_LOCALE_DEDUP:
+        visited_locale_keys.add(_locale_key(_normalise_url(start_url)))
+    selected_pages = []
+
+    # Frontier discipline (config.CRAWL_STRATEGY). BFS = FIFO deque, the
+    # validated default. best_first = max-heap on link score: the next page
+    # fetched is the best-scoring candidate anywhere in the frontier,
+    # regardless of depth — so a binding page budget is spent on relevance
+    # rather than shallowness. The itertools counter is the heap tiebreak:
+    # equal scores pop in discovery (FIFO) order, keeping runs deterministic.
+    best_first = (CRAWL_STRATEGY or "bfs").strip().lower() == "best_first"
+    frontier = [] if best_first else deque()
+    _seq = itertools.count()
+
+    def _push(cand: LinkCandidate) -> None:
+        if best_first:
+            heapq.heappush(frontier, (-cand.score, next(_seq), cand))
+        else:
+            frontier.append(cand)
+
+    def _pop() -> LinkCandidate:
+        if best_first:
+            return heapq.heappop(frontier)[2]
+        return frontier.popleft()
+
+    _push(LinkCandidate(
+        url=_normalise_url(start_url),
+        anchor_text="start page",
+        depth=0,
+        score=1.0,
+        parent_url=None,
+    ))
+
+    while frontier and len(selected_pages) < _max_pages:
+        current = _pop()
+
+        if current.url in visited:
+            continue
+
+        visited.add(current.url)
+
+        if current.depth > 0 and current.score < _min_score:
+            # Release this URL's locale-key claim: it was reserved at queue
+            # time (below) on the assumption it would be fetched, but a
+            # fallback-selected child can still fail this re-check at pop
+            # time. Without releasing, a same-key sibling discovered later
+            # would be dropped as a "duplicate" of a page that was never
+            # actually acquired.
+            if CRAWL_LOCALE_DEDUP:
+                visited_locale_keys.discard(_locale_key(current.url))
+            continue
+
+        try:
+            print(f"    Acquiring page: {current.url} (depth={current.depth}, score={current.score:.2f})")
+            t0 = time.time()
+            page = _acquire_page_cfg(current.url, cfg)
+            fetch_time_ms = int((time.time() - t0) * 1000)
+
+            page.depth = current.depth
+            page.crawl_score = current.score
+            page.fetch_time_ms = fetch_time_ms
+
+            selected_pages.append(page)
+
+            if diag is not None:
+                _page_status = (
+                    "gate_failed" if page.gate_passed is False
+                    else ("ok" if page.text else "empty")
+                )
+                diag.setdefault("acquire_log", []).append({
+                    "entity_url": start_url,
+                    "page_url": page.url,
+                    "parent_url": current.parent_url,
+                    "depth": current.depth,
+                    "crawl_score": round(current.score, 3),
+                    "above_threshold": current.depth == 0 or current.score >= _min_score,
+                    "fetch_tool": cfg.acquire_tool,
+                    "crawl_scorer": crawl_scorer,
+                    "page_length": len(page.text),
+                    "fetch_time_ms": fetch_time_ms,
+                    "from_cache": page.from_cache,
+                    "status": _page_status,
+                    "skip_reason": "",
+                    "backend": page.backend,
+                    "render_fallback": page.render_fallback,
+                    "gate_passed": page.gate_passed,
+                    "gate_reason": page.gate_reason,
+                })
+
+        except Exception as e:
+            print(f"    ✗ Failed to acquire {current.url}: {e}")
+            # Same release as the threshold-skip above: a fetch failure means
+            # no page was actually acquired, so a same-key sibling must still
+            # get a chance rather than being silently dropped as a duplicate.
+            if CRAWL_LOCALE_DEDUP:
+                visited_locale_keys.discard(_locale_key(current.url))
+            if diag is not None:
+                diag.setdefault("acquire_log", []).append({
+                    "entity_url": start_url,
+                    "page_url": current.url,
+                    "parent_url": current.parent_url,
+                    "depth": current.depth,
+                    "crawl_score": round(current.score, 3),
+                    "above_threshold": True,
+                    "fetch_tool": cfg.acquire_tool,
+                    "crawl_scorer": crawl_scorer,
+                    "page_length": 0,
+                    "fetch_time_ms": 0,
+                    "from_cache": False,
+                    "status": "error",
+                    "skip_reason": str(e),
+                    "backend": cfg.acquire_tool,
+                    "render_fallback": False,
+                    "gate_passed": None,
+                    "gate_reason": "",
+                })
+            continue
+
+        if current.depth >= _max_depth:
+            continue
+
+        child_links = _discover_links(
+            page_url=current.url,
+            start_url=start_url,
+            depth=current.depth + 1,
+            html=page.html,
+            page_text=page.text,
+            cfg=cfg,
+        )
+
+        # Infrastructure goes BEFORE the starvation count: a seed whose
+        # only outbound links are Cloudflare endpoints is genuinely starved
+        # and should trigger the discovery render rather than count them.
+        child_links, dropped_blocked = _drop_blocked(
+            child_links, cfg.crawl_block_infra_paths)
+
+        # Starvation is about links the crawler can actually FOLLOW. A seed
+        # that links to itself (automatic.com.hk's logo -> Index.html) or back
+        # to a page already fetched adds nothing to the frontier, so counting
+        # RAW discovered links overstates how much the seed offers: Automatic's
+        # 2 real candidates + 1 self-link read as 3 and missed the
+        # < CRAWL_DISCOVERY_MIN_LINKS trigger entirely.
+        n_novel = sum(1 for c in child_links if c.url not in visited)
+
+        if _needs_discovery_render(current.depth, page.backend, n_novel,
+                                   cfg.crawl_render_for_discovery):
+            # Static text passed the quality gate, so the hybrid never
+            # rendered — but a JS-injected nav menu (automatic.com.hk's
+            # printHeader.js) is invisible to static link discovery. One
+            # render, discovery re-run on the rendered DOM, results merged.
+            try:
+                from src.acquire.fetcher import _render_page_html
+                print(f"    Link discovery starved ({n_novel} new links, "
+                      f"static seed) — rendering for discovery: {current.url}")
+                rendered_html = _render_page_html(current.url, cfg)
+                seen_urls = {c.url for c in child_links}
+                rendered_links, rendered_dropped = _drop_blocked(
+                    _discover_links_from_html(
+                        current.url, start_url, current.depth + 1, rendered_html,
+                        cfg.crawl_scope),
+                    cfg.crawl_block_infra_paths,
+                )
+                dropped_blocked += rendered_dropped
+                child_links += [
+                    c for c in rendered_links if c.url not in seen_urls
+                ]
+            except Exception as exc:
+                print(f"    ! Discovery render failed ({exc}); static links kept")
+
+        # Never silent: an excluded candidate is reported, with examples, so a
+        # blocklist mistake shows up in the run log instead of as a quiet gap.
+        if dropped_blocked:
+            sample = ", ".join(c.url for c in dropped_blocked[:3])
+            print(f"    Infrastructure paths skipped: {len(dropped_blocked)} "
+                  f"({sample}{', …' if len(dropped_blocked) > 3 else ''})")
+            if diag is not None:
+                for c in dropped_blocked:
+                    diag.setdefault("blocked_paths", []).append({
+                        "entity_url": start_url,
+                        "page_url": c.url,
+                        "parent_url": current.url,
+                        "depth": current.depth + 1,
+                    })
+
+        unvisited = []
+        batch_locale_keys: set[str] = set()
+        for c in child_links:
+            if c.url in visited:
+                continue
+            if CRAWL_LOCALE_DEDUP:
+                key = _locale_key(c.url)
+                # Drop translated copies of pages already fetched, and keep
+                # only one locale variant within this batch (first in DOM
+                # order — variants carry identical content either way).
+                if key in visited_locale_keys or key in batch_locale_keys:
+                    continue
+                batch_locale_keys.add(key)
+            unvisited.append(c)
+
+        if crawl_scorer == "experimental":
+            try:
+                scored_children = score_links_embed_experimental(unvisited, columns)
+            except Exception as exc:
+                print(f"    ! Experimental scorer failed ({exc}); falling back to baseline")
+                if SCORER_TOOL == "ollama":
+                    try:
+                        # Instruction-aware queries (shared query_text helper,
+                        # QUERY_INCLUDES_INSTRUCTION flag) — same fix as Filter.
+                        link_queries = [query_text(col) for col in columns]
+                        scored_children = score_links_embed(unvisited, link_queries)
+                    except Exception as embed_exc:
+                        print(f"    ! Ollama scorer failed ({embed_exc}); falling back to BM25")
+                        scored_children = score_links(unvisited, crawl_query)
+                        scored_children.sort(key=lambda c: c.score, reverse=True)
+                else:
+                    scored_children = score_links(unvisited, crawl_query)
+                    scored_children.sort(key=lambda c: c.score, reverse=True)
+        elif SCORER_TOOL == "ollama":
+            try:
+                # Instruction-aware queries (shared query_text helper,
+                # QUERY_INCLUDES_INSTRUCTION flag) — same fix as Filter.
+                link_queries = [query_text(col) for col in columns]
+                scored_children = score_links_embed(unvisited, link_queries)
+            except Exception as exc:
+                print(f"    ! Ollama scorer failed ({exc}); falling back to BM25")
+                scored_children = score_links(unvisited, crawl_query)
+                scored_children.sort(key=lambda c: c.score, reverse=True)
+        else:
+            scored_children = score_links(unvisited, crawl_query)
+            scored_children.sort(key=lambda c: c.score, reverse=True)
+
+        # Score-aware cap: every scorer path returns candidates sorted
+        # best-first, so this keeps the top-N by relevance. Previously the cap
+        # was a DOM-order slice inside the discovery functions, which dropped
+        # footer About/locations links before the scorer ever saw them.
+        scored_children = scored_children[:CRAWL_MAX_LINKS_PER_PAGE]
+
+        to_follow = set(id(c) for c in _select_links_to_follow(scored_children, _min_score, current.depth))
+
+        for child in scored_children:
+            followed = id(child) in to_follow
+            if diag is not None:
+                diag.setdefault("crawl_candidates", []).append({
+                    "parent_url": current.url,
+                    "candidate_url": child.url,
+                    "anchor_text": child.anchor_text,
+                    "url_path": urlparse(child.url).path,
+                    "crawl_score": round(child.score, 3),
+                    "crawl_scorer": crawl_scorer,
+                    "threshold": _min_score,
+                    "followed": followed,
+                    "skip_reason": "" if followed else "below_threshold",
+                })
+            if followed:
+                child.parent_url = current.url
+                if CRAWL_LOCALE_DEDUP:
+                    # Claim the key at queue time so a variant discovered on a
+                    # later page can't also be queued before this one fetches.
+                    # Released back (discard, not permanent) if this URL turns
+                    # out not to actually be fetched — see the threshold-skip
+                    # and except-Exception release points above.
+                    visited_locale_keys.add(_locale_key(child.url))
+                _push(child)
+
+    return EntityDoc(start_url=start_url, pages=selected_pages)

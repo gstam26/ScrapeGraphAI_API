@@ -1,0 +1,147 @@
+"""Verification layer: check extracted quotes against the source page.
+
+Sits between Extract and Aggregate. Every evidence quote is matched against
+the page text — exact substring first, then normalised fuzzy matching
+(rapidfuzz partial_ratio), with a softer threshold for long quotes whose
+20-char anchors both appear literally. Entry points: verify_cells (batch,
+also adds value↔quote semantic similarity via embeddings when available)
+and verify_cell. Unverified evidence is marked, never discarded — the
+verified flag travels to the output so the reader can judge.
+"""
+import re
+
+from rapidfuzz import fuzz
+
+from config import VERIFY_LONG_QUOTE_MIN, VERIFY_THRESHOLD, VERIFY_THRESHOLD_SOFT, VERIFY_TOOL
+from models import ExtractedCell, PageDoc
+
+_NORM_RE = re.compile(r"[|#*()/\\]+")
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", " ", _NORM_RE.sub(" ", text)).strip()
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(x * x for x in b) ** 0.5
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def _verify_quote(quote: str | None, page_text: str) -> tuple[bool, float | None, tuple[int, int] | None, str]:
+    if not quote:
+        return False, None, None, "none"
+
+    start = page_text.find(quote)
+    if start >= 0:
+        end = start + len(quote)
+        return True, 100.0, (start, end), "exact"
+
+    # Normalise away markdown/whitespace noise before fuzzy comparison.
+    # The exact substring check above is intentionally left untouched.
+    score = fuzz.partial_ratio(_norm(quote).lower(), _norm(page_text).lower())
+    if score >= VERIFY_THRESHOLD:
+        return True, float(score), None, "fuzzy"
+
+    # Soft threshold for long quotes whose anchors both appear literally.
+    if len(quote) >= VERIFY_LONG_QUOTE_MIN:
+        if quote[:20] in page_text and quote[-20:] in page_text:
+            if score >= VERIFY_THRESHOLD_SOFT:
+                return True, float(score), None, "fuzzy_soft"
+
+    return False, float(score), None, "none"
+
+
+def verify_cell(
+    cell: ExtractedCell,
+    page: PageDoc,
+    entity: str | None = None,
+    diag: dict | None = None,
+) -> ExtractedCell:
+    """
+    Verify each evidence item independently against page text.
+
+    Do not discard unverified evidence. Mark cell.verified = True only if all
+    evidence items with quotes are verified.
+    """
+    if entity and not cell.entity:
+        cell.entity = entity
+
+    if not cell.evidence:
+        cell.verified = False
+        cell.verification_score = None
+        return cell
+
+    for evidence in cell.evidence:
+        verified, score, char_span, match_type = _verify_quote(evidence.quote, page.text)
+        evidence.verified = verified
+        evidence.verification_score = score
+        evidence.char_span = char_span
+        evidence.match_type = match_type
+
+        if diag is not None:
+            diag.setdefault("verify_log", []).append({
+                "entity": cell.entity,
+                "source_url": cell.source_url,
+                "question": cell.column,
+                "claim_preview": str(evidence.value)[:150] if evidence.value is not None else "",
+                "quote_preview": (evidence.quote or "")[:150],
+                "verified": verified,
+                "match_type": match_type,
+                "verification_score": round(score, 1) if score is not None else "",
+                "semantic_score": None,  # populated by verify_cells after batch embedding
+                "verifier_tool": VERIFY_TOOL,
+            })
+
+    quoted_evidence = [ev for ev in cell.evidence if ev.quote]
+    cell.verified = bool(quoted_evidence) and all(ev.verified for ev in quoted_evidence)
+
+    scores = [ev.verification_score for ev in cell.evidence if ev.verification_score is not None]
+    cell.verification_score = sum(scores) / len(scores) if scores else None
+
+    return cell
+
+
+def verify_cells(
+    cells: list[ExtractedCell],
+    page: PageDoc,
+    entity: str | None = None,
+    diag: dict | None = None,
+) -> list[ExtractedCell]:
+    """Verify all cells against a page, then add semantic similarity scores in one batch."""
+    diag_start = len(diag.get("verify_log", [])) if diag is not None else 0
+    result = [verify_cell(cell, page, entity=entity, diag=diag) for cell in cells]
+
+    # Map each evidence item (value + quote both present) to its diag log index.
+    eligible: list[tuple] = []
+    diag_idx = diag_start
+    for cell in result:
+        for ev in cell.evidence:
+            if ev.value is not None and ev.quote:
+                eligible.append((ev, diag_idx if diag is not None else None))
+            if diag is not None:
+                diag_idx += 1
+
+    if not eligible:
+        return result
+
+    texts: list[str] = []
+    for ev, _ in eligible:
+        texts.append(str(ev.value))
+        texts.append(ev.quote)
+
+    try:
+        from src.embed import embed_batch
+        vectors = embed_batch(texts)
+        for i, (ev, d_idx) in enumerate(eligible):
+            score = round(_cosine(vectors[2 * i], vectors[2 * i + 1]), 4)
+            ev.semantic_score = score
+            if d_idx is not None and diag is not None:
+                diag["verify_log"][d_idx]["semantic_score"] = score
+    except Exception as exc:
+        print(f"      ! Semantic scoring unavailable: {exc}")
+
+    return result

@@ -1,5 +1,5 @@
 """
-Metrics for the extraction evaluation framework (Stage 10 / RQ3).
+Metrics for the extraction evaluation framework.
 
 Consumes the aligner's AlignmentResult and computes recall / precision / F1 and the
 ai_only taxonomy, per (entity, question) cell, then macro-aggregated overall, by

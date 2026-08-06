@@ -1,5 +1,5 @@
 """
-Pipeline-output reader for the extraction evaluation framework (Stage 10 / RQ3).
+Pipeline-output reader for the extraction evaluation framework.
 
 Parses a pipeline output workbook (written by src/io_excel.py) into:
 

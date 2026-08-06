@@ -11,9 +11,9 @@ Optionally reads a pipeline output workbook (second positional arg) to populate
 a Source URLs Fetched reference sheet with unique page URLs grouped by entity.
 
 Usage:
-    python diagnostics/ground_truth_template.py samples/input3.xlsx
-    python diagnostics/ground_truth_template.py samples/input3.xlsx outputs/input3.xlsx
-    python diagnostics/ground_truth_template.py samples/input3.xlsx --output outputs/my_gt.xlsx
+    python diagnostics/ground_truth_template.py samples/test_smoke.xlsx
+    python diagnostics/ground_truth_template.py samples/test_smoke.xlsx outputs/test_smoke_gt.xlsx
+    python diagnostics/ground_truth_template.py samples/test_smoke.xlsx --output outputs/my_gt.xlsx
 """
 
 import argparse

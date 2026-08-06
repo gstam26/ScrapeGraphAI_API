@@ -187,7 +187,7 @@ python src/eval/matcher_eval.py label-template gt.xlsx output.xlsx --output labe
 python src/eval/matcher_eval.py label-score labels.xlsx
 ```
 
-The original Stage 10 evaluator (`eval_extraction.py`, aligner/metrics/gt_reader) lives in the same package; its metrics are frozen as the reference baseline. An experimental cross-encoder matching backend (`--semantic-backend cross-encoder`) exists behind a flag — unvalidated until the label-score leg passes, see `src/eval/cross_encoder.py`.
+The original matrix-based evaluator (`eval_extraction.py`, aligner/metrics/gt_reader) lives in the same package; its metrics are frozen as the reference baseline. An experimental cross-encoder matching backend (`--semantic-backend cross-encoder`) exists behind a flag — unvalidated until the label-score leg passes, see `src/eval/cross_encoder.py`.
 
 ## Tests
 
@@ -206,7 +206,7 @@ src/                                           the pipeline layers
   group.py, summarize.py                       grouping + optional LLM summary
   io_excel.py, embed.py, llmapi.py
   eval/     (generic_eval, gt_convert, matcher_eval, run_eval_suite +
-             the original Stage 10 evaluator: aligner/metrics/gt_reader)
+             the original matrix-based evaluator: aligner/metrics/gt_reader)
   resolve/  (company-name -> URL resolver; fallback to the directory scrape)
 tests/                                         offline + live smoke tests
 scripts/                                       workbook builders & one-off task tooling

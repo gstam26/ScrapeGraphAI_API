@@ -1,5 +1,5 @@
 """
-Ground-truth reader for the extraction evaluation framework (Stage 10 / RQ3).
+Ground-truth reader for the extraction evaluation framework.
 
 Parses the analyst-built ground-truth workbook into a normalised internal model
 and exposes:

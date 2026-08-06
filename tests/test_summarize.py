@@ -168,7 +168,7 @@ def test_sentence_split_merges_abbreviation_fragments():
 
 
 def test_split_multiline_s4_output_by_line():
-    # s4 compact format: one line per theme. Multi-line text splits on
+    # Compact format: one line per theme. Multi-line text splits on
     # newlines (bullet markers stripped defensively — the prompt forbids
     # them); items separated by commas/periods within a line must NOT be
     # sub-split.
@@ -466,7 +466,8 @@ def test_prompt_member_cap_marks_overflow_and_hides_ids(monkeypatch):
 
     assert "(+3 more claims in this theme, not shown)" in prompts[0]
     # Hidden members' IDs never appear in the prompt (the gate's closed set);
-    # the record's input_claim_ids lists the whole cell since s7.
+    # the record's input_claim_ids lists the whole cell, hidden members
+    # included.
     assert f"C{n:04d}" not in prompts[0]
     assert out[0]["input_claim_ids"] == [f"C{i:04d}" for i in range(1, n + 1)]
     print("OK test_prompt_member_cap_marks_overflow_and_hides_ids passed")
@@ -581,7 +582,7 @@ def test_gate_failed_cell_shows_marked_digest_fallback(tmp_path):
 
 
 def test_gate_failed_cell_with_fallback_text_shows_verbatim_claims(tmp_path):
-    # s7: records carrying fallback_text degrade to readable verbatim claims,
+    # Records carrying fallback_text degrade to readable verbatim claims,
     # not the "N items across M themes" digest bookkeeping.
     failed = _summary_record(
         gate="failed citation gate: 1 uncited sentence(s)",

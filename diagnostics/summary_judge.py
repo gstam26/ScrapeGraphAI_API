@@ -43,6 +43,9 @@ if _REPO_ROOT not in sys.path:
 from src.extract import _strip_json_fence
 from src.summarize import _split_sentences, azure_chat, cited_ids, make_client
 
+# Prompt identity stamped into every judge record, so verdicts stay
+# attributable to the prompt that produced them. Letter = prompt family
+# (j = judge), number = revision; bump on any prompt-text change.
 JUDGE_PROMPT_VERSION = "j1"
 
 _VERDICTS = {"faithful", "unsupported", "contradicted"}

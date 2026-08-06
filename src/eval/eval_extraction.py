@@ -1,5 +1,5 @@
 """
-Eval extraction — end-to-end CLI for the Stage 10 / RQ3 framework.
+Eval extraction — end-to-end CLI for the extraction evaluation framework.
 
 Runs: read GT + pipeline output -> align -> (optionally apply manual review) ->
 compute metrics -> write the six-sheet Excel report + print a console summary.
@@ -84,7 +84,7 @@ def run(gt_path: str, pipe_path: str, out_path: str, review_path: str | None) ->
 def main() -> None:
     """CLI entry point; defaults the report path to a timestamped file
     under outputs/."""
-    ap = argparse.ArgumentParser(description="Stage 10 extraction evaluation (end-to-end).")
+    ap = argparse.ArgumentParser(description="Extraction evaluation against analyst ground truth (end-to-end).")
     ap.add_argument("--gt", required=True, help="ground-truth workbook")
     ap.add_argument("--pipeline", required=True, help="pipeline output workbook (Matrix + Provenance)")
     ap.add_argument("--out", default="", help="output report path (.xlsx)")

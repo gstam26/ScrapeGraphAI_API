@@ -8,6 +8,7 @@ No extraction, no scoring — just: did we get usable content?
 
 Usage:
     python diagnostics/fetch_test.py
+    python diagnostics/fetch_test.py https://www.example.com https://www.example.org
 
 Requires FIRECRAWL_API_KEY in .env or environment.
 """
@@ -18,13 +19,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-URLS = [
-    "https://oatly.com",
-    "https://www.ripplefoods.com",
-    "https://www.califiafarms.com",
-    "https://www.silk.com",
-    "https://www.elmhurst1925.com",
+# Illustrative placeholders. Pass real target URLs as command-line arguments.
+DEFAULT_URLS = [
+    "https://www.example.com",
+    "https://www.example.com/about",
+    "https://www.example.com/sustainability",
 ]
+
+URLS = sys.argv[1:] or DEFAULT_URLS
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE_DIR = os.path.join(_REPO_ROOT, "cache")
@@ -57,7 +59,7 @@ def _assess(markdown: str) -> str:
     Prose lines  (>= 8 words) → real sentences
     Short lines  (<= 3 words) → likely nav items, link lists, headings
 
-    Thresholds (empirically reasonable for plant-brand pages):
+    Thresholds (empirically reasonable for typical marketing/company pages):
       prose_ratio >= 0.25  → good body text
       short_ratio >= 0.65  → nav/footer heavy
       otherwise            → mixed

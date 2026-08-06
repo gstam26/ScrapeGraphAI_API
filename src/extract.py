@@ -55,6 +55,10 @@ from src.urlpaths import is_boilerplate_path
 _LLM_CALL_SEMAPHORE = threading.BoundedSemaphore(EXTRACT_MAX_CONCURRENT_CALLS)
 
 
+# Prompt identity stamped into extraction records, so outputs stay
+# attributable to the prompt that produced them. Letter = prompt family
+# (e = extract), number = revision.
+#
 # Bump whenever the prompt template below changes in ANY way: the version is
 # part of the extract-cache key, so edits invalidate cached extractions
 # instead of silently no-opping on cache hits (a past bug class: the key

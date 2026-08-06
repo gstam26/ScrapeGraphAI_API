@@ -711,7 +711,7 @@ def _align_cell(
 
     # PROSE-CELL GRAIN (opt-in): a single-answer cell whose GT is
     # a composed description gets ONE judgement, not one per sentence. The
-    # Matrix reader splits cells on newlines, so the s7 three-sentence summary
+    # Matrix reader splits cells on newlines, so the three-sentence summary
     # became 3+ claims against one GT sentence — every unmatched sentence
     # billed as a hallucination (236 of 676 FP on the gt42 scoring came from
     # the description question alone, P=0.106 there). One question, one

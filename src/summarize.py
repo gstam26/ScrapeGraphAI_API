@@ -44,9 +44,13 @@ from config import (
 from src.group import ALL_ITEMS_THEME
 from src.io_excel import _norm_claim, build_claim_index
 
-# Bumped whenever the prompt template changes — output is never compared
-# across prompt versions. Rules the current version encodes, each a
-# refinement from reviewing real output:
+# Prompt identity stamped into every summary record and the Summary Log, so
+# outputs stay attributable to the prompt that produced them. Letter = prompt
+# family (s = summarize), number = revision; bump on any prompt-text change —
+# output is never compared across prompt versions.
+#
+# Rules the current version encodes, each a refinement from reviewing real
+# output:
 #   * No sentence-count floor: forcing 2-4 sentences on one-tag cells makes
 #     the model pad with the interpretation/filler the no-inference rule
 #     forbids.

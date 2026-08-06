@@ -6,10 +6,10 @@ consolidates the resulting crawl-score usefulness diagnostics into a single
 summary workbook.
 
 Usage:
-    python diagnostics/acquire_batch_eval.py samples/*.xlsx
-    python diagnostics/acquire_batch_eval.py samples/*.xlsx --backend firecrawl
-    python diagnostics/acquire_batch_eval.py samples/*.xlsx --output outputs/acquire_batch_eval.xlsx
-    python diagnostics/acquire_batch_eval.py samples/*.xlsx --skip-existing
+    python diagnostics/acquire_batch_eval.py samples/test_smoke.xlsx
+    python diagnostics/acquire_batch_eval.py your_inputs/*.xlsx --backend firecrawl
+    python diagnostics/acquire_batch_eval.py your_inputs/*.xlsx --output outputs/acquire_batch_eval.xlsx
+    python diagnostics/acquire_batch_eval.py your_inputs/*.xlsx --skip-existing
 """
 
 from __future__ import annotations

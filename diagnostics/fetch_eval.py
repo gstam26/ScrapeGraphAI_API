@@ -41,13 +41,12 @@ from bs4 import BeautifulSoup
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT_DIR = _REPO_ROOT / "diagnostics" / "fetch_eval"
+# Illustrative placeholders. Pass real target URLs as CLI args or via --urls-file.
 DEFAULT_URLS = [
-    "https://www.oatly.com/oatly-who/sustainability-plan/sustainability-report",
-    "https://ripplefoods.com/pages/our-story",
-    "https://www.califiafarms.com/sustainability",
-    "https://silk.com/about-us/sustainability/",
-    "https://elmhurst1925.com/blogs/news/elmhurst-earth-month-sustainability",
-    "https://www.mintel.com/food-and-drink/plant-based-milk",
+    "https://www.example.com",
+    "https://www.example.com/about",
+    "https://www.example.com/sustainability",
+    "https://www.example.org",
 ]
 
 REQUEST_HEADERS = {

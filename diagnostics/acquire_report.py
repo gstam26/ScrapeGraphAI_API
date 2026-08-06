@@ -8,11 +8,11 @@ compare fetch backends, crawl quality, and contribution yield without
 changing production crawl scoring.
 
 Usage:
-    python diagnostics/acquire_report.py samples/input1.xlsx
-    python diagnostics/acquire_report.py samples/input1.xlsx --output outputs/acquire_report.xlsx
-    python diagnostics/acquire_report.py samples/input1.xlsx --backend firecrawl
-    python diagnostics/acquire_report.py samples/input1.xlsx --no-crawl
-    python diagnostics/acquire_report.py samples/input1.xlsx --no-usefulness
+    python diagnostics/acquire_report.py samples/test_smoke.xlsx
+    python diagnostics/acquire_report.py samples/test_smoke.xlsx --output outputs/acquire_report.xlsx
+    python diagnostics/acquire_report.py samples/test_smoke.xlsx --backend firecrawl
+    python diagnostics/acquire_report.py samples/test_smoke.xlsx --no-crawl
+    python diagnostics/acquire_report.py samples/test_smoke.xlsx --no-usefulness
 """
 
 import argparse

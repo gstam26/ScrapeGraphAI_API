@@ -12,6 +12,7 @@ No fetching, no scoring, no pipeline imports.
 
 Usage (from project root):
     python diagnostics/link_extractor.py
+    python diagnostics/link_extractor.py https://www.example.com
 """
 
 import os
@@ -27,8 +28,9 @@ if _REPO_ROOT not in sys.path:
 
 from src.acquire.cache import cache_path_any
 
-# Change to any URL that fetch_test.py (or acquire.py) has already cached.
-URL = "https://oatly.com"
+# Pass any URL that fetch_test.py (or acquire.py) has already cached; the
+# default below is an illustrative placeholder only.
+URL = sys.argv[1] if len(sys.argv) > 1 else "https://www.example.com"
 
 
 def _cache_path(url: str) -> str | None:

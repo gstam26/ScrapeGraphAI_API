@@ -9,10 +9,10 @@ Scoring is done via score_page_columns() imported directly from src/filter.py
 so the diagnostic can never drift from the production logic.
 
 Usage:
-    python diagnostics/filter_report.py samples/input1.xlsx
-    python diagnostics/filter_report.py samples/input1.xlsx --backend local
-    python diagnostics/filter_report.py samples/input1.xlsx --no-crawl
-    python diagnostics/filter_report.py samples/input1.xlsx --output outputs/filter.xlsx
+    python diagnostics/filter_report.py samples/test_smoke.xlsx
+    python diagnostics/filter_report.py samples/test_smoke.xlsx --backend local
+    python diagnostics/filter_report.py samples/test_smoke.xlsx --no-crawl
+    python diagnostics/filter_report.py samples/test_smoke.xlsx --output outputs/filter.xlsx
 
 Requires:
     Reachable Ollama host (internal network / VPN)

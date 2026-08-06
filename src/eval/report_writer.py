@@ -1,5 +1,5 @@
 """
-Report writer for the extraction evaluation framework (Stage 10 / RQ3).
+Report writer for the extraction evaluation framework.
 
 Turns an AlignmentResult + MetricsReport into the reviewable Excel deliverable, and
 handles the manual-review round-trip (read a filled "Manual Verdict" column back so

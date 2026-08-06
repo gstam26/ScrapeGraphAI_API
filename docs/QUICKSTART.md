@@ -24,11 +24,13 @@ Then fill in the three sheets (examples are pre-filled — replace them):
 | **urls** | the company's website, a crawl depth (1 is the recommended default), and which entity the URL belongs to |
 | **questions** | one question per row, plus optional instructions (answer format, what counts as evidence) |
 
-The **config** sheet is optional — sensible defaults apply. Common settings:
+The **config** sheet is optional — sensible defaults apply, and the template's
+config tab lists every supported setting with its default, allowed values, and
+what it does. The ones most worth knowing:
 
 | setting | default | meaning |
 |---|---|---|
-| `CRAWL_MAX_PAGES` | 40 | page budget per company |
+| `CRAWL_MAX_PAGES` | 15 | page budget per company |
 | `CRAWL_SCOPE` | host | `site` also crawls the company's own subdomains |
 | `CRAWL_RENDER_FOR_DISCOVERY` | false | `true` helps sites whose menus need JavaScript |
 

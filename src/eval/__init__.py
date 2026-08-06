@@ -1,5 +1,5 @@
 """
-Evaluation framework (Stage 10 / RQ3) — scores extraction quality against
+Evaluation framework — scores extraction quality against
 analyst ground truth.
 
 Two evaluators share this package:

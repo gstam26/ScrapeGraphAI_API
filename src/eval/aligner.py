@@ -1,5 +1,5 @@
 """
-Aligner for the extraction evaluation framework (Stage 10 / RQ3).
+Aligner for the extraction evaluation framework.
 
 Aligns pipeline-extracted (AI) claims to analyst ground-truth (GT) claims, per
 (entity, question) cell. This module computes the match signals and assigns

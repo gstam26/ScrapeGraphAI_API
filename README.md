@@ -103,7 +103,13 @@ pip install -r requirements.txt
 playwright install chromium   # only needed for the playwright/local backends
 ```
 
-`.env` in the project root (only the keys for the backends you use):
+`.env` in the project root (only the keys for the backends you use). Start from the committed template, which lists every environment variable the code reads with a one-line note on what needs it:
+
+```bash
+cp .env.example .env   # then fill in the values you need
+```
+
+The keys most runs care about:
 
 ```env
 AZURE_API_KEY=...       # production extraction (EXTRACT_TOOL=azure)

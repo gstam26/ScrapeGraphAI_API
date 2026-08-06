@@ -7,6 +7,24 @@ from the environment via .env (python-dotenv); a handful of flags are
 env-overridable so per-machine settings never live as uncommitted edits to
 this file. The input workbook's config sheet can override a further subset
 per run (default < env < workbook — see pipeline._build_config).
+
+Section index (in file order, matching the `# =====` banners below):
+
+    API                             LLM / vendor credentials and endpoints
+    TOOLS                           which backend serves each pipeline stage
+    PATHS                           cache and output directories
+    ACQUISITION                     fetch-level fallback policy
+    SELF-HOSTED FETCH POLITENESS    robots.txt, per-domain delay, render budget
+    LOCAL-FETCH QUALITY GATE        pass/fail rule for statically fetched pages
+    GUIDED CRAWLING                 depth/page budgets, link scoring, path policy
+    FILTER                          question-to-page routing thresholds
+    VERIFICATION                    quote-matching thresholds
+    EXTRACTION                      chunking, determinism, per-page cost caps
+    PIPELINE CONCURRENCY            worker pools and global LLM call ceiling
+    GROUPING                        deterministic themes sheet
+    LLM SUMMARY LAYER               AI Summary sheet (off by default)
+    AGGREGATION                     cross-source merge behaviour
+    AGGREGATION DIAGNOSTICS         thresholds for the aggregation diagnostics sheet
 """
 import os
 from dotenv import load_dotenv
@@ -20,7 +38,9 @@ load_dotenv()
 API_KEY = os.getenv("SGAI_API_KEY")
 
 AZURE_API_KEY = os.getenv("AZURE_API_KEY")
-AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT", "https://thebeastgpu.openai.azure.com/openai/v1")
+# The real endpoint is deployment-specific and comes from .env (AZURE_ENDPOINT);
+# the default below is a placeholder and will not resolve as-is.
+AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT", "https://<your-resource>.openai.azure.com/openai/v1")
 AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT", "gpt-4.1-mini")
 
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
@@ -30,7 +50,8 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 # TOOLS
 # ============================================================
 
-# Deployment default (Firecrawl credits cover only ~74/178 ADLM companies).
+# Deployment default (Firecrawl credits cover only ~74 of 178 companies in a
+# full run).
 # Static-first hybrid: httpx + Trafilatura, escalating
 # to the pooled browser only on quality-gate failure; politeness (robots.txt,
 # per-domain delay, honest UA) on both paths. Alternatives: "firecrawl" |
@@ -61,8 +82,9 @@ THIN_CONTENT_FALLBACK = True
 # ============================================================
 # SELF-HOSTED FETCH POLITENESS (playwright_pooled + playwright_pooled_hybrid)
 # Firecrawl fetches from ITS infrastructure; the pooled backends fetch from
-# THIS machine's IP. Sagentia has had IPs blocked before, so politeness is
-# mandatory for the self-hosted path, not tunable-to-zero in production runs.
+# THIS machine's IP. Our egress IPs have been blocked by target sites before,
+# so politeness is mandatory for the self-hosted path, not tunable-to-zero in
+# production runs.
 # The hybrid's static httpx path goes through the same robots.txt check and
 # per-domain delay as the browser path.
 # ============================================================
@@ -76,8 +98,9 @@ CRAWL_RESPECT_ROBOTS = True
 # --- Headless-render wait budget (pooled render + hybrid render escalation) ---
 # Navigation stops at domcontentloaded, then a flat paint settle. A networkidle
 # wait was trialled to recover content on JS-heavy pages but was
-# DISCONFIRMED on Hologic: the gate-failing pages there are genuine link-grid
-# category pages (link_density 0.70+), not hydration-starved SPAs — rendering
+# DISCONFIRMED on the site that motivated it: the gate-failing pages there are
+# genuine link-grid category pages (link_density 0.70+), not
+# hydration-starved SPAs — rendering
 # longer recovered no prose and added ~5 s/page. Tunable here without a code
 # change; re-add a bounded networkidle wait only with evidence of a real
 # timing-bound site.
@@ -87,7 +110,7 @@ RENDER_SETTLE_MS = 2000          # paint settle after load
 # The hybrid's static httpx probe is only a fast-path check before escalating to
 # the browser, so it uses a shorter timeout than the full request_timeout: a
 # slow/hanging static response should escalate to render quickly, not burn the
-# full 30 s (observed: a 52 s FUJIFILM fetch = 30 s dead static wait
+# full 30 s (observed on one slow site: a 52 s fetch = 30 s dead static wait
 # + render; with a 12 s cap the same page succeeds on static in 7 s).
 HYBRID_STATIC_TIMEOUT_S = 12
 
@@ -116,8 +139,8 @@ QUALITY_MIN_CONTENT_RATIO = 0.10
 # but the page's FULL visible text is between QUALITY_MIN_CHARS and this cap,
 # ship the full text instead of the husk. Short link-grid "info card" pages
 # (locations / contact / leadership / about) carry their facts in link labels
-# and address blocks that Trafilatura strips — observed on a smoke run:
-# forjmedical /locations extracted 837 husk chars -> 0 items while the HQ
+# and address blocks that Trafilatura strips — observed on a smoke run: one
+# site's /locations page extracted 837 husk chars -> 0 items while the HQ
 # address sat in the DOM. Above the cap, a Trafilatura-failed page is a real
 # link farm (the gate's original prey) and stays failed.
 FULL_PAGE_RESCUE_MAX_CHARS = 12_000
@@ -155,7 +178,7 @@ CRAWL_MAX_LINKS_PER_PAGE = 30
 # "bfs" (default, all validation to date): explore in depth waves — every
 #   chosen depth-1 link before any depth-2 link. When the page budget binds
 #   before the frontier exhausts, BFS spends the whole budget on shallow
-#   breadth BY CONSTRUCTION (measured on a CMO run: 3/5 entities pinned
+#   breadth BY CONSTRUCTION (measured on a 5-entity client run: 3/5 entities pinned
 #   at budget with depth-3+ links discovered but never dequeued, while
 #   depth-2 pages carried 2.4x the extracted claims of depth-1).
 # "best_first": pop the highest-scoring queued link regardless of depth —
@@ -173,21 +196,21 @@ CRAWL_STRATEGY = os.getenv("CRAWL_STRATEGY", "bfs")  # "bfs" | "best_first"
 # pattern-based rule, no site list. Set False for before/after comparison runs.
 CRAWL_LOCALE_DEDUP = True
 
-# --- Link-discovery starvation fixes (Arrk/Automatic diagnosis) ---
+# --- Link-discovery starvation fixes (diagnosed on two starved seeds) ---
 
 # Crawl scope: "host" keeps the historical behaviour (candidate must share the
 # seed's exact host, www-stripped). "site" widens to the registered domain, so
 # a hub homepage that delegates content to its own subdomains stays crawlable
-# (arrk.com -> engineering.arrk.com / asia.arrk.com; 46 of Arrk's 56 homepage
-# links were own-subdomain and ALL were discarded under "host" — 2 pages
-# fetched, 9 GT misses). Off by default pending validation: widening scope
-# changes crawl behaviour, so the locked plant-milk benchmark and an ADLM
-# sample must be re-validated before this becomes the default.
+# (example.com -> engineering.example.com / asia.example.com; 46 of one seed's
+# 56 homepage links were own-subdomain and ALL were discarded under "host" —
+# 2 pages fetched, 9 GT misses). Off by default pending validation: widening
+# scope changes crawl behaviour, so the locked benchmark and a full client run
+# must be re-validated before this becomes the default.
 CRAWL_SCOPE = os.getenv("CRAWL_SCOPE", "host")  # "host" | "site"
 
 # Render-for-discovery: the hybrid fetcher renders only when the static fetch
 # fails the quality gate — so a seed whose TEXT is fine but whose nav menu is
-# JS-injected (automatic.com.hk prints its menu from printHeader.js) passes
+# JS-injected (one seed printed its whole menu from a header .js file) passes
 # the gate and the crawl never sees the menu (3 pages fetched, 8 GT misses).
 # When enabled, a statically-fetched SEED page whose link discovery yields
 # fewer than CRAWL_DISCOVERY_MIN_LINKS candidates is rendered once and
@@ -200,27 +223,28 @@ CRAWL_DISCOVERY_MIN_LINKS = 3
 #
 # The original plan was a crawl-time blocklist for legal/compliance paths, on the
 # stated assumption of "near-zero recall risk". THAT ASSUMPTION IS REFUTED.
-# On the very run that motivated the work, Arrk's HQ answer — "Osaka, Japan",
-# verified, and available from no other page the crawl reached — came out of
-# jp.arrk.com/company/en/privacypolicy. Legal pages carry the registered
+# On the very run that motivated the work, one entity's HQ answer — a verified
+# city/country, available from no other page the crawl reached — came out of
+# that site's /company/en/privacypolicy page. Legal pages carry the registered
 # company address BY LAW (GDPR Art. 13 requires the controller's identity and
 # contact details; a German Impressum is nothing but that address). For HQ,
 # legal-entity and registered-address questions they are often the single most
 # reliable page on a site. Blocking them would have deleted a correct answer.
 #
-# The real cost problem is narrower and is about SIZE, not category: Sanmina's
-# privacy policy is 234K chars = 30 chunks = 30 Azure extract calls of pure
-# legalese. So boilerplate paths are CLASSIFIED here and used two ways:
+# The real cost problem is narrower and is about SIZE, not category: the worst
+# observed privacy policy is 234K chars = 30 chunks = 30 Azure extract calls of
+# pure legalese. So boilerplate paths are CLASSIFIED here and used two ways:
 #   - EXTRACT_MAX_CHUNKS_BOILERPLATE caps their extraction cost (below), which
-#     captures the Sanmina win while keeping the identity block — which sits
-#     early by legal convention (Arrk's address was at char 3,439 of 4,193).
+#     captures that 30-call saving while keeping the identity block — which sits
+#     early by legal convention (the HQ address above was at char 3,439 of 4,193).
 #   - they are NOT dropped from the crawl.
 # Only genuine infrastructure is blocked outright (BLOCKED_PATH_PATTERNS).
 #
 # This does NOT reopen the earlier rejection of a URL blocklist. That
-# rejection was about TOPICAL paths (/products/ is boilerplate for a plant-milk
-# brand and core disclosure for a pharma company) — domain knowledge that does
-# not generalise, correctly left to the embedding page-type signal. Topical
+# rejection was about TOPICAL paths (/products/ is boilerplate for a
+# consumer-brand site and core disclosure for a pharma company) — domain
+# knowledge that does not generalise, correctly left to the embedding
+# page-type signal. Topical
 # segments must never be added to either list here.
 #
 # Kept as data, not logic (the INFORMATIONAL_REF/TRANSACTIONAL_REF precedent).
@@ -264,7 +288,8 @@ BLOCKED_PATH_PATTERNS = (
 
 # Boilerplate pages are capped to this many extract chunks. 1 keeps the legally
 # mandated identity block (which convention puts early) and drops the
-# processing/rights/retention legalese behind it: Sanmina 30 calls -> 1.
+# processing/rights/retention legalese behind it: 30 calls -> 1 on the worst
+# observed policy page.
 # Trade-off recorded: a fact sitting late in a very long legal page is lost.
 EXTRACT_MAX_CHUNKS_BOILERPLATE = 1
 
@@ -316,7 +341,8 @@ EXPERIMENTAL_NAVIGATION_TERMS = {
     "products", "browse", "filter", "sort",
 }
 
-# Ollama embedding endpoint (internal server — only resolves on Sagentia network/VPN)
+# Ollama embedding endpoint (internal server — only resolves on the corporate
+# network/VPN; override with OLLAMA_HOST in .env)
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://10.99.96.1:11434")
 OLLAMA_EMBED_MODEL = "nomic-embed-text"
 OLLAMA_TIMEOUT = 60       # generous: covers cold-start model load
@@ -350,7 +376,8 @@ FILTER_MODE = os.getenv("FILTER_MODE", "threshold")
 # When True (default), semantic-routing queries embed the column NAME plus its
 # INSTRUCTION ("R&D location. In which country does the company conduct its
 # R&D? ...") instead of the 2-3 word name alone. The instruction is a 30-50
-# word discriminative probe; name-only queries barely discriminate on ADLM
+# word discriminative probe; name-only queries barely discriminate on a full
+# client run
 # (score-vs-answered AUC 0.64 on a validation run). Applies to
 # both the Filter (score_page_columns) and the crawler's baseline embed link
 # scorer. Exists as a flag purely for before/after A-B comparison: set False
@@ -385,8 +412,8 @@ EXTRACT_CHUNK_OVERLAP = 200
 
 # Extraction determinism: the Azure extractor previously sent no
 # temperature/seed and ran at the API default (temperature 1.0) — identical
-# input produced 5 vs 10 items across the two CMO smoke runs
-# (tecan.com/services, byte-identical text). The summary layer has run
+# input produced 5 vs 10 items across two client smoke runs
+# (same services page, byte-identical text). The summary layer has run
 # temperature=0 + seed since birth; extraction now matches it. Same
 # reduced-nondeterminism caveat as SUMMARY_SEED: a best-effort determinism
 # hint, not a guarantee (Azure fingerprint changes still vary output).
@@ -395,10 +422,10 @@ EXTRACT_SEED = 42
 EXTRACT_MAX_WORKERS = 8
 EXTRACT_PAGE_WORKERS = 4
 
-# Bound extraction cost on pathological pages. HORIBA's /usa/company/news is a
-# 735 KB news archive -> 95 chunks -> 95 LLM calls -> 654 claims in one cell
-# (validation run). 40 chunks (~312 KB) covers every normal page — the
-# plant-milk maximum (Oatly report, 113 KB) is 15 chunks, so the locked
+# Bound extraction cost on pathological pages. One site's /company/news page is
+# a 735 KB news archive -> 95 chunks -> 95 LLM calls -> 654 claims in one cell
+# (validation run). 40 chunks (~312 KB) covers every normal page — the largest
+# benchmark report (~113 KB) is 15 chunks, so the locked
 # benchmark is unaffected. Truncation is printed, never silent; archive pages
 # list newest items first, so the kept prefix is the "recent" part anyway.
 EXTRACT_MAX_CHUNKS_PER_PAGE = 40
@@ -407,9 +434,10 @@ EXTRACT_MAX_CHUNKS_PER_PAGE = 40
 # PIPELINE CONCURRENCY
 # ============================================================
 
-# URL specs processed concurrently (one spec per entity in ADLM-style
-# workbooks, so each worker crawls a different domain — per-domain request
-# rate is unchanged and politeness is preserved by construction).
+# URL specs processed concurrently (one spec per entity in typical
+# multi-entity workbooks, so each worker crawls a different domain —
+# per-domain request rate is unchanged and politeness is preserved by
+# construction).
 # Ceilings to respect when raising: Firecrawl plan concurrency and the
 # Power Automate LLMAPI throughput.
 PIPELINE_ENTITY_WORKERS = 4
@@ -454,7 +482,7 @@ GROUP_CENTER_VECTORS = True
 # Centroid-cosine threshold for joining an existing cluster. Applies in the
 # CENTERED space (GROUP_CENTER_VECTORS=True). Calibrated on the
 # five biggest validation cells (65-862 claims): 0.15 puts every cell in the
-# scannable 6-19 theme range (HORIBA 862 news items -> 19 themes; the
+# scannable 6-19 theme range (the largest cell, 862 news items -> 19 themes; the
 # provisional 0.30 fragmented it into 93). 0.10 is the tighter alternative
 # (5-12 themes) if themes read as over-split.
 GROUP_SIMILARITY = 0.15
@@ -491,7 +519,7 @@ SUMMARY_MAX_CLAIMS_PER_THEME = 15
 SUMMARY_MAX_ITEMS_PER_LINE = 8
 
 # Hard ceiling on lines per cell. "One line per theme" alone imposes no
-# cell-level cap — CMO Description cells have 11 themes, so the "compact"
+# cell-level cap — some Description cells have 11 themes, so the "compact"
 # summary became an 11-line wall. Three lines covers the
 # top-3 themes the Tier-1 coverage gate checks; omitted themes are marked
 # "(more in Provenance)".
@@ -515,6 +543,25 @@ SUMMARY_TIMEOUT = 60
 # Concurrent summarizer calls. Size against the deployment's TPM/RPM quota;
 # extraction runs share the deployment.
 SUMMARY_MAX_CONCURRENT_CALLS = 4
+
+# ============================================================
+# AGGREGATION
+# ============================================================
+
+# Question/column names whose values are comma-separated LISTS of items rather
+# than competing answers to one question (e.g. certifications, product types,
+# markets served). For a column named here, src.aggregate splits every
+# surviving value on commas and merges the items into ONE canonical
+# comma-joined string, so partial lists contributed by different source pages
+# become a single union instead of several rival bullets. This catches subset
+# strings that the fuzzy near-duplicate pass cannot collapse ("a, b" vs
+# "a, c, b, d, e" scores ~50, well below aggregate._DEDUP_RATIO).
+#
+# EMPTY BY DEFAULT — the union pass is inert unless a task opts in, because the
+# right column names are task-specific. Set it per task (exact column names as
+# they appear in the input workbook's questions sheet), e.g.
+#   UNION_LIST_COLUMNS = frozenset({"Certifications", "Markets served"})
+UNION_LIST_COLUMNS: frozenset[str] = frozenset()
 
 # ============================================================
 # AGGREGATION DIAGNOSTICS

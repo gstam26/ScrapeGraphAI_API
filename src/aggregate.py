@@ -16,6 +16,7 @@ from typing import Any
 
 from rapidfuzz import fuzz
 
+from config import UNION_LIST_COLUMNS
 from models import ExtractedCell, SourceQuote
 
 # token_sort_ratio threshold for near-duplicate value suppression in display output.
@@ -77,11 +78,16 @@ def _evidence_from_cell_value(cell: ExtractedCell) -> list[SourceQuote]:
 _LIST_KEYWORDS = frozenset({"comma-separated", "deduplicated", "list", "for each"})
 
 # Columns whose values are comma-separated item lists that should be unioned
-# across sources rather than kept as separate entries. Add any column here where
-# multiple source URLs each contribute a partial list of the same item type —
-# e.g. certifications, product types, markets served — so the Matrix shows one
-# merged list instead of one bullet per source.
-_UNION_LIST_COLS = frozenset({"Plant milk types"})
+# across sources rather than kept as separate entries — where multiple source
+# URLs each contribute a partial list of the same item type (certifications,
+# product types, markets served) and the Matrix should show one merged list
+# instead of one bullet per source.
+#
+# The column names are task-specific, so they live in config.UNION_LIST_COLUMNS
+# (empty by default: the union pass below is then inert for every column).
+# Kept as a module-level name so callers and tests can read or monkeypatch
+# src.aggregate._UNION_LIST_COLS directly.
+_UNION_LIST_COLS = UNION_LIST_COLUMNS
 
 _NULL_SENTINEL_PREFIX = "none (not disclosed"
 

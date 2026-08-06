@@ -18,6 +18,11 @@ cmo-inputs/
 cmo-outputs/
 outputs/
 matched_official_urls.csv
+# URL resolver — built for the ADLM seed-resolution job, not a pipeline
+# layer (and conceded dead for CMO: no directory to resolve against).
+src/resolve/
+scripts/resolve_urls.py
+tests/test_resolve.py
 # Engagement-specific scripts (crash without the excluded data dirs).
 scripts/adlm_scraper.py
 scripts/build_182_workbook.py

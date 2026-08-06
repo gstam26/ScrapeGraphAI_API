@@ -25,7 +25,13 @@ def test_acquire_returns_fetched_pages():
     for page in pages:
         assert isinstance(page, FetchedPage), f"Expected FetchedPage, got {type(page)}"
         assert page.url in URLS, f"Unexpected URL: {page.url}"
-        assert page.status in ("ok", "cached"), f"Bad status {page.status!r} for {page.url}"
+        # example.com is ~140 chars, below the thin-content quality gate on a
+        # cold cache — a gate_failed page is still a successful FETCH; this
+        # test checks acquire plumbing, not gate policy.
+        fetched_ok = page.status in ("ok", "cached") or (
+            page.status == "gate_failed"
+            and str(page.gate_reason).startswith("thin_content"))
+        assert fetched_ok, f"Bad status {page.status!r} for {page.url}"
         assert isinstance(page.markdown, str), "markdown must be a string"
         assert len(page.markdown) > 0, f"Empty markdown for {page.url}"
         assert page.parent_url is None, "parent_url must be None at depth=0"

@@ -11,6 +11,8 @@
 # Internal working notes and engagement history — never hand over.
 brain/
 CHANGELOG.md
+# Dissertation report (names the company and the engagements).
+dissertation/
 # The sanitisation tooling itself (this manifest names confidential terms).
 scripts/build_handover.py
 scripts/handover_manifest.txt

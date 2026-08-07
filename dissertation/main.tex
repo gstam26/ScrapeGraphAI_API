@@ -1,0 +1,298 @@
+% =========================================================================
+% MSc Dissertation — opening chapters (draft 1, 2026-08-07)
+% Grounded in the codebase as handed over (branch `handover`); every claim
+% about the system below is traceable to a module named in the text.
+% Placeholders are marked \todo{...} — search for "todo" before submitting.
+% =========================================================================
+\documentclass[11pt,a4paper]{report}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage[hidelinks]{hyperref}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{parskip}
+
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+
+\title{\todo{Title} \\[1ex]
+  \large A source-verified entity-extraction pipeline for consultancy company research}
+\author{George Stamatopoulos \\
+  \todo{Department}, Imperial College London \\
+  In collaboration with Sagentia Innovation \\
+  \texttt{gs2423@ic.ac.uk}}
+\date{\todo{Submission date}}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Technology and product-development consultancies routinely begin engagements
+with a company-research phase: given a list of candidate companies and a set
+of client questions, analysts visit each company's website and fill in an
+answer matrix by hand. This dissertation presents a pipeline, built during an
+industrial placement with Sagentia Innovation, that automates this phase
+while remaining auditable by construction: every extracted answer carries a
+verbatim quote from its source page, and an independent verification layer
+checks that the quote genuinely appears there --- the language model is never
+taken at its word. The system was developed against the constraints of a real
+corporate deployment environment (locked-down machines, no model downloads,
+strict crawling politeness) and evaluated on a live advisory engagement:
+59 contract-manufacturing organisations, 17 client questions, with ground
+truth produced independently by three human analysts. On this benchmark the
+pipeline reaches an answer-level F1 of 0.606 (precision 0.596, recall 0.617),
+and a downstream experiment shows that a criteria-driven shortlist computed
+from the pipeline's output agrees with the analyst-derived shortlist on four
+of the top five companies. The dissertation analyses where and why the system
+succeeds and fails, and what those failure classes imply for deploying
+LLM-based extraction in professional advisory work.
+\end{abstract}
+
+\tableofcontents
+
+% =========================================================================
+\chapter{Introduction}
+% =========================================================================
+
+\section{Context and motivation}
+
+Sagentia Innovation is a science and technology advisory business. A
+recurring early step in its engagements is \emph{company screening}: a client
+supplies a list of candidate companies --- suppliers, competitors, acquisition
+targets, contract manufacturers --- together with the questions that matter to
+them (\emph{Where do they manufacture? What is their revenue? Do they have
+medical-device experience?}), and analysts answer those questions from the
+public evidence, principally each company's own website. The output is an
+answer matrix: one row per company, one column per question, every cell
+ideally backed by something the analyst actually read.
+
+Done by hand, this work is slow, repetitive, and unevenly thorough: an
+analyst facing 100 companies and 15 questions makes 1,500 judgement calls,
+each requiring navigation of a different website. It is also exactly the kind
+of reading-and-transcribing task that large language models appear well
+suited to --- and exactly the kind of task where their well-documented failure
+mode, confident fabrication, is commercially unacceptable. A consultancy
+cannot put a hallucinated revenue figure in front of a client.
+
+The engineering question of this dissertation is therefore not \emph{can an
+LLM answer questions about companies?} --- it evidently can --- but \emph{can a
+system be built around an LLM such that its output is trustworthy enough,
+and demonstrably enough so, to enter a professional deliverable?}
+
+\section{The problem}
+
+Concretely, the system must accept a consultant-shaped input --- an Excel
+workbook listing entities, seed URLs, and free-text questions --- and produce
+a consultant-shaped output: the filled answer matrix, plus the evidence
+trail that lets a sceptical reviewer check any cell. Between input and
+output lie several distinct hard problems:
+
+\begin{enumerate}
+  \item \textbf{Acquisition.} Company websites vary from static brochure
+    sites to JavaScript-rendered single-page applications behind bot
+    detection. Relevant evidence may sit several links deep, and crawl
+    budget spent on privacy policies is budget not spent on factory-location
+    pages.
+  \item \textbf{Extraction.} Answers must be pulled from noisy marketing
+    prose into structured values --- with the distinction preserved between
+    \emph{the site says no}, \emph{the site does not say}, and \emph{we
+    could not read the site}.
+  \item \textbf{Grounding.} Each answer must be tied to verbatim source
+    text, and that tie must be checked mechanically, not asserted by the
+    same model that produced the answer.
+  \item \textbf{Aggregation and presentation.} Evidence from many pages must
+    collapse to one defensible answer per cell, without hiding genuine
+    conflicts between sources.
+  \item \textbf{Evaluation.} ``Does it work?'' must be answerable with
+    numbers, against ground truth produced by the people whose work the
+    system is meant to support --- including an analysis of whether its
+    errors would change the decisions a consultant makes downstream.
+\end{enumerate}
+
+A further, less conventional set of constraints shaped the work throughout:
+the system had to run on corporate IT infrastructure where model downloads
+are blocked, new package installations are negotiated case by case, and
+crawling misbehaviour has previously led to company IP addresses being
+blocked. Several architectural decisions that would look eccentric in a
+research prototype --- a dependency-free web interface, embeddings served only
+from an internal server with a lexical fallback, a static-first fetcher that
+escalates to browser rendering only on demonstrated need --- are direct
+consequences of designing for deployment rather than demonstration.
+Where elegance and deployability conflicted, deployability won.
+
+\section{Approach and contributions}
+
+The system is a layered pipeline (Chapter~\ref{ch:system}) in which the LLM
+is deliberately confined: it reads pages and proposes
+\{\emph{value}, \emph{verbatim quote}\} pairs, and everything else ---
+crawling, routing, quote verification, deduplication, conflict flagging,
+ranking, shortlisting --- is deterministic code that can be tested, replayed,
+and audited. The dissertation's contributions are:
+
+\begin{enumerate}
+  \item \textbf{A production-shaped, source-verified extraction pipeline}
+    (Chapter~\ref{ch:system}): five core layers (Acquire, Filter, Extract,
+    Verify, Aggregate) with an optional cited-summary layer whose every
+    sentence must reference a verified claim, enforced by a mechanical gate
+    with a verbatim fallback.
+  \item \textbf{An evaluation framework and ground-truth methodology}:
+    a generic evaluator aligning pipeline output to analyst-filled ground
+    truth via a cross-encoder matcher with typed deterministic rules for
+    numerics and binaries; three synthetic benchmark tasks; and a
+    59-company, 17-question ground truth built independently by three
+    analysts on a live engagement.
+  \item \textbf{An empirical analysis of failure classes}: which errors come
+    from acquisition (starved crawls, bot walls, JavaScript-hidden
+    navigation), which from extraction (evidence-strength judgement,
+    entity attribution), and which from a genuine norm boundary between
+    what a website supports and what an analyst is willing to assert ---
+    together with measured evidence on which of these respond to
+    engineering effort and which do not.
+  \item \textbf{A decision-level evaluation}: a criteria-driven shortlist
+    layer, with criteria expressed as data rather than code, used to
+    measure whether pipeline-vs-analyst disagreements at the cell level
+    actually change the companies a consultant would shortlist.
+\end{enumerate}
+
+\section{Report structure}
+
+Chapter~\ref{ch:system} describes the system as built, layer by layer, and
+the design principles that connect them. \todo{Subsequent chapters: the
+evaluation framework and ground-truth methodology; the case-study results
+and failure-class analysis; the shortlist and decision-level analysis;
+discussion, limitations and future work. Fix chapter numbering when those
+chapters exist.}
+
+% =========================================================================
+\chapter{System overview}
+\label{ch:system}
+% =========================================================================
+
+\section{Design principles}
+
+Four principles recur in every layer and explain most of the architecture:
+
+\paragraph{The LLM is never trusted on its own word.} Every extracted answer
+must arrive with a verbatim quote, and a deterministic verification layer
+independently confirms the quote appears in the cached source page. The same
+principle extends to the optional AI summary: each sentence must cite a
+claim ID from the verified set, and a mechanical gate replaces any summary
+that fails to comply with the verbatim claims themselves. Trust is
+established by construction, not by model choice.
+
+\paragraph{Determinism wherever possible.} Only two stages call a generative
+model (Extract, and the optional Summarize); both run at temperature zero
+with a fixed seed. Everything else --- link scoring, routing, quote checking,
+deduplication, conflict detection, claim-ID assignment, shortlist scoring ---
+is deterministic, so runs are reproducible, failures are replayable, and
+A/B comparisons measure the change under test rather than sampling noise.
+
+\paragraph{Honest abstention.} The pipeline distinguishes \emph{the site
+states there is none}, \emph{the site does not say}, and \emph{no usable
+answer found}, and these sentinels are never allowed to compete with real
+answers during aggregation. An empty cell is a finding, not a blank: the
+end-of-run summary names the sites that yielded nothing and why (e.g.\
+bot-wall refusals), because for screening questions such as ``is this
+company still independent?'', absence of evidence is itself evidence a
+consultant needs to see.
+
+\paragraph{Deployability over elegance.} No component may assume
+capabilities the target environment lacks. Embeddings come from an internal
+Ollama server (\texttt{nomic-embed-text}) with a BM25 lexical fallback when
+it is unreachable; the user interface is a local web page served by the
+Python standard library rather than a JavaScript build stack; crawling
+enforces robots.txt, per-domain delays, and an honest user agent by
+construction.
+
+\section{Pipeline architecture}
+
+The pipeline (orchestrated in \texttt{pipeline.py}, stages under
+\texttt{src/}) reads an input workbook of entities, seed URLs, questions,
+and optional per-run configuration, and executes the following stages per
+entity, concurrently across entities:
+
+\paragraph{Acquire (\texttt{src/acquire/}).} A static-first hybrid fetcher
+(\texttt{fetcher.py}): a plain HTTP request with content extraction
+(Trafilatura), judged by a quality gate; only on gate failure does it
+escalate to a headless Chromium render (Playwright), keeping whichever text
+is richer. A guided same-domain crawler (\texttt{crawler.py}) scores
+discovered links against the questions (embedding similarity, BM25
+fallback) and follows the most promising within a page budget; scope and
+render-assisted discovery are configurable per run. All pages are cached by
+URL hash, making re-runs cheap and experiments replayable.
+
+\paragraph{Filter (\texttt{src/filter.py}).} Routes each fetched page to the
+questions it could plausibly answer, by embedding-similarity threshold or
+keyword match. The layer is fail-safe by contract: it never discards a
+page --- at worst it routes all questions --- so it can reduce cost but never
+recall.
+
+\paragraph{Extract (\texttt{src/extract.py}).} The single load-bearing LLM
+stage. Production uses Azure OpenAI GPT-4.1-mini (the backend is pluggable),
+prompted for strict JSON \{\emph{value}, \emph{verbatim quote}\} pairs per
+entity and question, over overlapping page chunks, at temperature zero with
+a fixed seed and per-chunk caching. The prompt forbids extracting absence
+markers as if they were answers; explicit on-page non-disclosure statements
+remain extractable.
+
+\paragraph{Verify (\texttt{src/verify.py}).} Deterministic quote grounding:
+each quote is checked against the cached page text --- exact substring, then
+fuzzy match, then soft anchors for long quotes --- plus a diagnostic semantic
+score. Unverified evidence is retained but flagged and demoted, never
+silently dropped: the reviewer sees what failed verification and why.
+
+\paragraph{Aggregate (\texttt{src/aggregate.py}).} Collapses per-page
+evidence to per-cell answers: fuzzy deduplication of near-identical values,
+conflict flagging on single-answer questions (conflicts are displayed
+side by side, never merged away), evidence ranked by verification quality.
+For single-answer cells the rendered matrix leads with the best-supported
+candidate and points to the full evidence sheet for the rest.
+
+\paragraph{Group and Summarize (\texttt{src/group.py},
+\texttt{src/summarize.py}).} Verified claims are clustered into themes and
+assigned stable citable IDs (\texttt{[C\#\#\#\#]}), forming the audit trail.
+An optional summary layer renders each cell for reading --- short factual
+cells deterministically, multi-value cells through a citation-pooling merge,
+prose cells through an LLM synthesis in which every sentence must cite claim
+IDs; a mechanical gate falls back to verbatim claims whenever a sentence
+fails to comply. Both layers are strictly additive and fail-soft: their
+failure cannot fail a run.
+
+\paragraph{Output (\texttt{src/io\_excel.py}).} A single Excel workbook:
+the answer Matrix and Summary for consumption; Provenance, Digest and
+Grouped Themes for audit; per-stage diagnostic logs for engineering. Every
+number a consultant might quote is at most one sheet away from the verbatim
+text it came from.
+
+\paragraph{Downstream: shortlist (\texttt{src/shortlist.py}).} A post-hoc,
+read-only layer that turns the finished matrix into a ranked shortlist under
+client criteria expressed entirely as data (a criteria workbook: gates,
+thresholds, weights, keyword lists, missing-data policies). Its parsers are
+deterministic and refuse to guess --- ambiguous values fail with a stated
+reason and every assumption becomes a visible flag --- which makes the layer
+usable in reverse, as an instrument: running identical criteria over the
+pipeline's matrix and over analyst ground truth measures, at the level of
+decisions rather than cells, how much the pipeline's errors actually matter.
+This experiment is reported in Chapter~\todo{ref}.
+
+\section{Evaluation harness}
+\label{sec:eval-harness}
+
+The evaluation framework (\texttt{src/eval/}) is code of the same standing
+as the pipeline: a generic evaluator aligns pipeline cells to ground-truth
+cells and classifies each pairing (match, miss, false assertion, null
+agreement), using a cross-encoder semantic matcher wrapped in typed
+deterministic rules --- numerics and binaries are compared by parsed value
+and polarity, because semantic similarity models mis-handle exactly those
+(\emph{Yes} vs \emph{No} score as similar; \emph{6{,}500+} vs \emph{6500+}
+as dissimilar). Ground truth is authored by analysts in the same template
+the pipeline fills, under a written convention (website-only evidence;
+\emph{No} requires positive evidence; ties go to \emph{Not disclosed}) ---
+the methodology, its inter-annotator checks, and the resulting benchmark
+are the subject of Chapter~\todo{ref}.
+
+\todo{End of drafted material. Next chapters: Evaluation framework \&
+ground truth methodology; Case study \& failure-class analysis; the
+decision-level shortlist experiment; Discussion \& limitations.}
+
+\end{document}
